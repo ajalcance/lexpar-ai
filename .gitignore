@@ -5,3 +5,11 @@ __pycache__/
 *.pyc
 dist/
 build/
+
+# Python / backend
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.db
+*.egg-info/

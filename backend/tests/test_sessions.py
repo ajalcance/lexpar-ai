@@ -1,0 +1,82 @@
+"""
+File: tests/test_sessions.py
+Purpose: Session state-transition tests (DEV_GUIDELINES §6) — a new session starts in_progress,
+    valid transitions succeed, terminal states are final, unknown statuses are rejected, and the
+    scorecard is gated on completion.
+Depends on: pytest, fastapi (HTTPException), app services + models (via conftest fixtures)
+Related: app/services/session_service.py, app/services/scorecard_service.py
+"""
+
+import pytest
+from fastapi import HTTPException
+
+from app.models.scorecard import Scorecard
+from app.schemas.case import CaseCreate
+from app.services import auth_service, case_service, session_service
+
+
+def _seed_session(db):
+    """Create the stub user, a case, and a fresh session; return the session."""
+    user = auth_service.ensure_stub_user(db)
+    case = case_service.create_case(db, user, CaseCreate(title="Rivera v. Coastal", case_facts="F"))
+    return session_service.create_session(db, user, case)
+
+
+def test_new_session_starts_in_progress(db_session):
+    session = _seed_session(db_session)
+    assert session.status == "in_progress"
+    assert session.ended_at is None
+
+
+def test_transition_in_progress_to_completed(db_session):
+    session = _seed_session(db_session)
+    updated = session_service.transition_status(db_session, session, "completed")
+    assert updated.status == "completed"
+    assert updated.ended_at is not None
+
+
+def test_transition_in_progress_to_abandoned(db_session):
+    session = _seed_session(db_session)
+    updated = session_service.transition_status(db_session, session, "abandoned")
+    assert updated.status == "abandoned"
+    assert updated.ended_at is not None
+
+
+def test_terminal_state_rejects_further_transition(db_session):
+    session = _seed_session(db_session)
+    session_service.transition_status(db_session, session, "completed")
+    with pytest.raises(HTTPException) as exc:
+        session_service.transition_status(db_session, session, "in_progress")
+    assert exc.value.status_code == 409
+
+
+def test_unknown_status_is_rejected(db_session):
+    session = _seed_session(db_session)
+    with pytest.raises(HTTPException) as exc:
+        session_service.transition_status(db_session, session, "paused")
+    assert exc.value.status_code == 422
+
+
+def test_scorecard_gated_on_completed_session(client, db_session, auth_headers):
+    session = _seed_session(db_session)
+
+    # Before completion the scorecard is unavailable.
+    early = client.get(f"/api/sessions/{session.id}/scorecard", headers=auth_headers)
+    assert early.status_code == 409
+
+    # Complete the session and attach a scorecard (as the Judge agent eventually will).
+    session_service.transition_status(db_session, session, "completed")
+    db_session.add(
+        Scorecard(
+            session_id=session.id,
+            overall_score=80,
+            strengths="s",
+            weaknesses="w",
+            judge_ruling="r",
+        )
+    )
+    db_session.commit()
+
+    ready = client.get(f"/api/sessions/{session.id}/scorecard", headers=auth_headers)
+    assert ready.status_code == 200
+    assert ready.json()["overall_score"] == 80.0

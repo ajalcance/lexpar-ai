@@ -30,3 +30,15 @@ Keep a single Vite version across the app and the test runner (`npm ls vite` sho
 **Right:** The current shadcn style ("base-nova") renders on `@base-ui/react`. Compose with the
 `render` prop instead — `<Button render={<Link to="…" />}>label</Button>` — and add
 `nativeButton={false}` when the rendered element is not a real `<button>` (e.g. a link).
+
+### [Backend/SQLAlchemy] Keep models portable so tests run on SQLite
+**Wrong:** Reaching for Postgres-only server defaults (`gen_random_uuid()`, `TIMESTAMPTZ`) would
+force pytest to run against a real Postgres and add a DB service to CI.
+**Right:** Use SQLAlchemy's `Uuid` type + application-side defaults (`uuid4`,
+`datetime.now(timezone.utc)`). The same models then run on Postgres (prod/Alembic) and SQLite
+(tests) unchanged, so CI's backend job needs no database.
+
+### [Backend/naming] `Session` model vs SQLAlchemy `Session`
+**Wrong:** Importing both the ORM `Session` model and SQLAlchemy's `Session` in one module collides.
+**Right:** Alias the DB session type — `from sqlalchemy.orm import Session as DbSession` — and keep
+`Session` for the domain model. `DbSession` also reads clearly as "database session."

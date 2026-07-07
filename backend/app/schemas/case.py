@@ -1,0 +1,27 @@
+"""
+File: app/schemas/case.py
+Purpose: Pydantic shapes for creating and returning cases.
+Depends on: pydantic
+Related: app/api/cases.py, app/services/case_service.py, app/models/case.py
+Security notes: case_facts is attorney work product — validated here, never logged downstream.
+"""
+
+import uuid
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class CaseCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    case_facts: str | None = Field(default=None, max_length=100_000)
+
+
+class CaseOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    title: str
+    case_facts: str | None = None
+    storage_path: str | None = None
+    created_at: datetime

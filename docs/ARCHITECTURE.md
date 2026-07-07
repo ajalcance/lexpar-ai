@@ -271,6 +271,21 @@ cases/{case_id}/{original_filename}
 
 S3-compatible (MinIO locally, DigitalOcean Spaces in production).
 
+### Backend implementation notes (as built)
+
+- **Migrations:** the schema is created and versioned with **Alembic** (`backend/alembic/`), not
+  `create_all` on startup. Run `alembic upgrade head` before serving. Tests build the schema from
+  `Base.metadata` on SQLite, so CI needs no database service.
+- **Portable column types:** models use SQLAlchemy's `Uuid` type and application-side defaults
+  (`uuid4`, timezone-aware `datetime.now`) rather than Postgres server defaults
+  (`gen_random_uuid()`, `TIMESTAMPTZ`). The same models therefore run unchanged on Postgres
+  (prod) and SQLite (tests).
+- **Soft deletes:** `users`, `cases`, and `sessions` carry a nullable `deleted_at`; queries
+  exclude it (DEVELOPER_GUIDELINES §8), so a retention policy later is a query change, not a
+  schema migration.
+- **Sensitive fields** (`cases.case_facts`, `transcripts.content`, scorecard text) are tagged
+  `# SENSITIVE: attorney work product` in the models and never logged.
+
 ---
 
 ## 9. Environment variables

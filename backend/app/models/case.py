@@ -1,0 +1,32 @@
+"""
+File: app/models/case.py
+Purpose: SQLAlchemy model for the `cases` table (ARCHITECTURE §8) — a case an attorney prepares.
+Depends on: sqlalchemy, app/db.py
+Related: app/schemas/case.py, app/services/case_service.py, frontend CaseUpload.tsx (the UI)
+Security notes: `case_facts` is attorney work product — never log its contents (log case_id only).
+    `storage_path` will point at object storage once document upload is wired. `deleted_at`
+    supports soft deletes (DEV_GUIDELINES §8).
+"""
+
+import uuid
+from datetime import datetime, timezone
+
+from sqlalchemy import DateTime, ForeignKey, String, Text, Uuid
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db import Base
+
+
+class Case(Base):
+    __tablename__ = "cases"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    # SENSITIVE: attorney work product — never log in plaintext.
+    case_facts: Mapped[str | None] = mapped_column(Text, nullable=True)
+    storage_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
