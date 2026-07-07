@@ -13,8 +13,10 @@ import logging
 import uuid
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import auth, cases, livekit_token, scorecards, sessions
+from app.config import get_settings
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,6 +25,16 @@ logging.basicConfig(
 logger = logging.getLogger("lexpar")
 
 app = FastAPI(title="LexPar AI API", version="0.1.0")
+
+# Allow the browser frontend (Vite dev server) to call the API. Bearer tokens travel in the
+# Authorization header, not cookies, so credentials are not needed.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=get_settings().cors_origin_list,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=False,
+)
 
 
 @app.middleware("http")

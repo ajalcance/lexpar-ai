@@ -11,10 +11,12 @@
  */
 
 import { useNavigate, useParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { TranscriptLine } from '@/components/TranscriptLine';
 import { useSparringSession } from '@/hooks/useSparringSession';
+import * as api from '@/lib/api';
 
 const STATUS_LABEL = {
   idle: 'Idle',
@@ -29,6 +31,16 @@ export function SparringRoom() {
   const sessionId = id ?? '';
   const { status, lines } = useSparringSession(sessionId);
 
+  // Real backend plumbing: fetch a LiveKit room token for this session on load. The scripted
+  // transcript above is still mock (no agents pipeline yet), but this exercises the token route.
+  const { isSuccess: roomReady } = useQuery({
+    queryKey: ['livekit-token', sessionId],
+    queryFn: () => api.getLiveKitToken(sessionId),
+    enabled: !!sessionId,
+    retry: false,
+    staleTime: 5 * 60 * 1000,
+  });
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
@@ -38,9 +50,12 @@ export function SparringRoom() {
             Argue aloud. Opposing counsel may object; the judge will rule.
           </p>
         </div>
-        <Badge variant={status === 'playing' ? 'destructive' : 'secondary'}>
-          {STATUS_LABEL[status]}
-        </Badge>
+        <div className="flex items-center gap-2">
+          {roomReady && <Badge variant="outline">Voice room ready</Badge>}
+          <Badge variant={status === 'playing' ? 'destructive' : 'secondary'}>
+            {STATUS_LABEL[status]}
+          </Badge>
+        </div>
       </div>
 
       <div className="flex flex-col gap-4 rounded-lg border bg-card/40 p-6">

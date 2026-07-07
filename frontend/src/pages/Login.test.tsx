@@ -1,23 +1,36 @@
 /**
  * File: src/pages/Login.test.tsx
- * Purpose: Critical-flow test for login (DEVELOPER_GUIDELINES §6) — admin/admin succeeds and
- *   stores the token; wrong credentials are rejected with an error and no token.
- * Depends on: vitest, @testing-library/*, test/utils, pages/Login, store/auth
+ * Purpose: Critical-flow test for login (DEVELOPER_GUIDELINES §6) — admin/admin authenticates via
+ *   the API and stores the token; a rejected login surfaces an error and stores nothing.
+ * Depends on: vitest, @testing-library/*, test/utils, pages/Login, store/auth, lib/api
  */
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/utils';
 import { Login } from '@/pages/Login';
 import { useAuthStore } from '@/store/auth';
+import * as api from '@/lib/api';
+
+const fakeUser = {
+  id: 'u1',
+  email: 'admin@lexpar.ai',
+  fullName: 'Demo Attorney',
+  firmName: 'Solo Practice',
+};
 
 describe('Login', () => {
   beforeEach(() => {
     useAuthStore.setState({ token: null, user: null });
   });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   it('signs in with admin/admin and stores the token', async () => {
+    vi.spyOn(api, 'login').mockResolvedValue('jwt-token');
+    vi.spyOn(api, 'getCurrentUser').mockResolvedValue(fakeUser);
     const user = userEvent.setup();
     renderWithProviders(<Login />);
 
@@ -26,11 +39,13 @@ describe('Login', () => {
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
 
     await waitFor(() => {
-      expect(useAuthStore.getState().token).toBe('stub-token-admin');
+      expect(useAuthStore.getState().token).toBe('jwt-token');
     });
+    expect(api.login).toHaveBeenCalledWith('admin', 'admin');
   });
 
   it('rejects invalid credentials with an error message', async () => {
+    vi.spyOn(api, 'login').mockRejectedValue(new Error('Invalid username or password.'));
     const user = userEvent.setup();
     renderWithProviders(<Login />);
 

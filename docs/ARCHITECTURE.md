@@ -163,6 +163,19 @@ actual endpoint, just with hardcoded credentials behind it for now.
 **⚠️ Flagged for replacement:** this must not ship to any real attorney or real case data while
 `AUTH_MODE=stub`. Tracked in §11 (Open items).
 
+### Wiring status (frontend ↔ backend)
+
+The frontend now calls the **real** backend through `lib/api.ts` for auth (login + `/api/auth/me`,
+which `ProtectedRoute` uses to validate the session), cases (list/create), session creation, and
+scorecard retrieval. Two things remain mocked/absent until the agents pipeline exists:
+
+- **Transcript playback** in `SparringRoom` is still a scripted, timer-driven sequence (there is no
+  live STT→LLM→TTS yet). Starting a session still exercises real plumbing: it creates a real
+  `sessions` row (POST /api/sessions) and fetches a real LiveKit token (GET /api/livekit/token).
+- **Scorecards** aren't generated yet (that's the Judge agent's job), so the session stays
+  `in_progress` and GET scorecard returns 409/404. The frontend shows an honest "not available yet"
+  fallback rather than fabricating a score.
+
 ---
 
 ## 5. Backend (FastAPI)
@@ -302,8 +315,12 @@ S3-compatible (MinIO locally, DigitalOcean Spaces in production).
 | `FIREWORKS_API_KEY` / `DEEPGRAM_API_KEY` / `ELEVENLABS_API_KEY` | Provider auth |
 | `JWT_SECRET` | Token signing |
 | `AUTH_MODE` | `stub` \| `production` |
+| `CORS_ORIGINS` | Comma-separated browser origins allowed to call the API (e.g. the Vite dev server) |
 
 Never commit `.env` — `.env.example` documents the shape, real values stay local/secrets-managed.
+
+**Frontend env:** the React app reads `VITE_API_BASE_URL` (default `http://localhost:8000`) to reach
+the backend — see `frontend/.env.example`. Vite only exposes vars prefixed `VITE_` to the browser.
 
 ---
 

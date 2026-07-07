@@ -186,3 +186,77 @@ scoped to `[backend]`). ARCHITECTURE §8 + LESSONS.md updated. Frontend untouche
 
 Verify locally: `docker compose -f infra/docker-compose.yml up -d` → (in `backend/`, with deps
 installed) `alembic upgrade head` → `uvicorn app.main:app` → `curl localhost:8000/health`.
+
+---
+
+### Connect frontend to the real backend — status: done
+
+**Goal:** Replace mock data access with real HTTP calls for auth, cases, session creation, and
+scorecard, while keeping SparringRoom's transcript scripted (no agents pipeline yet). All wiring
+stays inside `lib/api.ts` (the swap point) so components barely change.
+
+**Backend**
+- [ ] `app/config.py`: add `cors_origins` (default `http://localhost:5173,http://127.0.0.1:5173`)
+- [ ] `app/main.py`: add `CORSMiddleware` for those origins (methods/headers `*`, no credentials —
+      we use a bearer header, not cookies)
+- [ ] `.env.example` + ARCHITECTURE §9: document `CORS_ORIGINS`
+
+**Frontend — API boundary (the real rewrite)**
+- [ ] `frontend/.env.example`: `VITE_API_BASE_URL=http://localhost:8000`
+- [ ] `lib/api.ts`: rewrite to `fetch` the real API with a shared `request()` helper that attaches
+      `Authorization: Bearer <token>` (read from the auth store) and, on 401, clears auth. Maps the
+      API's snake_case JSON → the existing camelCase frontend types so components/types don't change:
+  - [ ] `login` → POST /api/auth/login (returns the JWT)
+  - [ ] `getCurrentUser` (new) → GET /api/auth/me
+  - [ ] `getCases` / `getCase` → GET /api/cases[/{id}]; `createCase` → POST /api/cases
+  - [ ] `createSession` → POST /api/sessions; `getScorecard` → GET /api/sessions/{id}/scorecard
+  - [ ] `getLiveKitToken` → GET /api/livekit/token
+  - [ ] `getSessionScript` → **stays mocked** (scripted transcript; no agents yet)
+
+**Frontend — auth**
+- [ ] `store/auth.ts`: `login()` calls `api.login` (store JWT) then `api.getCurrentUser` (store user);
+      rollback + throw on failure
+- [ ] `components/ProtectedRoute.tsx`: validate the session against real GET /api/auth/me
+      (TanStack Query, `enabled: !!token`) — redirect to /login on no-token or 401, brief "checking"
+      state while it resolves
+
+**Frontend — session start plumbing (SparringRoom)**
+- [ ] `pages/SparringRoom.tsx`: on load, GET /api/livekit/token for the session (real call, shows a
+      "voice room ready" indicator), then run the existing scripted playback unchanged. POST
+      /api/sessions already fires from Dashboard's "Start sparring" (real) — see decision below.
+
+**Frontend — scorecard gap (DECISION — flagging, not guessing)**
+- [ ] Chosen: **frontend fallback message**. Since no agent generates scorecards yet, the session
+      stays `in_progress` and GET scorecard returns 409 (or 404). `Scorecard.tsx` will detect that and
+      render an honest "not available yet — the AI Judge that writes this isn't wired up until the
+      agents pipeline lands" panel instead of an error. Rationale: don't write fake assessment data
+      into the DB. (Alternative was a backend placeholder scorecard — confirm below.)
+
+**Tests**
+- [ ] Update the 3 Vitest tests (Login, CaseUpload, Scorecard) to spy on the `api` functions instead
+      of relying on mock data; add a Scorecard "fallback when unavailable" test
+
+**Docs (self-updating)**
+- [ ] ARCHITECTURE §4/§9: note the frontend now calls the real API, `VITE_API_BASE_URL`, and
+      `CORS_ORIGINS`; note the scorecard-gap handling
+
+**Verify**
+- [ ] Bring up backend (compose + alembic + uvicorn) and frontend (`npm run dev`), walk the full
+      real flow in the browser; confirm real rows via curl/DB
+
+**Decisions (resolved):** (1) scorecard gap = **frontend fallback** message; (2) POST /api/sessions
+fires from **Dashboard's "Start sparring"** button (route-consistent), SparringRoom then GETs the
+LiveKit token.
+
+**Result:** Frontend now talks to the real backend. `lib/api.ts` rewritten to `fetch` with a shared
+`request()` (bearer from the auth store, 401 → logout) and snake→camel mapping; `getSessionScript`
+stays mocked. Auth store logs in via `/api/auth/login` then loads `/api/auth/me`; ProtectedRoute
+validates the session against `/api/auth/me`. SparringRoom fetches a real LiveKit token on load
+("Voice room ready"). Scorecard shows an honest "Not available yet" fallback on 404/409 (no fake
+data). Backend gained CORS for the Vite origin. **type-check clean, 5 Vitest tests pass, lint clean.**
+Verified in-browser end to end (real DB): login → /me → create case (POST 201) → start session
+(POST 201) → livekit token (200) → scorecard (409 → fallback); all CORS preflights 200.
+
+**Scorecard gap handling (flagged):** chose the **frontend fallback**, not a backend placeholder —
+the backend stays truthful (no fabricated scores in the DB); the session legitimately has no
+scorecard until the Judge agent exists.

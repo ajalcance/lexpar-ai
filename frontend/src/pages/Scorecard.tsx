@@ -19,17 +19,46 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import * as api from '@/lib/api';
+import { ApiError } from '@/lib/api';
 
 export function Scorecard() {
   const { id } = useParams<{ id: string }>();
   const sessionId = id ?? '';
-  const { data: scorecard, isLoading, isError } = useQuery({
+  const { data: scorecard, isLoading, isError, error } = useQuery({
     queryKey: ['scorecard', sessionId],
     queryFn: () => api.getScorecard(sessionId),
+    retry: false,
   });
 
   if (isLoading) {
     return <p className="text-sm text-muted-foreground">Scoring your session…</p>;
+  }
+
+  // The scorecard is written by the Judge agent, which isn't built yet: an incomplete session
+  // returns 409 and a completed-but-unscored one returns 404. Show an honest placeholder rather
+  // than a hard error or a fabricated score. (ARCHITECTURE §4 "Wiring status".)
+  const notYetAvailable = error instanceof ApiError && (error.status === 404 || error.status === 409);
+  if (isError && notYetAvailable) {
+    return (
+      <div className="flex flex-col gap-6">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-semibold">Scorecard</h1>
+          <Button variant="outline" nativeButton={false} render={<Link to="/dashboard" />}>
+            Back to cases
+          </Button>
+        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Not available yet</CardTitle>
+            <CardDescription>
+              The AI Judge that scores your session isn't wired up yet — it arrives with the
+              real-time agents pipeline. Your session was recorded; the written scorecard will
+              appear here once the Judge can generate it.
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      </div>
+    );
   }
 
   if (isError || !scorecard) {

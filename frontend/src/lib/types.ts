@@ -25,10 +25,9 @@ export interface User {
   firmName: string | null;
 }
 
-/** A case an attorney is preparing to argue. Mirrors the `cases` table. */
+/** A case an attorney is preparing to argue. Mirrors the `cases` table (API-visible fields). */
 export interface Case {
   id: string;
-  userId: string;
   title: string;
   caseFacts: string;
   createdAt: string;
@@ -38,7 +37,6 @@ export interface Case {
 export interface Session {
   id: string;
   caseId: string;
-  userId: string;
   status: SessionStatus;
   llmBackendUsed: LlmBackend | null;
   startedAt: string;
@@ -67,13 +65,7 @@ export interface Scorecard {
   createdAt: string;
 }
 
-/** Successful login result: a bearer token plus the authenticated user. */
-export interface AuthResult {
-  token: string;
-  user: User;
-}
-
-/** Access credentials for joining a LiveKit room (real wiring deferred). */
+/** Access credentials for joining a LiveKit room. */
 export interface LiveKitAccess {
   url: string;
   token: string;

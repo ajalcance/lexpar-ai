@@ -45,9 +45,17 @@ class Settings(BaseSettings):
     jwt_secret: str = "dev-insecure-change-me"
     auth_mode: str = "stub"
 
+    # CORS — comma-separated list of allowed browser origins (the frontend dev server).
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+
     # Token settings (not env-driven; sensible constants)
     jwt_algorithm: str = "HS256"
     access_token_ttl_minutes: int = 60
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        """CORS origins as a list, from the comma-separated env value."""
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
 
 @lru_cache
