@@ -18,4 +18,15 @@ When Claude Code gets something wrong and you correct it, end the correction wit
 
 ## Entries
 
-_None yet — this fills in as the project gets built._
+### [Frontend/tooling] Vite 8 breaks the Vitest toolchain
+**Wrong:** Kept `create-vite`'s defaults (Vite 8 + `@vitejs/plugin-react` 6). Vitest 3.2 pulled
+its own Vite 7, producing two Vite copies — `vitest/config` typed `test` against Vite 7 while the
+app's `defineConfig` was Vite 8, so plugin types clashed and the config wouldn't type-check.
+**Right:** Pin `vite` to `^7` and `@vitejs/plugin-react` to `^5` until Vitest supports Vite 8.
+Keep a single Vite version across the app and the test runner (`npm ls vite` should show one).
+
+### [Frontend/shadcn] The default shadcn style is Base UI, not Radix
+**Wrong:** Composed buttons with Radix's `asChild` prop (`<Button asChild><Link/></Button>`).
+**Right:** The current shadcn style ("base-nova") renders on `@base-ui/react`. Compose with the
+`render` prop instead — `<Button render={<Link to="…" />}>label</Button>` — and add
+`nativeButton={false}` when the rendered element is not a real `<button>` (e.g. a link).
