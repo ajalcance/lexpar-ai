@@ -214,6 +214,66 @@ FastAPI's role is auth, case management, and persisting the results the agents w
 
 ---
 
+## 6.5 Memory & verification
+
+Two things keep the spoken replies trustworthy under real-time pressure: a structured memory of the
+session, and a verification pass before anything is spoken.
+
+### Session memory (`SessionState`)
+
+Each active session holds a structured, in-memory `SessionState` (`agents/session_state.py`) — not
+just a chat transcript:
+
+- **case_facts** — the immutable facts supplied when the session starts.
+- **established_facts** — a ledger of facts established during the session (entered into evidence,
+  stipulated, or stated without objection).
+- **objections** — a ledger of objections: the grounds, who raised it, and the judge's ruling
+  (`pending` → `sustained` | `overruled`).
+
+This lets Opposing Counsel and the Judge reason about *what's actually on the record* instead of
+re-deriving it from raw transcript each turn, and it is the ground truth the verification pass
+checks against. It lives in memory for the session's lifetime; durable copies persist through the
+backend models (`transcripts`, `scorecards`) — the raw ledger is never logged.
+
+### Verification pass (before TTS)
+
+After the reasoning model drafts a reply, a verification pass runs **before** the reply reaches
+TTS. It checks:
+
+1. **Consistency** against `SessionState` — the reply must not contradict `case_facts`,
+   `established_facts`, or standing objection rulings (e.g. don't rely on testimony that was just
+   stricken on a sustained objection).
+2. **Fabricated legal citations** — a heuristic checker (`agents/verification.py`) flags
+   citation-shaped text with unrecognized reporters or implausible years; an LLM/DB-backed check
+   comes later.
+
+On **fail**, the draft is discarded and the reasoning model regenerates (bounded retries). On
+**pass**, the reply goes to TTS.
+
+```mermaid
+flowchart TB
+    S[SessionState — case facts + ledger] --> R[Reasoning model — drafts the next reply]
+    R --> V[Verification pass — consistency + citations]
+    V -- fail: regenerate --> R
+    V -- pass --> T[Spoken response → TTS]
+```
+
+### Co-location
+
+Once the reasoning model is self-hosted on the AMD MI300X (§7), the verification model runs **on the
+same GPU** as the reasoning model — the check is a local forward pass, not a network hop, so it fits
+inside the turn's latency budget. While both run on Fireworks, verification is simply a second API
+call.
+
+### Implemented now vs. pending keys
+
+- **Implemented + tested (no keys):** `SessionState` and its update methods; the regex citation
+  heuristic (`find_suspicious_citations`).
+- **Stubbed (pending Fireworks/AMD keys):** the LLM-based consistency check —
+  `# TODO: implement once Fireworks/AMD keys are available` in `agents/verification.py`.
+
+---
+
 ## 7. LLM inference routing
 
 | Agent | Default (now) | Post-droplet option | Why |

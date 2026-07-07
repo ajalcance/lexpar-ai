@@ -37,7 +37,21 @@ jobs:
       - run: ruff check .
       - run: pytest
 
-  # NOTE: agents/ is a skeleton pending API keys — intentionally not in the test job yet.
+  # Only the no-key modules (session_state, verification) are implemented + tested here; the
+  # LLM/STT/TTS pipeline files stay skeletons and are not imported by the tests.
+  agents:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agents
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: ruff check .
+      - run: pytest
 
   docker-build:
     runs-on: ubuntu-latest

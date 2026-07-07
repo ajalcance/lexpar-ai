@@ -260,3 +260,58 @@ Verified in-browser end to end (real DB): login → /me → create case (POST 20
 **Scorecard gap handling (flagged):** chose the **frontend fallback**, not a backend placeholder —
 the backend stays truthful (no fabricated scores in the DB); the session legitimately has no
 scorecard until the Judge agent exists.
+
+---
+
+### Memory & verification: docs + two no-key modules — status: done
+
+**Goal:** Document the memory/verification design in ARCHITECTURE, then implement + test only the
+two pieces that need no API keys (SessionState, citation heuristic). Leave the LLM consistency
+check as a stub.
+
+**Docs**
+- [ ] ARCHITECTURE: new "## 6.5 Memory & verification" section (placed after §6, no renumbering) —
+      structured in-memory SessionState (case facts, established facts, objections ledger); a
+      verification pass before TTS checking (a) consistency vs SessionState and (b) fabricated
+      legal citations; verification model co-located on the same GPU as the reasoning model once
+      self-hosted (Fireworks = a second call until then). Include a small mermaid flow
+      (SessionState → Reasoning → Verification → fail:regenerate / pass:TTS) and note what's
+      implemented now vs stubbed.
+
+**Implement — `agents/session_state.py`** (pure Python, no keys)
+- [ ] `Objection` dataclass (grounds, raised_by, ruling: pending|sustained|overruled) + `SessionState`
+      dataclass (case_facts, established_facts ledger, objections ledger) with update methods:
+      `add_established_fact`, `record_objection`, `rule_on_objection` (validates ruling; rejects
+      re-ruling a resolved one), `pending_objections` / `sustained_objections`, and a compact
+      `snapshot()` for use as verifier/prompt context
+
+**Implement — `agents/verification.py`** (regex heuristic, no keys)
+- [ ] `find_suspicious_citations(text) -> list[CitationFinding]` + `has_suspicious_citation(text)`:
+      regex-detect "volume reporter page (year)" case citations, flag (i) unrecognized reporter
+      abbreviations (not in a known allowlist) and (ii) implausible years (future / pre-1789)
+- [ ] `check_consistency(reply, state)` — LLM-based consistency check left as a
+      `# TODO: implement once Fireworks/AMD keys are available` stub (raises NotImplementedError)
+
+**Tests (pytest)**
+- [ ] `agents/tests/test_session_state.py` — sample turns: empty init, add facts (dedupe), record +
+      rule objections, invalid/duplicate ruling raises, pending/sustained filters, snapshot content
+- [ ] `agents/tests/test_verification.py` — sample sentences: clean citations (Brown v. Board /
+      F.3d) not flagged, fabricated-looking (bogus reporter, future year) flagged, plain sentence
+      not flagged; consistency stub raises NotImplementedError
+- [ ] `agents/conftest.py` (empty — puts `agents/` on sys.path) + `agents/requirements.txt`
+      (pytest, ruff) for local runs
+
+**Decision (resolved):** added a minimal agents CI test job (installs `agents/requirements.txt`,
+runs `ruff check` + `pytest`) covering only the no-key modules; the LLM-pipeline files stay
+skeletons and aren't imported by the tests.
+
+**Result:** Done. ARCHITECTURE gained "## 6.5 Memory & verification" (SessionState memory,
+pre-TTS verification pass, GPU co-location, mermaid flow, implemented-vs-stubbed note).
+`agents/session_state.py` implements `SessionState` + `Objection` with validated update methods
+(add/dedupe facts, record objection, rule with re-ruling/unknown-ruling guards, pending/sustained
+filters, `snapshot()`). `agents/verification.py` implements `find_suspicious_citations` /
+`has_suspicious_citation` (regex flags unrecognized reporters + implausible years) and leaves
+`check_consistency` as a `# TODO … Fireworks/AMD keys` stub (raises NotImplementedError). Tests:
+`agents/tests/` — 19 passing (SessionState sample turns; clean vs fabricated citation sentences;
+stub contract). Added `agents/pyproject.toml` (ruff + pytest `pythonpath`) and
+`agents/requirements.txt`. **ruff clean, 19 pytest pass.** CI now has an agents job.
