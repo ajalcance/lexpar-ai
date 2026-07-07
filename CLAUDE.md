@@ -28,3 +28,7 @@ Developer Cloud droplet exists.
 
 Keep this file and the docs above in sync as the project evolves — a stale doc actively
 misleads future sessions.
+
+**Self-updating docs:** if a task changes the architecture, introduces a new coding convention,
+or produces a lesson worth remembering, update ARCHITECTURE.md, DEVELOPER_GUIDELINES.md, or
+LESSONS.md before considering the task done — don't wait to be asked.
