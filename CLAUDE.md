@@ -22,5 +22,7 @@ the pre-merge checklist: see [docs/DEVELOPER_GUIDELINES.md](docs/DEVELOPER_GUIDE
 **Known placeholder:** auth is currently stubbed (`admin`/`admin`, `AUTH_MODE=stub`) — must
 not touch real attorney or case data until replaced (tracked in ARCHITECTURE.md §11).
 
+**Commits:** do not include a `Co-Authored-By` line for Claude in commit messages.
+
 Keep this file, `docs/ARCHITECTURE.md`, and `docs/DEVELOPER_GUIDELINES.md` in sync as the
 project evolves — a stale doc actively misleads future sessions.
