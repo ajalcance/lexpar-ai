@@ -1,23 +1,26 @@
 """
 File: agents/verification.py
 Purpose: The pre-TTS verification pass (ARCHITECTURE §6.5). Two checks:
-    (a) consistency of a drafted reply against SessionState — LLM-backed, stubbed until keys exist;
+    (a) consistency of a drafted reply against SessionState — a small, fast Fireworks model
+        (via llm_router.verification_config) returns any contradictions with the session record;
     (b) fabricated legal citations — a regex heuristic that flags citation-shaped text using an
         unrecognized reporter abbreviation or an implausible year. The heuristic is deliberately
         conservative: it catches obviously invented citations without a legal database.
-Depends on: dataclasses, re, datetime (stdlib only — no API keys); agents/session_state.py (types)
-Related: agents/session_state.py, agents/opposing_counsel.py, agents/judge.py,
-    docs/ARCHITECTURE.md §6.5
+    The citation heuristic is offline; the consistency check makes a live API call.
+Depends on: json, re, datetime (stdlib); agents/session_state.py, agents/llm_router.py
+Related: agents/opposing_counsel.py, agents/judge.py, docs/ARCHITECTURE.md §6.5
 Security notes: Operates on reply text (attorney work product). Return findings by reference to the
-    matched span; never log the full reply.
+    matched span; never log the full reply or send it anywhere but the configured verifier endpoint.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from llm_router import build_endpoint, chat, verification_config
 from session_state import SessionState
 
 # Earliest plausible U.S. case-law year (Judiciary Act era). Anything before this, or in the
@@ -94,12 +97,55 @@ def has_suspicious_citation(text: str) -> bool:
     return bool(find_suspicious_citations(text))
 
 
+_CONSISTENCY_SYSTEM = (
+    "You are a verification model in a courtroom rehearsal system. You check a DRAFT REPLY only "
+    "for factual consistency with the SESSION RECORD — not style, tone, or persuasiveness. Flag "
+    "any statement in the draft that contradicts the case facts, an established fact, or a "
+    "sustained objection ruling. Respond ONLY with JSON of the form "
+    '{"consistent": boolean, "contradictions": [string, ...]}. If nothing in the draft '
+    "contradicts the record, return consistent=true and an empty contradictions list."
+)
+
+
+def _build_consistency_messages(reply: str, state: SessionState) -> list[dict[str, str]]:
+    """Build the (system, user) messages for the consistency verifier. Pure — no API call."""
+    user = f"SESSION RECORD:\n{state.snapshot()}\n\nDRAFT REPLY:\n{reply}"
+    return [
+        {"role": "system", "content": _CONSISTENCY_SYSTEM},
+        {"role": "user", "content": user},
+    ]
+
+
+def _parse_consistency(content: str) -> list[str]:
+    """Extract the contradictions list from the verifier's JSON reply. Pure — no API call."""
+    start = content.find("{")
+    end = content.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        raise ValueError("verifier did not return a JSON object")
+    data = json.loads(content[start : end + 1])
+    contradictions = data.get("contradictions", [])
+    if not isinstance(contradictions, list):
+        raise ValueError("verifier 'contradictions' field is not a list")
+    return [str(item) for item in contradictions]
+
+
 def check_consistency(reply: str, state: SessionState) -> list[str]:
     """
-    LLM-backed check that `reply` does not contradict `state` (case facts, established facts,
-    standing objection rulings). Returns a list of contradiction descriptions (empty = consistent).
+    Check that `reply` does not contradict `state` (case facts, established facts, sustained
+    objection rulings) using the small verification model. Returns a list of contradiction
+    descriptions — empty means consistent. Fails closed: if the verifier output can't be parsed,
+    returns a non-empty result so the caller regenerates rather than trusting an unverified draft.
     """
-    # TODO: implement once Fireworks/AMD keys are available
-    raise NotImplementedError(
-        "LLM-based consistency check is not implemented yet (pending Fireworks/AMD keys)."
+    endpoint = build_endpoint(verification_config())
+    messages = _build_consistency_messages(reply, state)
+    content = chat(
+        endpoint,
+        messages,
+        temperature=0.0,
+        max_tokens=512,
+        response_format={"type": "json_object"},
     )
+    try:
+        return _parse_consistency(content)
+    except (ValueError, json.JSONDecodeError):
+        return ["verification failed: verifier response could not be parsed"]

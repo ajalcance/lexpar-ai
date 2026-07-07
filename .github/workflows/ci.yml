@@ -51,7 +51,8 @@ jobs:
           python-version: "3.11"
       - run: pip install -r requirements.txt
       - run: ruff check .
-      - run: pytest
+      # Live Fireworks tests are marked `live` and excluded here (no API key in CI).
+      - run: pytest -m "not live"
 
   docker-build:
     runs-on: ubuntu-latest

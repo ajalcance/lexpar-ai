@@ -1,6 +1,10 @@
 # Agents worker dependencies.
-# The LLM / STT / TTS pipeline deps (livekit-agents, provider SDKs) are added once API keys
-# exist. For now this covers the no-key modules (session_state, verification) and their tests.
+# Fireworks (and self-hosted vLLM later) are OpenAI-compatible, so we use the openai client.
+# STT/TTS pipeline deps (livekit-agents, Deepgram, ElevenLabs) are added once those keys exist.
 
+openai>=1.40
+python-dotenv>=1.0
+
+# Dev / CI
 pytest>=8.0
 ruff>=0.6

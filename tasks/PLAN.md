@@ -315,3 +315,78 @@ filters, `snapshot()`). `agents/verification.py` implements `find_suspicious_cit
 `agents/tests/` — 19 passing (SessionState sample turns; clean vs fabricated citation sentences;
 stub contract). Added `agents/pyproject.toml` (ruff + pytest `pythonpath`) and
 `agents/requirements.txt`. **ruff clean, 19 pytest pass.** CI now has an agents job.
+
+---
+
+### Wire up Fireworks: llm_router, consistency check, opposing counsel + judge — status: done
+
+**Goal:** Make the agents actually generate + verify responses via Fireworks (OpenAI-compatible),
+with a text-only harness so it's testable without any voice infra. main.py stays a skeleton.
+Split every module into offline-testable pure logic (CI) vs live API calls (excluded from CI).
+
+**Config & routing**
+- [ ] `agents/config.py` — load repo-root `.env` (python-dotenv), expose per-role provider /
+      endpoint / model + `FIREWORKS_API_KEY`. New model env vars (defaults, Fireworks):
+      `OPPOSING_COUNSEL_LLM_MODEL`, `JUDGE_LLM_MODEL` (Gemma per §7), `VERIFICATION_LLM_MODEL`
+      (small/fast, *not* the reasoning model), plus `VERIFICATION_LLM_PROVIDER/ENDPOINT`
+- [ ] `agents/llm_router.py` (per §7) — `LlmConfig` resolver per role (opposing_counsel / judge /
+      verification) from env, `build_client()` (OpenAI client → Fireworks now, self-hosted vLLM
+      later — same code path), and a `chat()` helper. Offline-testable (no network on construction).
+
+**Verification (finish the stub)**
+- [ ] `verification.check_consistency(reply, state)` — call the small verification model with the
+      `SessionState.snapshot()` + draft reply; model returns JSON `{consistent, contradictions[]}`.
+      Factor pure `_build_consistency_messages` + `_parse_consistency` (offline-tested); the live
+      call is behind them. Fail-closed on unparseable verifier output. Citation heuristic unchanged.
+
+**Agents (first working generation logic)**
+- [ ] `opposing_counsel.py` — load `prompts/opposing_counsel.md`, pure `build_messages(state, turn)`
+      (persona + state snapshot + attorney turn), live `generate_reply(state, turn)` via Fireworks
+- [ ] `judge.py` — load `prompts/judge.md`, pure `build_messages(...)`, live `generate_ruling(...)`
+
+**Text-only harness (no voice)**
+- [ ] `agents/harness.py` — feed fake case facts + a fake attorney transcript turn; generate the
+      opposing-counsel reply; run verification (citation heuristic + live consistency check); print
+      the reply and verification result. Runnable as `python harness.py` (needs the key). main.py
+      stays a skeleton.
+
+**Tests — offline (CI) vs live (excluded, not skipped)**
+- [ ] Offline (run in CI): llm_router config resolution + client base_url/model; prompt loading;
+      `build_messages` for both agents; verification `_build_consistency_messages` /
+      `_parse_consistency`; plus existing session_state + citation tests
+- [ ] Live (excluded from CI): `@pytest.mark.live` on real Fireworks calls (check_consistency finds
+      a planted contradiction; generate_reply/ruling return non-empty). Register the `live` marker;
+      `addopts = -m "not live"` so the default run + CI **deselect** them (reported as deselected,
+      not silently skipped); run them with `pytest -m live`. CI step becomes `pytest -m "not live"`.
+
+**Deps / docs**
+- [ ] `agents/requirements.txt`: add `openai`, `python-dotenv`
+- [ ] `.env.example` + ARCHITECTURE §9: document the new model env vars; note §6.5/§7 are now
+      partially live (Fireworks), STT/TTS still pending Deepgram/ElevenLabs
+
+**Verify**
+- [ ] `ruff` + `pytest -m "not live"` green; optionally run the harness + live tests (fake data)
+
+**Decisions (resolved):** confirmed to build + run live verification. **Model reality (flagged):**
+the confirmed llama/gemma defaults are NOT deployed on this Fireworks account (404). Available chat
+models: deepseek-v4-pro, glm-5p1/5p2, gpt-oss-120b, kimi-k2p5/6 (GLM/Kimi emit chain-of-thought,
+unusable). Final assignment: opposing counsel = `deepseek-v4-pro`; verification = `gpt-oss-120b`
+(clean JSON); judge = `gpt-oss-120b` via structured JSON. **Judge/Gemma follow-up:** confirmed with
+the user there is no serverless Gemma on this account (verified `/v1/models` + direct probes of
+Gemma 2/3/4 IDs incl. the changelog's Gemma 3 12B/4B — all 404). Per the user, using the best
+*working* model as interim: `deepseek-v4-pro` was rejected for the Judge (reasoning model: 30–60s
+and intermittently empty content); `gpt-oss-120b` (JSON) is fast (~2–3s) + reliable. Recorded in
+ARCHITECTURE §7/§11; move to Gemma once deployed.
+
+**Result:** Done and live-verified. `agents/config.py` (dotenv + per-role provider/endpoint/model)
+and `agents/llm_router.py` (§7: OpenAI-compatible client per role + `chat()` helper) implemented.
+`verification.check_consistency` now calls the small verifier model, returns JSON contradictions,
+fails closed on unparseable output (pure `_build_consistency_messages`/`_parse_consistency` for
+offline tests). `opposing_counsel.py` + `judge.py` generate replies/rulings from the persona
+prompts (judge uses structured JSON output for clean, non-empty rulings). `agents/harness.py` runs
+the full draft→verify path text-only (no voice); confirmed clean end to end: sharp OC rebuttal,
+verification PASS→TTS, crisp judge ruling. main.py stays a skeleton. Tests: **32 offline pass (CI),
+4 live pass** (`pytest -m live`); live tests marked `@pytest.mark.live` and **deselected** in CI via
+`addopts = -m "not live"` (CI runs `pytest -m "not live"`) — deselected, not skipped. ruff clean.
+Docs: ARCHITECTURE §6.5 (now live) + §7 (actual model IDs, Gemma-blocked note) + §9 model env vars;
+`.env.example` updated. Deepgram/ElevenLabs voice pipeline still pending.

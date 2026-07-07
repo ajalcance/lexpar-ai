@@ -1,19 +1,15 @@
 """
 File: agents/tests/test_verification.py
-Purpose: Tests for the citation heuristic (ARCHITECTURE §6.5) — clean sentences (real reporters,
-    plausible years, or no citation) are not flagged; fabricated-looking ones (bogus reporter or
-    implausible year) are. Also pins the consistency-check stub contract.
-Depends on: pytest, verification, session_state
+Purpose: Offline tests for the citation heuristic (ARCHITECTURE §6.5) — clean sentences (real
+    reporters, plausible years, or no citation) are not flagged; fabricated-looking ones (bogus
+    reporter or implausible year) are. The consistency check's live behavior is in
+    test_live_fireworks.py; its pure helpers are in test_verification_consistency.py.
+Depends on: pytest, verification
 """
 
 import pytest
 
-from session_state import SessionState
-from verification import (
-    check_consistency,
-    find_suspicious_citations,
-    has_suspicious_citation,
-)
+from verification import find_suspicious_citations, has_suspicious_citation
 
 CLEAN_SENTENCES = [
     "As the Court held in Marbury v. Madison, 5 U.S. 137 (1803), judicial review is settled.",
@@ -50,8 +46,3 @@ def test_future_year_flagged_even_with_known_reporter():
     findings = find_suspicious_citations("See 500 F.3d 100 (2099).")
     assert len(findings) == 1
     assert "implausible year" in findings[0].reason
-
-
-def test_consistency_check_is_stubbed():
-    with pytest.raises(NotImplementedError):
-        check_consistency("any drafted reply", SessionState())

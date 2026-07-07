@@ -1,0 +1,50 @@
+"""
+File: agents/tests/test_live_fireworks.py
+Purpose: LIVE tests that make real Fireworks API calls — generation (opposing counsel, judge) and
+    the consistency verifier. Marked `live` and DESELECTED from CI by pyproject's
+    `addopts = -m 'not live'`; run explicitly with `pytest -m live` (needs FIREWORKS_API_KEY).
+Depends on: pytest, opposing_counsel, judge, verification, session_state (+ a live Fireworks key)
+"""
+
+import pytest
+
+import judge
+import opposing_counsel
+from session_state import SessionState
+from verification import check_consistency
+
+pytestmark = pytest.mark.live
+
+
+def _demo_state() -> SessionState:
+    state = SessionState(case_facts="Rivera v. Coastal Logistics: wrongful-termination claim.")
+    state.add_established_fact("The employment contract was signed on March 3.")
+    return state
+
+
+def test_generate_reply_returns_text():
+    reply = opposing_counsel.generate_reply(_demo_state(), "My client acted in good faith.")
+    assert isinstance(reply, str)
+    assert reply.strip()
+
+
+def test_generate_ruling_returns_text():
+    ruling = judge.generate_ruling(_demo_state(), "Objection, Your Honor — hearsay.")
+    assert isinstance(ruling, str)
+    assert ruling.strip()
+
+
+def test_consistency_flags_a_contradiction():
+    # The reply denies an established fact; the verifier should flag at least one contradiction.
+    contradictions = check_consistency(
+        "There was never any signed employment contract in this case.", _demo_state()
+    )
+    assert isinstance(contradictions, list)
+    assert len(contradictions) >= 1
+
+
+def test_consistency_passes_a_faithful_reply():
+    contradictions = check_consistency(
+        "As the record reflects, the employment contract was signed on March 3.", _demo_state()
+    )
+    assert contradictions == []

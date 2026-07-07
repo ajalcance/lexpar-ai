@@ -12,3 +12,9 @@ select = ["E", "F", "I"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+# Live Fireworks tests are DESELECTED by default (and in CI) — reported as deselected, not
+# silently skipped. Run them explicitly with: pytest -m live
+addopts = "-m 'not live'"
+markers = [
+    "live: exercises live Fireworks API calls; excluded from CI (run with: pytest -m live)",
+]

@@ -269,19 +269,32 @@ call.
 
 - **Implemented + tested (no keys):** `SessionState` and its update methods; the regex citation
   heuristic (`find_suspicious_citations`).
-- **Stubbed (pending Fireworks/AMD keys):** the LLM-based consistency check —
-  `# TODO: implement once Fireworks/AMD keys are available` in `agents/verification.py`.
+- **Implemented, live via Fireworks:** the LLM consistency check (`check_consistency`, small
+  verification model), Opposing Counsel + Judge response generation, and `llm_router` (§7). Live
+  calls are covered by `@pytest.mark.live` tests, excluded from CI. A text-only harness
+  (`agents/harness.py`) exercises the whole draft → verify path without any voice infrastructure.
+- **Pending Deepgram/ElevenLabs keys:** the real-time STT → TTS voice pipeline (`agents/main.py`
+  stays a skeleton). Verification model GPU co-location arrives with self-hosting (§7).
 
 ---
 
 ## 7. LLM inference routing
 
-| Agent | Default (now) | Post-droplet option | Why |
+| Agent | Model in use now | Post-droplet option | Why |
 |---|---|---|---|
-| Opposing Counsel | Fireworks AI | Self-hosted vLLM on AMD MI300X | Proves AMD platform ownership for the hackathon; switch to self-hosted once session volume justifies dedicated GPU uptime |
-| Judge | Fireworks AI (Gemma) | Stays on Fireworks | Required for Gemma bonus prize eligibility — do not self-host this one |
+| Opposing Counsel | Fireworks `deepseek-v4-pro` | Self-hosted vLLM on AMD MI300X | Proves AMD platform ownership for the hackathon; switch to self-hosted once session volume justifies dedicated GPU uptime |
+| Judge | Fireworks `gpt-oss-120b`, JSON-structured (**interim**) | Stays on Fireworks | **Should be Gemma** for bonus-prize eligibility, but no serverless Gemma (2/3/4) is reachable on this account/endpoint — verified against the live `/v1/models` list and direct ID probes (all 404), including the Gemma 3 12B/4B IDs from Fireworks' changelog. Interim: `gpt-oss-120b` via structured `{"ruling": …}` output (fast, reliable). `deepseek-v4-pro` was rejected for the Judge — as a reasoning model it is slow (30–60s) and intermittently returns empty content. Do not self-host this one. |
+| Verification | Fireworks `gpt-oss-120b` | Same GPU as reasoning (self-hosted) | Small/fast verifier per §6.5 — deliberately not the reasoning model; needs clean JSON output. |
 
-Switching is a config change (`.env` value), never a code change — this is deliberate.
+Switching is a config change (`.env` value), never a code change — this is deliberate. **Bonus-eligibility
+note:** the Judge must move to a Gemma model before relying on Gemma-track eligibility; tracked as an
+open item until a serverless Gemma is available on the account.
+
+**Model-latency note:** Opposing Counsel stays on `deepseek-v4-pro` — benchmarked over repeated live
+runs at a median ~4s (3.5–7.8s), every run `finish=stop` with non-empty content. Its direct
+"generate a rebuttal" task does not trigger the long deliberation that made deepseek slow (30–60s)
+and intermittently empty for the Judge's "rule only if warranted" task — which is why the Judge
+runs on `gpt-oss-120b` (JSON-structured) instead. Verification uses `gpt-oss-120b` for clean JSON.
 
 ---
 
@@ -370,8 +383,11 @@ S3-compatible (MinIO locally, DigitalOcean Spaces in production).
 | `LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | LiveKit server connection |
 | `OPPOSING_COUNSEL_LLM_PROVIDER` | `fireworks` \| `self_hosted` |
 | `OPPOSING_COUNSEL_LLM_ENDPOINT` | OpenAI-compatible URL for whichever provider is active |
-| `JUDGE_LLM_PROVIDER` | keep as `fireworks` (Gemma bonus eligibility) |
-| `JUDGE_LLM_ENDPOINT` | Fireworks Gemma endpoint |
+| `OPPOSING_COUNSEL_LLM_MODEL` | Reasoning model id (default: `deepseek-v4-pro`) |
+| `JUDGE_LLM_PROVIDER` | keep as `fireworks` (Gemma bonus eligibility once Gemma is deployed) |
+| `JUDGE_LLM_ENDPOINT` | Fireworks endpoint |
+| `JUDGE_LLM_MODEL` | Judge model id (default: `deepseek-v4-pro`; use Gemma once available) |
+| `VERIFICATION_LLM_PROVIDER` / `VERIFICATION_LLM_ENDPOINT` / `VERIFICATION_LLM_MODEL` | Verifier, NOT the reasoning model (§6.5; default `gpt-oss-120b` — swap for a smaller model when deployed) |
 | `FIREWORKS_API_KEY` / `DEEPGRAM_API_KEY` / `ELEVENLABS_API_KEY` | Provider auth |
 | `JWT_SECRET` | Token signing |
 | `AUTH_MODE` | `stub` \| `production` |
@@ -402,6 +418,9 @@ the backend — see `frontend/.env.example`. Vite only exposes vars prefixed `VI
       data touches the system.
 - [ ] Cut the Opposing Counsel agent over to self-hosted vLLM once the AMD droplet exists and
       hackathon submission is locked in.
+- [ ] Move the Judge to a Gemma model (`JUDGE_LLM_MODEL`) for bonus-track eligibility — currently
+      running `gpt-oss-120b` (JSON-structured) as an interim because no serverless Gemma is
+      reachable on this Fireworks account (§7).
 - [ ] Re-evaluate self-hosted vs. Fireworks-only for production once real session volume exists
       (see cost model discussion — fixed GPU cost only pays off at volume).
 - [ ] Billing integration (Stripe) — not needed until first paying customer.
