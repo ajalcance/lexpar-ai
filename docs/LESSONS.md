@@ -52,3 +52,15 @@ fail at startup — it crashed later at the first login (`HMAC key must not be e
 message (`openssl rand -hex 32`). Supply it via env/`.env`; give tests a real (long) value in
 conftest. Prefer fail-closed defaults for other credentials too (e.g. an empty `AGENT_SERVICE_TOKEN`
 rejects all internal calls rather than allowing them).
+
+### [Backend/config] Anchor the `.env` path to the file, not the working directory
+**Wrong:** `SettingsConfigDict(env_file=".env")`. That path is resolved against the current working
+directory. Running `uvicorn app.main:app` from inside `backend/` made pydantic look for
+`backend/.env` (which doesn't exist), so `JWT_SECRET` came up blank and the app died at startup with
+"JWT_SECRET must be set" — even though a real value was in the project-root `.env`. It only worked
+when launched from the repo root, a CWD-dependent trap.
+**Right:** Resolve the env file absolutely from the module's own location:
+`ENV_FILE = Path(__file__).resolve().parents[2] / ".env"` (from `backend/app/config.py`), then
+`env_file=ENV_FILE`. Now `.env` loads the same whether uvicorn starts from the repo root or from
+inside `backend/`. General rule: config/asset paths should be anchored to `__file__`, never to the
+CWD.

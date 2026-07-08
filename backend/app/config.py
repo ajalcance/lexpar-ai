@@ -9,6 +9,7 @@ Security notes: Secrets (JWT_SECRET, provider keys) come from the environment on
 """
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -17,11 +18,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # rejects the old insecure default and any blank/short secret.
 MIN_JWT_SECRET_LEN = 32
 
+# The project-root .env, resolved from this file's location (backend/app/config.py) rather than a
+# path relative to the current working directory. This makes `.env` load reliably whether uvicorn is
+# launched from the repo root or from inside backend/ (see docs/LESSONS.md).
+ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+
 
 class Settings(BaseSettings):
     """Typed view over the environment. Field names map case-insensitively to env vars."""
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=ENV_FILE, extra="ignore")
 
     # Database
     database_url: str = "postgresql://postgres:postgres@localhost:5432/lexpar"
