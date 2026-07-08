@@ -411,8 +411,12 @@ the backend — see `frontend/.env.example`. Vite only exposes vars prefixed `VI
 
 ## 10. Deployment
 
-- **Local dev:** `docker-compose.yml` — Postgres, MinIO, LiveKit server, backend, agents, frontend
-  dev server, all on your machine. Both LLM agents point at Fireworks until the AMD droplet exists.
+- **Local dev:** `infra/docker-compose.yml` brings up the infra — Postgres, MinIO, and the LiveKit
+  server (dev mode, default keys `devkey`/`secret`). The backend, agents, and frontend dev server run
+  on the host and point at these via `.env` / `VITE_API_BASE_URL`. Both LLM agents point at Fireworks
+  until the AMD droplet exists. Bring it up with
+  `docker compose -f infra/docker-compose.yml up -d`; LiveKit answers on `http://localhost:7880`
+  (returns `OK`).
 - **Production (AMD Developer Cloud):** `docker-compose.prod.yml` on the droplet. CI builds and
   tags images on every push; deploy is `docker compose pull && docker compose up -d`.
 - **CI (`.github/workflows/ci.yml`):** lint + type-check + test + build images on every push, so

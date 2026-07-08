@@ -1,4 +1,5 @@
-# Local development infrastructure for LexPar AI: Postgres + MinIO (S3-compatible object store).
+# Local development infrastructure for LexPar AI: Postgres + MinIO (S3-compatible object store) +
+# LiveKit (real-time media server, dev mode).
 # Bring up with: docker compose -f infra/docker-compose.yml up -d
 # The backend and agents run on the host (or their own images) and point at these via .env.
 
@@ -32,6 +33,18 @@ services:
       - "9001:9001"   # web console
     volumes:
       - minio_data:/data
+
+  # LiveKit media server in dev mode. `--dev` uses the default API key devkey/secret, matching
+  # .env.example; LIVEKIT_KEYS makes that explicit. Not for production.
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --dev
+    environment:
+      LIVEKIT_KEYS: "devkey: secret"
+    ports:
+      - "7880:7880"       # signaling: HTTP + WebSocket
+      - "7881:7881"       # WebRTC / ICE over TCP
+      - "7882:7882/udp"   # WebRTC / ICE over UDP
 
   # One-shot: create the case-files bucket, then exit.
   createbuckets:
