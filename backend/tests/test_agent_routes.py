@@ -1,0 +1,100 @@
+"""
+File: tests/test_agent_routes.py
+Purpose: End-to-end persistence tests for the internal agent routes (Gap 4) via the test backend
+    instance (TestClient) — service-token auth + least privilege, /complete transitions, and
+    /scorecard persisting the transcript batch + scorecard so the user then reads a real scorecard.
+Depends on: pytest, fastapi TestClient (conftest fixtures)
+Related: app/api/internal.py, app/security_agent.py, app/services/agent_write_service.py
+"""
+
+AGENT = {"X-Agent-Token": "test-agent-token"}
+
+SCORECARD_PAYLOAD = {
+    "overall_score": 84,
+    "strengths": "Clear framing of the good-faith argument.",
+    "weaknesses": "Drifted from the record once.",
+    "judge_ruling": "The position holds up with cleaner sequencing.",
+    "transcript": [
+        {"speaker": "attorney", "content": "Good faith throughout.", "was_interruption": False},
+        {"speaker": "opposing_counsel", "content": "Objection.", "was_interruption": True},
+        {"speaker": "judge", "content": "Sustained.", "was_interruption": False},
+    ],
+}
+
+
+def _new_session(client, auth_headers) -> str:
+    case = client.post(
+        "/api/cases", headers=auth_headers, json={"title": "Rivera v. Coastal", "case_facts": "F"}
+    ).json()
+    session = client.post(
+        "/api/sessions", headers=auth_headers, json={"case_id": case["id"]}
+    ).json()
+    return session["id"]
+
+
+def _complete(client, session_id):
+    return client.post(f"/api/sessions/{session_id}/complete", headers=AGENT)
+
+
+def _write_scorecard(client, session_id):
+    return client.post(
+        f"/api/sessions/{session_id}/scorecard", headers=AGENT, json=SCORECARD_PAYLOAD
+    )
+
+
+def test_internal_routes_reject_missing_or_wrong_token(client, auth_headers):
+    session_id = _new_session(client, auth_headers)
+    assert client.post(f"/api/sessions/{session_id}/complete").status_code == 401
+    bad = client.post(f"/api/sessions/{session_id}/complete", headers={"X-Agent-Token": "nope"})
+    assert bad.status_code == 401
+
+
+def test_least_privilege_both_ways(client, auth_headers):
+    session_id = _new_session(client, auth_headers)
+    # A user JWT does NOT grant the internal route.
+    with_user_jwt = client.post(f"/api/sessions/{session_id}/complete", headers=auth_headers)
+    assert with_user_jwt.status_code == 401
+    # The agent token does NOT grant a user-facing route.
+    assert client.get("/api/cases", headers=AGENT).status_code == 401
+
+
+def test_complete_transitions_and_is_idempotent(client, auth_headers):
+    session_id = _new_session(client, auth_headers)
+    resp = _complete(client, session_id)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "completed"
+    assert body["ended_at"] is not None
+    # Completing again is a conflict (terminal state).
+    assert _complete(client, session_id).status_code == 409
+
+
+def test_complete_unknown_session_is_404(client):
+    unknown = "00000000-0000-0000-0000-000000000000"
+    assert client.post(f"/api/sessions/{unknown}/complete", headers=AGENT).status_code == 404
+
+
+def test_scorecard_requires_completed_and_no_duplicate(client, auth_headers):
+    session_id = _new_session(client, auth_headers)
+    assert _write_scorecard(client, session_id).status_code == 409  # not completed yet
+    _complete(client, session_id)
+    assert _write_scorecard(client, session_id).status_code == 201
+    assert _write_scorecard(client, session_id).status_code == 409  # duplicate
+
+
+def test_full_session_end_then_user_reads_scorecard_and_transcript(client, auth_headers):
+    session_id = _new_session(client, auth_headers)
+    _complete(client, session_id)
+    _write_scorecard(client, session_id)
+
+    # The user now reads a REAL scorecard (no more 409 "not available yet").
+    scorecard = client.get(f"/api/sessions/{session_id}/scorecard", headers=auth_headers)
+    assert scorecard.status_code == 200
+    assert scorecard.json()["overall_score"] == 84
+    assert scorecard.json()["judge_ruling"] == SCORECARD_PAYLOAD["judge_ruling"]
+
+    # And the session detail returns the batch-written transcript in order.
+    session = client.get(f"/api/sessions/{session_id}", headers=auth_headers).json()
+    speakers = [t["speaker"] for t in session["transcripts"]]
+    assert speakers == ["attorney", "opposing_counsel", "judge"]
+    assert session["transcripts"][1]["was_interruption"] is True

@@ -69,3 +69,8 @@ OBJECTION_MODEL = os.getenv(
 DEEPGRAM_MODEL = os.getenv("DEEPGRAM_MODEL", "nova-3")
 ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5")  # low-latency Flash
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
+
+# Backend persistence (Gap 4): the worker completes the session + writes the scorecard/transcript
+# at session end, authenticating with the scoped agent service token (NOT a user login).
+AGENT_BACKEND_URL = os.getenv("AGENT_BACKEND_URL", "http://localhost:8000")
+AGENT_SERVICE_TOKEN = os.getenv("AGENT_SERVICE_TOKEN", "")

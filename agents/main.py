@@ -34,9 +34,11 @@ from livekit import agents
 from livekit.agents import Agent, AgentSession, WorkerOptions, cli
 from livekit.plugins import deepgram, elevenlabs, openai, silero
 
+import backend_client
 import config
 import judge
 import opposing_counsel
+import scorecard_builder
 import verification
 from objection_classifier import ObjectionClassifier
 from session_state import SessionState
@@ -46,6 +48,11 @@ logger = logging.getLogger("lexpar.agents")
 
 # Bounded regenerate loop for the pre-TTS verification pass (ARCHITECTURE §6.5).
 MAX_VERIFICATION_RETRIES = 2
+
+
+def _session_id_from_room(room) -> str:
+    """The backend session id is encoded in the room name (livekit_token.py: 'session-<id>')."""
+    return (getattr(room, "name", "") or "").removeprefix("session-")
 
 
 def _last_user_text(chat_ctx) -> str:
@@ -71,6 +78,7 @@ class OpposingCounselAgent(Agent):
         attorney_turn = _last_user_text(chat_ctx)
         # generate_reply + verification are blocking (Fireworks HTTP); run off the event loop.
         reply = await asyncio.to_thread(self._verified_reply, attorney_turn)
+        self._state.add_turn("opposing_counsel", reply)  # accumulate for the end-of-session batch
         yield reply
 
     def _verified_reply(self, attorney_turn: str) -> str:
@@ -115,17 +123,28 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         # tested voice_interrupt glue (the classifier debounces so a growing fragment won't refire).
         if getattr(event, "is_final", False):
             last_turn["text"] = event.transcript
+            state.add_turn("attorney", event.transcript)  # accumulate the attorney's turn
         asyncio.create_task(handle_interim(session, classifier, event.transcript))
 
-    async def _closing_ruling() -> None:
-        # Judge delivers a closing ruling at session end (judge.py unchanged). Generation works
-        # offline; speaking it before the room closes + persisting it is left for live-room tuning.
-        if last_turn["text"]:
-            ruling = await asyncio.to_thread(judge.generate_ruling, state, last_turn["text"])
-            logger.info("Judge closing ruling ready (%d chars)", len(ruling))
-            # TODO(live room): deliver via session.say(...) and persist through the backend.
+    async def _persist_at_end() -> None:
+        # Session end (Gap 4): Judge's closing ruling (judge.py unchanged), then ONE batch write —
+        # complete the session and persist the transcript + a scorecard derived from the ruling +
+        # SessionState, using the scoped agent service token.
+        if not last_turn["text"]:
+            return
+        ruling = await asyncio.to_thread(judge.generate_ruling, state, last_turn["text"])
+        state.add_turn("judge", ruling)
+        session_id = _session_id_from_room(ctx.room)
+        payload = scorecard_builder.build_session_end_payload(state, ruling)
+        turn_count = len(state.transcript)
+        try:
+            await asyncio.to_thread(backend_client.complete_session, session_id)
+            await asyncio.to_thread(backend_client.write_scorecard, session_id, payload)
+            logger.info("Persisted session %s (scorecard + %d turns)", session_id, turn_count)
+        except Exception:
+            logger.exception("Failed to persist session %s at shutdown", session_id)
 
-    ctx.add_shutdown_callback(_closing_ruling)
+    ctx.add_shutdown_callback(_persist_at_end)
 
     await session.start(agent=OpposingCounselAgent(state), room=ctx.room)
 

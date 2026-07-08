@@ -15,6 +15,7 @@ Security notes: Holds case facts and transcript-derived content (attorney work p
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 VALID_RULINGS = frozenset({"sustained", "overruled"})
 _PENDING = "pending"
@@ -34,18 +35,46 @@ class Objection:
 
 
 @dataclass
+class TranscriptTurn:
+    """One spoken turn accumulated during the session (for the batch write at session end)."""
+
+    speaker: str  # 'attorney' | 'opposing_counsel' | 'judge'
+    content: str
+    was_interruption: bool = False
+    spoken_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass
 class SessionState:
     """In-memory memory for one session."""
 
     case_facts: str = ""
     established_facts: list[str] = field(default_factory=list)
     objections: list[Objection] = field(default_factory=list)
+    transcript: list[TranscriptTurn] = field(default_factory=list)
 
     def add_established_fact(self, fact: str) -> None:
         """Record a fact established during the session. Ignores blank/duplicate facts."""
         cleaned = fact.strip()
         if cleaned and cleaned not in self.established_facts:
             self.established_facts.append(cleaned)
+
+    def add_turn(
+        self,
+        speaker: str,
+        content: str,
+        was_interruption: bool = False,
+        spoken_at: datetime | None = None,
+    ) -> TranscriptTurn:
+        """Append a spoken turn to the running transcript."""
+        turn = TranscriptTurn(
+            speaker=speaker,
+            content=content,
+            was_interruption=was_interruption,
+            spoken_at=spoken_at or datetime.now(timezone.utc),
+        )
+        self.transcript.append(turn)
+        return turn
 
     def record_objection(self, grounds: str, raised_by: str) -> Objection:
         """Log a newly raised objection (pending until the judge rules) and return it."""

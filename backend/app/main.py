@@ -15,7 +15,7 @@ import uuid
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, cases, livekit_token, scorecards, sessions
+from app.api import auth, cases, internal, livekit_token, scorecards, sessions
 from app.config import get_settings
 
 logging.basicConfig(
@@ -59,5 +59,5 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-for module in (auth, cases, sessions, scorecards, livekit_token):
+for module in (auth, cases, sessions, scorecards, livekit_token, internal):
     app.include_router(module.router)

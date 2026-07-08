@@ -4,6 +4,7 @@
 
 openai>=1.40
 python-dotenv>=1.0
+httpx>=0.27
 
 # Dev / CI
 pytest>=8.0

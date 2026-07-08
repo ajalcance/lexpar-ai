@@ -191,9 +191,18 @@ scorecard retrieval. Two things remain mocked/absent until the agents pipeline e
 | GET | `/api/sessions/{id}` | Session status + transcript | yes |
 | GET | `/api/sessions/{id}/scorecard` | Scorecard after session ends | yes |
 | GET | `/api/livekit/token` | Issues a LiveKit room access token for the frontend | yes |
+| POST | `/api/sessions/{id}/complete` | (internal) Mark session completed | agent token |
+| POST | `/api/sessions/{id}/scorecard` | (internal) Write scorecard + full transcript batch at session end | agent token |
 
 FastAPI does not touch real-time audio at all — that's entirely the LiveKit Agents worker's job.
 FastAPI's role is auth, case management, and persisting the results the agents worker produces.
+
+**Internal (agent) routes vs. user routes.** The two `agent token` routes above are written by the
+agents worker at session end, authenticated with a **scoped service credential** (`X-Agent-Token`
+header, `AGENT_SERVICE_TOKEN`) — a *separate mechanism* from user JWT login (`app/security_agent.py`,
+not `app/security.py`). Least privilege (DEV_GUIDELINES §7): the agent token grants only these two
+routes and nothing user-facing; a user JWT does not grant them. The scorecard write **batches the
+whole transcript in one call** (no per-turn round-trips inside the live voice loop).
 
 ---
 
@@ -388,6 +397,10 @@ S3-compatible (MinIO locally, DigitalOcean Spaces in production).
   schema migration.
 - **Sensitive fields** (`cases.case_facts`, `transcripts.content`, scorecard text) are tagged
   `# SENSITIVE: attorney work product` in the models and never logged.
+- **Who writes what:** the browser client never writes `transcripts` or `scorecards`. The agents
+  worker persists them **once at session end** via the internal routes (§5): `POST .../complete` then
+  `POST .../scorecard`, which batch-inserts the whole transcript alongside the scorecard. The user
+  routes only read them back.
 
 ---
 
@@ -411,6 +424,8 @@ S3-compatible (MinIO locally, DigitalOcean Spaces in production).
 | `JWT_SECRET` | Token signing |
 | `AUTH_MODE` | `stub` \| `production` |
 | `CORS_ORIGINS` | Comma-separated browser origins allowed to call the API (e.g. the Vite dev server) |
+| `AGENT_SERVICE_TOKEN` | Scoped service credential for the agent's internal session-write routes (§5) — NOT user auth. Empty = internal routes locked |
+| `AGENT_BACKEND_URL` | (agents worker) Base URL of the backend the worker persists to (default `http://localhost:8000`) |
 
 Never commit `.env` — `.env.example` documents the shape, real values stay local/secrets-managed.
 
@@ -442,7 +457,8 @@ the backend — see `frontend/.env.example`. Vite only exposes vars prefixed `VI
 ## 11. Open items / roadmap
 
 - [ ] Replace `AUTH_MODE=stub` (admin/admin) with real auth before any real attorney or real case
-      data touches the system.
+      data touches the system. (Note: the agents worker's `AGENT_SERVICE_TOKEN` is already a separate,
+      scoped credential — not part of the stubbed user auth — so it survives that replacement.)
 - [ ] Cut the Opposing Counsel agent over to self-hosted vLLM once the AMD droplet exists and
       hackathon submission is locked in.
 - [ ] Move the Judge to a Gemma model (`JUDGE_LLM_MODEL`) for bonus-track eligibility — currently

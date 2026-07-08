@@ -57,6 +57,15 @@ def get_session(db: DbSession, user: User, session_id: uuid.UUID) -> Session:
     return session
 
 
+def get_session_by_id(db: DbSession, session_id: uuid.UUID) -> Session:
+    """Fetch a session by id without user scoping — for internal (agent) routes only."""
+    stmt = select(Session).where(Session.id == session_id, Session.deleted_at.is_(None))
+    session = db.scalar(stmt)
+    if session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
+    return session
+
+
 def transition_status(db: DbSession, session: Session, new_status: str) -> Session:
     """Move a session to a new status, enforcing the allowed transitions."""
     if new_status not in VALID_STATUSES:

@@ -670,3 +670,86 @@ with the "Offline (demo)" state + disabled Mute**; objection line styling intact
 clean; existing 5 Vitest tests pass. **Not verifiable here (flagged):** the successful *connected*
 path — real mic publish, active-speaker indicator, agent audio, and connected-but-no-agent → the app
 needs a real browser (mic + WebRTC) and the agent worker running.
+
+---
+
+### Gap 4 — agent persistence: session-complete + scorecard/transcript write — status: done
+
+**Goal:** Give the agent a scoped, least-privilege service credential + internal routes to end a
+session, persist the full transcript (batch, at session end — no per-turn round-trips in the voice
+loop), and write a real scorecard derived from the Judge's ruling + SessionState, so
+`/api/sessions/{id}/scorecard` finally returns real data. opposing_counsel/judge/verification stay
+unchanged.
+
+**Backend — service auth (separate mechanism from user JWT, DEV §7):**
+- `config.agent_service_token` (env `AGENT_SERVICE_TOKEN`).
+- `app/security_agent.py`: `require_agent_service` dependency — validates an `X-Agent-Token` header
+  against the configured token (constant-time compare); missing/empty/mismatch → 401. Loads NO
+  user; applied ONLY to the internal routes below. The user JWT does not grant these routes, and this
+  token does not grant user routes.
+
+**Backend — internal routes** (`app/api/internal.py`, `dependencies=[Depends(require_agent_service)]`):
+- `POST /api/sessions/{id}/complete` → in_progress→completed (reuse `transition_status`), set
+  `ended_at`. 404 unknown, 409 if not in_progress.
+- `POST /api/sessions/{id}/scorecard` → body `{overall_score, strengths, weaknesses, judge_ruling,
+  transcript:[{speaker, content, was_interruption, spoken_at?}]}`; requires completed; creates the
+  Scorecard row **and batch-inserts the whole transcript in the same call**; 409 on duplicate. Returns
+  ScorecardOut.
+- New `schemas/agent.py`, `services/agent_write_service.py`, and
+  `session_service.get_session_by_id` (no user scope — internal only).
+
+**Agents — accumulate + persist:**
+- `session_state.py`: add `TranscriptTurn` + a `transcript` list + `add_turn(speaker, content,
+  was_interruption=False, spoken_at?)` (facts/objections unchanged; snapshot untouched so existing
+  tests hold).
+- `scorecard_builder.py` (pure): `build_session_end_payload(state, judge_ruling)` → the complete +
+  scorecard payloads. Heuristic `overall_score` (penalize per sustained objection), `strengths` (from
+  established facts), `weaknesses` (from sustained-objection grounds), `judge_ruling` = the ruling
+  text; transcript from `state.transcript`.
+- `backend_client.py`: `complete_session(id)` + `write_scorecard(id, payload)` via httpx with the
+  `X-Agent-Token` header (config `AGENT_SERVICE_TOKEN`, `AGENT_BACKEND_URL`); tolerate 409 (idempotent
+  retry).
+- `main.py`: `state.add_turn(...)` as turns happen in the live session, and in the shutdown
+  `_closing_ruling` call complete + write_scorecard once with the built payload.
+- `config.py`: `AGENT_SERVICE_TOKEN`, `AGENT_BACKEND_URL`; add `httpx` to `requirements.txt`.
+
+**Tests (offline / CI):**
+- Backend `tests/test_agent_routes.py` — **the end-to-end persistence via a test backend instance
+  (TestClient)**: service-auth accepts the token / rejects missing/wrong/user-JWT; user JWT can't hit
+  internal routes and the service token can't hit user routes (least-privilege); /complete
+  transitions + 404/409; /scorecard persists scorecard + batch transcript, 409 on dup; then the
+  **user** GET /scorecard returns the real scorecard and GET session returns the ordered transcript.
+- Agents `tests/test_session_end.py` — `add_turn` accumulates; `build_session_end_payload`
+  shape/derivation (pure, offline).
+- `agents/session_end_harness.py` — fake SessionState + turns → build payload → print (offline);
+  posts to a live backend if configured. Not CI.
+
+**Docs:** ARCHITECTURE §5 (two internal routes + agent-service auth), §8 (agent batch-writes
+transcript + scorecard at session end), §9 (`AGENT_SERVICE_TOKEN` / `AGENT_BACKEND_URL`), §11 (scoped
+credential ≠ user auth); `.env.example`.
+
+**Cannot verify here (flagged):** the live agent→backend call from inside the running worker (needs a
+live room + worker). The persistence path itself is fully verified offline via the backend TestClient
+test + agent unit tests + the harness.
+
+**Decisions (resolved):** heuristic scorecard (start 100, −8 per sustained, clamp ≥0; strengths =
+established facts, dedup, 5 most recent; weaknesses = unique sustained grounds; edge-case messages;
+verbatim ruling); split tests + backend TestClient + printable harness.
+
+**Result:** Done and verified end to end. Backend: `AGENT_SERVICE_TOKEN` config + `security_agent.py`
+(`X-Agent-Token`, constant-time, fail-closed, separate from user JWT) + internal router
+(`app/api/internal.py`, `dependencies=[require_agent_service]`) with `POST /complete` and
+`POST /scorecard` (batch transcript + scorecard) + `agent_write_service.py` +
+`session_service.get_session_by_id`. Agents: `SessionState.add_turn`/`transcript`,
+`scorecard_builder.build_session_end_payload` (precise heuristic), `backend_client.py` (httpx +
+X-Agent-Token, tolerates 409), and `main.py` wiring (accumulate turns; batch write on shutdown).
+Tests: backend **19 pass** (incl. 6 new: service-auth + least-privilege both ways, /complete
+404/409, /scorecard gating + dup, and the full user-reads-real-scorecard+transcript flow via
+TestClient); agents **56 offline pass** (+8: add_turn, score/clamp, strengths cap, unique
+weaknesses, edge cases, payload shape). **Live end-to-end verified** against a real uvicorn backend:
+user session → GET scorecard 409 → harness writes with the agent token → GET scorecard 200 (score
+92, real weaknesses/ruling) + session transcript `[attorney, opposing_counsel, judge]` in order.
+ruff clean. Docs: ARCHITECTURE §5 (routes + agent-vs-user auth), §8 (who writes what), §9
+(`AGENT_SERVICE_TOKEN`/`AGENT_BACKEND_URL`), §11; `.env.example`. **Not verifiable here:** the write
+firing from inside the live LiveKit worker (needs a room + worker) — but the persistence path itself
+is proven via the backend test + live harness run.

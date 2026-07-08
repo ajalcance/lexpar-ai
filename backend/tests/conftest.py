@@ -10,6 +10,7 @@ Related: tests/test_auth.py, tests/test_sessions.py, docs/DEVELOPER_GUIDELINES.m
 import os
 
 os.environ.setdefault("AUTH_MODE", "stub")
+os.environ.setdefault("AGENT_SERVICE_TOKEN", "test-agent-token")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

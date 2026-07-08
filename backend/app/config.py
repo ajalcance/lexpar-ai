@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     jwt_secret: str = "dev-insecure-change-me"
     auth_mode: str = "stub"
 
+    # Scoped service credential for the agents worker (NOT user auth) — grants only the internal
+    # session-write routes. Empty = no valid agent token (internal routes reject everything).
+    agent_service_token: str = ""
+
     # CORS — comma-separated list of allowed browser origins (the frontend dev server).
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
