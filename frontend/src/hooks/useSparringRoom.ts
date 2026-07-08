@@ -16,6 +16,8 @@ import { ConnectionState, RoomEvent, Track } from 'livekit-client';
 import type { Participant, RemoteTrack, Room } from 'livekit-client';
 import * as api from '@/lib/api';
 import { connectToRoom, disconnectFromRoom } from '@/lib/livekit';
+import { objectionEventToLine, parseObjectionData } from '@/lib/objectionEvent';
+import type { Transcript } from '@/lib/types';
 
 export type SparringMode = 'connecting' | 'live' | 'fallback';
 export type ConnStatus = 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'failed';
@@ -47,9 +49,11 @@ export function useSparringRoom(sessionId: string) {
   const [activeSpeaker, setActiveSpeaker] = useState<ActiveSpeaker>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [micBlocked, setMicBlocked] = useState(false);
+  const [objections, setObjections] = useState<Transcript[]>([]);
   const roomRef = useRef<Room | null>(null);
 
   useEffect(() => {
+    setObjections([]); // clear any prior session's objection events
     if (!sessionId) {
       return;
     }
@@ -112,6 +116,14 @@ export function useSparringRoom(sessionId: string) {
         room.on(RoomEvent.ActiveSpeakersChanged, updateSpeaker);
         room.on(RoomEvent.TrackSubscribed, (track) => attachAudio(track));
         room.on(RoomEvent.ParticipantConnected, promoteToLive);
+        room.on(RoomEvent.DataReceived, (payload) => {
+          // Gap 3: an objection event from the agent → render it via the existing TranscriptLine.
+          if (cancelled) return;
+          const event = parseObjectionData(new TextDecoder().decode(payload));
+          if (event) {
+            setObjections((prev) => [...prev, objectionEventToLine(event, sessionId)]);
+          }
+        });
 
         setConnectionState(mapConnectionState(room.state));
 
@@ -170,5 +182,5 @@ export function useSparringRoom(sessionId: string) {
     }
   }, []);
 
-  return { mode, connectionState, activeSpeaker, isMuted, micBlocked, toggleMute };
+  return { mode, connectionState, activeSpeaker, isMuted, micBlocked, toggleMute, objections };
 }

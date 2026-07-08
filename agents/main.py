@@ -28,6 +28,7 @@ Run (needs a running LiveKit server + keys in .env):
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 
 from livekit import agents
@@ -42,7 +43,7 @@ import scorecard_builder
 import verification
 from objection_classifier import ObjectionClassifier
 from session_state import SessionState
-from voice_interrupt import handle_interim
+from voice_interrupt import build_objection_event, handle_interim
 
 logger = logging.getLogger("lexpar.agents")
 
@@ -117,6 +118,15 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         ),
     )
 
+    async def publish_objection(decision) -> None:
+        # Gap 3: emit the structured objection event on the data channel at the barge-in moment so
+        # the frontend can render it. reliable=True so it isn't dropped. (livekit-rtc signature —
+        # topic/reliable may need tuning against the installed SDK in a live room.)
+        event = build_objection_event(decision)
+        await ctx.room.local_participant.publish_data(
+            json.dumps(event).encode("utf-8"), reliable=True, topic="objection"
+        )
+
     @session.on("user_input_transcribed")
     def _on_user_transcript(event) -> None:
         # Every interim/final fragment feeds the objection classifier; a fire barges in via the
@@ -124,7 +134,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         if getattr(event, "is_final", False):
             last_turn["text"] = event.transcript
             state.add_turn("attorney", event.transcript)  # accumulate the attorney's turn
-        asyncio.create_task(handle_interim(session, classifier, event.transcript))
+        coro = handle_interim(session, classifier, event.transcript, publish_objection)
+        asyncio.create_task(coro)
 
     async def _persist_at_end() -> None:
         # Session end (Gap 4): Judge's closing ruling (judge.py unchanged), then ONE batch write —

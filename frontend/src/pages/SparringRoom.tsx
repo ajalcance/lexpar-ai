@@ -39,7 +39,7 @@ export function SparringRoom() {
   const navigate = useNavigate();
   const sessionId = id ?? '';
 
-  const { mode, connectionState, activeSpeaker, isMuted, micBlocked, toggleMute } =
+  const { mode, connectionState, activeSpeaker, isMuted, micBlocked, toggleMute, objections } =
     useSparringRoom(sessionId);
   const { lines } = useSparringSession(sessionId, { enabled: mode === 'fallback' });
 
@@ -87,10 +87,15 @@ export function SparringRoom() {
         )}
 
         {mode === 'live' && (
-          <p className="text-sm text-muted-foreground">
-            You're connected — argue aloud and listen for objections. The written transcript view
-            arrives with the next update.
-          </p>
+          <>
+            <p className="text-sm text-muted-foreground">
+              You're connected — argue aloud and listen for objections. The written transcript view
+              arrives with the next update.
+            </p>
+            {objections.map((line) => (
+              <TranscriptLine key={line.id} line={line} />
+            ))}
+          </>
         )}
 
         {mode === 'fallback' && (

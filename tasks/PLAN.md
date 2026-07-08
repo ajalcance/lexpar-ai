@@ -753,3 +753,68 @@ ruff clean. Docs: ARCHITECTURE §5 (routes + agent-vs-user auth), §8 (who write
 (`AGENT_SERVICE_TOKEN`/`AGENT_BACKEND_URL`), §11; `.env.example`. **Not verifiable here:** the write
 firing from inside the live LiveKit worker (needs a room + worker) — but the persistence path itself
 is proven via the backend test + live harness run.
+
+---
+
+### Gap 3 — objection events over the LiveKit data channel — status: done
+
+**Goal:** When `objection_classifier` fires in the live path, publish a structured event over
+LiveKit's data channel — `{type: "objection", objection_type, reason, timestamp}` — at the barge-in
+moment (alongside `interrupt()` + `say()`). The frontend subscribes and renders each event with the
+**same** `wasInterruption` treatment the mock already uses, by **reusing `TranscriptLine`** (no new
+component). Live path only; the scripted fallback is untouched.
+
+**Agents:**
+- `voice_interrupt.py` (stays livekit-free/testable): add pure `build_objection_event(decision)` →
+  `{type:"objection", objection_type, reason, timestamp}`; extend `handle_interim(..., publish=None)`
+  so on a fire, after `interrupt()` + `say()`, it calls the injected `await publish(decision)`.
+- `main.py`: a `publish_objection(decision)` closure that JSON-encodes `build_objection_event` and
+  calls `ctx.room.local_participant.publish_data(..., reliable=True, topic="objection")`, passed into
+  `handle_interim`. (livekit call lives only here.)
+
+**Frontend:**
+- `lib/objectionEvent.ts` (pure): `parseObjectionData(text) → ObjectionEvent | null` +
+  `objectionEventToLine(event, sessionId) → Transcript` (speaker `opposing_counsel`,
+  `wasInterruption: true`, content mirrors the spoken barge-in so `TranscriptLine` renders the red
+  "Objection" treatment; objection_type conveyed in the content since `Transcript` has no type field).
+- `hooks/useSparringRoom.ts`: subscribe to `RoomEvent.DataReceived`; parse objection events; append
+  mapped `Transcript`s to an `objections` list (reset per session); expose it.
+- `pages/SparringRoom.tsx`: in **live** mode, render `objections` via the existing `TranscriptLine`.
+  Fallback path unchanged.
+
+**Tests (offline / CI):**
+- Agents (extend `test_voice_interrupt.py`): `build_objection_event` shape; `handle_interim` calls
+  `publish` on fire and not on no-fire (fake session + fake publish).
+- Frontend (Vitest): `parseObjectionData` + `objectionEventToLine` — valid event → a `Transcript`
+  with `wasInterruption: true`; non-objection / malformed data → null/ignored.
+
+**⚠️ Can't verify without a real room + live agent (flagged):**
+- The whole live data path — that `publish_data` actually reaches the browser's `DataReceived`,
+  delivery latency/ordering (reliable channel), and whether the objection visual lands **in sync**
+  with the audio barge-in. I publish adjacent to `interrupt()`/`say()`, but the true simultaneity
+  and end-to-end timing can only be judged in a live room.
+- The exact `publish_data` / `DataReceived` signatures (topic, reliable flag) — written to the
+  documented livekit API; may need tuning against the installed SDK in a running room.
+- This rides on the Gap 1/2 live connection, itself only verifiable with a real browser + mic + agent.
+
+**Decisions (resolved):** proceed; objection line text = `"Objection — <type>: <reason>"` (reason
+included), composed on the frontend from the structured event.
+
+**Result:** Done. Agents: `voice_interrupt.build_objection_event(decision)` (pure) +
+`handle_interim(..., publish=None)` — on fire, after interrupt()+say(), it awaits the injected
+`publish`; `main.py` adds a `publish_objection` closure that JSON-encodes the event and calls
+`ctx.room.local_participant.publish_data(reliable=True, topic="objection")`. Frontend:
+`lib/objectionEvent.ts` (pure `parseObjectionData` + `objectionEventToLine` → a `wasInterruption`
+Transcript); `useSparringRoom` subscribes to `RoomEvent.DataReceived`, parses, appends to an
+`objections` list (reset per session); `SparringRoom` renders them in **live** mode via the
+**reused `TranscriptLine`** (no new component). Scripted fallback untouched. Tests: agents **57
+offline** (event shape + publish-on-fire/no-publish-on-no-fire); frontend **10** (5 new: parse valid
+/ non-objection / malformed → null, map to wasInterruption line with type+reason, reason-omitted).
+type-check + ruff + lint clean. **Verified in preview:** fallback path unchanged — mock plays, the
+Objection styling still renders, no new console errors from the data subscription.
+
+**⚠️ Not verifiable here (flagged):** the live data path — that `publish_data` reaches the browser's
+`DataReceived`, delivery latency/ordering, and whether the objection visual lands **in sync** with
+the audio barge-in — needs a real room + live agent + a real browser (the headless preview can't
+complete WebRTC). The `publish_data`/`DataReceived` signatures are written to the documented API and
+may need tuning against the installed SDK in a live room.

@@ -11,7 +11,7 @@ import asyncio
 
 from objection_classifier import Decision, ObjectionClassifier
 from session_state import SessionState
-from voice_interrupt import handle_interim, objection_utterance
+from voice_interrupt import build_objection_event, handle_interim, objection_utterance
 
 
 class FakeSession:
@@ -28,6 +28,24 @@ class FakeSession:
         self.said.append(text)
 
 
+class FakePublisher:
+    """Records the decisions published to the data channel."""
+
+    def __init__(self):
+        self.published: list[Decision] = []
+
+    async def __call__(self, decision):
+        self.published.append(decision)
+
+
+def test_build_objection_event_shape():
+    event = build_objection_event(Decision(True, "leading", "tag question", outcome="fire"))
+    assert event["type"] == "objection"
+    assert event["objection_type"] == "leading"
+    assert event["reason"] == "tag question"
+    assert isinstance(event["timestamp"], int)
+
+
 def test_objection_utterance_from_type():
     def spoken(objection_type):
         return objection_utterance(Decision(True, objection_type, "x", outcome="fire"))
@@ -38,24 +56,30 @@ def test_objection_utterance_from_type():
     assert objection_utterance(Decision(False, None, "x")) == ""
 
 
-def test_handle_interim_barges_in_on_fire():
+def test_handle_interim_barges_in_and_publishes_on_fire():
     session = FakeSession()
+    publisher = FakePublisher()
     classifier = ObjectionClassifier(
         SessionState(), decider=lambda f, s: Decision(True, "leading", "x", outcome="fire")
     )
-    decision = asyncio.run(handle_interim(session, classifier, "Isn't it true you lied?"))
+    decision = asyncio.run(
+        handle_interim(session, classifier, "Isn't it true you lied?", publisher)
+    )
     assert decision.fire is True
     assert session.interrupts == 1
     assert session.said == ["Objection — leading."]
+    assert publisher.published == [decision]  # event published at the barge-in moment
 
 
-def test_handle_interim_silent_on_no_fire():
+def test_handle_interim_silent_and_no_publish_on_no_fire():
     session = FakeSession()
+    publisher = FakePublisher()
     classifier = ObjectionClassifier(
         SessionState(), decider=lambda f, s: Decision(False, None, "no")
     )
     fragment = "The contract was signed on March 3."
-    decision = asyncio.run(handle_interim(session, classifier, fragment))
+    decision = asyncio.run(handle_interim(session, classifier, fragment, publisher))
     assert decision.fire is False
     assert session.interrupts == 0
     assert session.said == []
+    assert publisher.published == []
