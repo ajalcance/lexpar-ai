@@ -470,6 +470,10 @@ the backend — see `frontend/.env.example`. Vite only exposes vars prefixed `VI
 - [ ] Replace `AUTH_MODE=stub` (admin/admin) with real auth before any real attorney or real case
       data touches the system. (Note: the agents worker's `AGENT_SERVICE_TOKEN` is already a separate,
       scoped credential — not part of the stubbed user auth — so it survives that replacement.)
+- [ ] Regenerate `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` to real random values before any
+      non-local deployment. The current `devkey` / `secret` pair is safe **only** because LiveKit
+      runs solely on localhost today (§10); exposing the server off-box with default keys lets anyone
+      mint room tokens.
 - [ ] Cut the Opposing Counsel agent over to self-hosted vLLM once the AMD droplet exists and
       hackathon submission is locked in.
 - [ ] Move the Judge to a Gemma model (`JUDGE_LLM_MODEL`) for bonus-track eligibility — currently
