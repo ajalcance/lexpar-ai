@@ -1,13 +1,226 @@
 """
 File: agents/objection_classifier.py
-Purpose: The bespoke, differentiating piece. Eventually watches Deepgram's live partial
-    transcript of the attorney's speech and decides, in real time, when Opposing Counsel should
-    interrupt with an objection (leading, hearsay, speculation, etc.). Kept isolated and
-    independently testable so interruption behavior can be tuned without touching the pipeline.
-Depends on: live partial transcript stream (Deepgram STT), a lightweight classifier/heuristics
-Related: docs/ARCHITECTURE.md §6, agents/opposing_counsel.py (acts on its signal),
-    docs/DEVELOPER_GUIDELINES.md §6 (highest-priority module to unit test)
-Security notes: Processes live transcript text (work product) in memory only — never log it.
+Purpose: The bespoke, differentiating piece (ARCHITECTURE §6). Decides, as the attorney's speech
+    streams in, whether Opposing Counsel should interrupt *now* and with what objection type,
+    following opposing_counsel.md's rule: object only when the phrasing genuinely invites one —
+    not on every turn.
+
+    Two stages so it can run continuously on partial transcript:
+      1. `candidate_grounds()` — a cheap, RECALL-biased regex gate that runs on every fragment. If
+         it finds no objection-inviting phrasing it returns no candidates and we fire nothing (no
+         LLM call). Erring toward passing candidates through is deliberate: a too-strict gate would
+         silently drop real objections before the LLM ever sees them.
+      2. `classify_fragment()` — only for candidates, a fast model (gpt-oss-120b, JSON) makes the
+         final fire/no-fire + type decision, applying the "not every turn" discipline and the
+         SessionState (e.g. don't re-object on grounds just overruled). Fails closed: any
+         error/timeout/unparseable output → NO interruption.
+
+    `ObjectionClassifier` wraps the above with per-utterance debounce so a growing fragment does not
+    trigger repeated objections on the same utterance.
+Depends on: json, re, dataclasses; agents/llm_router.py, agents/session_state.py
+Related: agents/opposing_counsel.py (acts on the signal), agents/prompts/opposing_counsel.md,
+    docs/ARCHITECTURE.md §6, docs/DEVELOPER_GUIDELINES.md §6
+Security notes: Operates on live transcript fragments (attorney work product) in memory only, and
+    sends them only to the configured classifier endpoint — never logs them.
 """
 
-# TODO: implement once Fireworks/Deepgram/ElevenLabs keys are available
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass
+
+from llm_router import build_endpoint, chat, objection_config
+from session_state import SessionState
+
+# Objection taxonomy the classifier may return. The gate detects the first four heuristically;
+# `assumes_facts` is left to the LLM (hard to spot with regex) when other candidates are present.
+OBJECTION_TYPES = ("leading", "hearsay", "speculation", "argumentative", "assumes_facts")
+
+# Recall-biased phrasing gates. Broad on purpose — the LLM is the judgment layer.
+_GATE_PATTERNS: dict[str, list[str]] = {
+    "leading": [
+        r"isn'?t it (?:true|correct|the case)",
+        r"\b(?:did|do|does|was|were|is|are|would|could|had|have|has)n'?t (?:you|he|she|they|it)\b",
+        r"wouldn'?t you agree",
+        r"\byou would agree\b",
+        r"(?:right|correct)\?\s*$",
+        r"\?\s*$",  # any trailing question — leading is the prime cross-exam objection
+    ],
+    "hearsay": [
+        r"\b(?:told|informed|texted|emailed) (?:me|him|her|us|them)\b",
+        r"\b(?:he|she|they|it|the witness|my client|someone|everyone)\s+"
+        r"(?:said|says|stated|claimed|mentioned|testified|reported|told)\b",
+        r"according to\b",
+        r"\bi (?:heard|was told)\b",
+        r"said that\b",
+    ],
+    "speculation": [
+        r"\bi (?:think|believe|guess|assume|suppose|feel|figure)\b",
+        r"\b(?:maybe|perhaps|probably|possibly|presumably)\b",
+        r"\b(?:might|may|could|would|must|should) have\b",
+        r"seems? (?:like|to)\b",
+    ],
+    "argumentative": [
+        r"\b(?:obviously|clearly|undeniably)\b",
+        r"everyone knows",
+        r"any reasonable person",
+    ],
+}
+_COMPILED = {g: [re.compile(p, re.IGNORECASE) for p in pats] for g, pats in _GATE_PATTERNS.items()}
+
+
+# Decision outcomes — the audit categories. GATE_REJECTED never reached the LLM (the gate filtered
+# it); LLM_NO_FIRE reached the LLM but it declined; FAIL_CLOSED is a swallowed error; DEBOUNCED is a
+# suppressed repeat of an already-objected utterance. Reviewing GATE_REJECTED separately from
+# LLM_NO_FIRE is how we audit what the recall-biased gate filtered out before any judgment.
+GATE_REJECTED = "gate_rejected"
+LLM_NO_FIRE = "llm_no_fire"
+FIRE = "fire"
+FAIL_CLOSED = "fail_closed"
+DEBOUNCED = "debounced"
+
+
+@dataclass
+class Decision:
+    """Whether to interrupt now, the objection type (if any), and the audit outcome."""
+
+    fire: bool
+    objection_type: str | None
+    reason: str
+    outcome: str = ""
+
+
+def candidate_grounds(fragment: str) -> list[str]:
+    """Stage 1: recall-biased regex gate. Returns the objection grounds the phrasing may invite."""
+    text = fragment.strip()
+    if not text:
+        return []
+    return [ground for ground, pats in _COMPILED.items() if any(p.search(text) for p in pats)]
+
+
+_SYSTEM = (
+    "You decide, in real time, whether Opposing Counsel should INTERRUPT the attorney's "
+    "in-progress statement with an objection. Follow the rule: object ONLY when the phrasing "
+    "genuinely invites one — NOT on every turn. Most fragments should not trigger an objection. "
+    "Use the SESSION RECORD to avoid objecting on grounds already ruled. Valid objection types: "
+    + ", ".join(OBJECTION_TYPES)
+    + '. Respond ONLY with JSON {"fire": boolean, "objection_type": <one type or null>, '
+    '"reason": "<a few words>"}. Set fire=false and objection_type=null unless there is a clear, '
+    "well-founded objection."
+)
+
+
+def _build_messages(
+    fragment: str, state: SessionState, candidates: list[str]
+) -> list[dict[str, str]]:
+    """Assemble the minimal classifier messages. Pure — no API call."""
+    hint = ", ".join(candidates) if candidates else "none"
+    user = (
+        f"SESSION RECORD:\n{state.snapshot()}\n\n"
+        f"HEURISTIC CANDIDATES: {hint}\n\n"
+        f'ATTORNEY (statement in progress): "{fragment}"'
+    )
+    return [
+        {"role": "system", "content": _SYSTEM},
+        {"role": "user", "content": user},
+    ]
+
+
+def _parse_decision(content: str) -> Decision:
+    """Parse the model's JSON decision. Pure — raises on unparseable input (caller fails closed)."""
+    start = content.find("{")
+    end = content.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        raise ValueError("classifier did not return a JSON object")
+    data = json.loads(content[start : end + 1])
+    fire = bool(data.get("fire", False))
+    raw_type = data.get("objection_type")
+    objection_type = str(raw_type).strip().lower() if fire and raw_type else None
+    reason = str(data.get("reason", "")).strip()
+    outcome = FIRE if fire else LLM_NO_FIRE
+    return Decision(fire=fire, objection_type=objection_type, reason=reason, outcome=outcome)
+
+
+def classify_fragment(fragment: str, state: SessionState) -> Decision:
+    """
+    Stage 2 (only for gate candidates): fast-model fire/no-fire + type decision. Fails closed —
+    any error/timeout/unparseable output returns NO interruption.
+    """
+    candidates = candidate_grounds(fragment)
+    if not candidates:
+        return Decision(False, None, "no objection-inviting phrasing", outcome=GATE_REJECTED)
+    try:
+        endpoint = build_endpoint(objection_config())
+        content = chat(
+            endpoint,
+            _build_messages(fragment, state, candidates),
+            temperature=0.0,
+            # gpt-oss reasons before emitting; too small a budget yields empty content, so give it
+            # room for the hidden reasoning plus the short JSON decision.
+            max_tokens=512,
+            response_format={"type": "json_object"},
+        )
+        return _parse_decision(content)
+    except Exception:
+        return Decision(
+            False, None, "classifier unavailable — no interruption", outcome=FAIL_CLOSED
+        )
+
+
+@dataclass
+class DecisionRecord:
+    """One considered fragment and its decision — retained only when review logging is enabled."""
+
+    fragment: str
+    decision: Decision
+
+
+class ObjectionClassifier:
+    """
+    Stateful wrapper that debounces a growing utterance: once it has objected on an utterance, it
+    will not object again until a new utterance begins (a fragment that no longer extends the
+    previous one). `decider` is injectable for deterministic testing.
+
+    With `record=True` it keeps a review log so gate-rejected fragments can be inspected separately
+    from LLM no-fire decisions (see `gate_rejected()` / `llm_no_fire()`). Off by default because the
+    log retains transcript fragments (attorney work product) — enable only for testing/review.
+    """
+
+    def __init__(self, state: SessionState, decider=classify_fragment, record: bool = False):
+        self.state = state
+        self._decide = decider
+        self._prev = ""
+        self._handled = False
+        self._record = record
+        self.records: list[DecisionRecord] = []
+
+    def consider(self, fragment: str) -> Decision:
+        frag = fragment.strip()
+        if not self._is_continuation(self._prev, frag):
+            self._handled = False  # a new utterance re-arms the classifier
+        self._prev = frag
+        if self._handled:
+            decision = Decision(
+                False, None, "already objected on this utterance", outcome=DEBOUNCED
+            )
+        else:
+            decision = self._decide(frag, self.state)
+            if decision.fire:
+                self._handled = True
+        if self._record:
+            self.records.append(DecisionRecord(fragment=frag, decision=decision))
+        return decision
+
+    @staticmethod
+    def _is_continuation(prev: str, current: str) -> bool:
+        """True if `current` is the same utterance still growing (extends `prev`)."""
+        return bool(prev) and current.startswith(prev)
+
+    def gate_rejected(self) -> list[DecisionRecord]:
+        """Fragments the gate filtered out before any LLM judgment — review the recall bias here."""
+        return [r for r in self.records if r.decision.outcome == GATE_REJECTED]
+
+    def llm_no_fire(self) -> list[DecisionRecord]:
+        """Fragments that reached the LLM but were judged not to warrant an objection."""
+        return [r for r in self.records if r.decision.outcome == LLM_NO_FIRE]

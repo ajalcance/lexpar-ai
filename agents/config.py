@@ -54,3 +54,12 @@ VERIFICATION_MODEL = os.getenv(
     "VERIFICATION_LLM_MODEL",
     "accounts/fireworks/models/gpt-oss-120b",
 )
+
+# Objection classifier — the most latency-sensitive call (runs on streaming speech). Fast JSON
+# follower; gpt-oss-120b for now (benchmarked ~1-2s), swap via env if a faster model appears.
+OBJECTION_PROVIDER = os.getenv("OBJECTION_LLM_PROVIDER", "fireworks")
+OBJECTION_ENDPOINT = os.getenv("OBJECTION_LLM_ENDPOINT", _FIREWORKS_ENDPOINT)
+OBJECTION_MODEL = os.getenv(
+    "OBJECTION_LLM_MODEL",
+    "accounts/fireworks/models/gpt-oss-120b",
+)

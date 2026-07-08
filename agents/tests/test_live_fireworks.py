@@ -1,15 +1,17 @@
 """
 File: agents/tests/test_live_fireworks.py
-Purpose: LIVE tests that make real Fireworks API calls — generation (opposing counsel, judge) and
-    the consistency verifier. Marked `live` and DESELECTED from CI by pyproject's
-    `addopts = -m 'not live'`; run explicitly with `pytest -m live` (needs FIREWORKS_API_KEY).
-Depends on: pytest, opposing_counsel, judge, verification, session_state (+ a live Fireworks key)
+Purpose: LIVE tests that make real Fireworks API calls — generation (opposing counsel, judge), the
+    consistency verifier, and the objection classifier. Marked `live` and DESELECTED from CI by
+    pyproject's `addopts = -m 'not live'`; run explicitly with `pytest -m live` (needs
+    FIREWORKS_API_KEY).
+Depends on: pytest, opposing_counsel, judge, verification, objection_classifier, session_state
 """
 
 import pytest
 
 import judge
 import opposing_counsel
+from objection_classifier import classify_fragment
 from session_state import SessionState
 from verification import check_consistency
 
@@ -48,3 +50,22 @@ def test_consistency_passes_a_faithful_reply():
         "As the record reflects, the employment contract was signed on March 3.", _demo_state()
     )
     assert contradictions == []
+
+
+def test_objection_fires_on_leading_question():
+    decision = classify_fragment(
+        "Isn't it true that you never actually read the contract before signing it?", _demo_state()
+    )
+    assert decision.fire is True
+
+
+def test_objection_fires_on_hearsay():
+    decision = classify_fragment(
+        "My neighbor told me he saw the defendant run the red light.", _demo_state()
+    )
+    assert decision.fire is True
+
+
+def test_objection_holds_on_clean_statement():
+    decision = classify_fragment("The contract was signed on March 3.", _demo_state())
+    assert decision.fire is False

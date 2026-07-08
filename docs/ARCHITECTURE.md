@@ -205,10 +205,15 @@ FastAPI's role is auth, case management, and persisting the results the agents w
   VAD + semantic turn detection for natural barge-in.
   - `opposing_counsel.py` — cross-examines, objects, counter-argues.
   - `judge.py` — monitors the session, delivers rulings.
-  - `objection_classifier.py` — **the custom, differentiating piece.** Watches Deepgram's live
-    partial transcripts of the attorney's speech and decides, in real time, when the Opposing
-    Counsel should interrupt with an objection. This is bespoke logic on top of the framework,
-    not something LiveKit provides out of the box.
+  - `objection_classifier.py` — **the custom, differentiating piece** (implemented). Watches the
+    live partial transcript and decides, in real time, when Opposing Counsel should interrupt and
+    with what objection type, following opposing_counsel.md's "only when genuinely invited — not
+    every turn" rule. Two stages so it can run continuously: a cheap, **recall-biased regex gate**
+    (`candidate_grounds`, runs on every fragment; no candidates → no LLM call) followed by a fast
+    model (`classify_fragment`, gpt-oss-120b JSON) that makes the final fire/type decision.
+    `ObjectionClassifier` adds **per-utterance debounce** (no re-firing on a growing fragment) and
+    the LLM stage **fails closed** (any error → no interruption). Bespoke logic on top of the
+    framework, not something LiveKit provides out of the box.
   - `llm_router.py` — reads `OPPOSING_COUNSEL_LLM_PROVIDER` / `JUDGE_LLM_PROVIDER` env vars and
     points each agent at the correct OpenAI-compatible endpoint.
 
@@ -270,9 +275,11 @@ call.
 - **Implemented + tested (no keys):** `SessionState` and its update methods; the regex citation
   heuristic (`find_suspicious_citations`).
 - **Implemented, live via Fireworks:** the LLM consistency check (`check_consistency`, small
-  verification model), Opposing Counsel + Judge response generation, and `llm_router` (§7). Live
-  calls are covered by `@pytest.mark.live` tests, excluded from CI. A text-only harness
-  (`agents/harness.py`) exercises the whole draft → verify path without any voice infrastructure.
+  verification model), Opposing Counsel + Judge response generation, the objection classifier
+  (`objection_classifier.py`, §6), and `llm_router` (§7). Live calls are covered by
+  `@pytest.mark.live` tests, excluded from CI. Text-only harnesses (`agents/harness.py`,
+  `agents/objection_harness.py`) exercise the draft→verify path and the streaming interrupt logic
+  without any voice infrastructure.
 - **Pending Deepgram/ElevenLabs keys:** the real-time STT → TTS voice pipeline (`agents/main.py`
   stays a skeleton). Verification model GPU co-location arrives with self-hosting (§7).
 
@@ -285,6 +292,7 @@ call.
 | Opposing Counsel | Fireworks `deepseek-v4-pro` | Self-hosted vLLM on AMD MI300X | Proves AMD platform ownership for the hackathon; switch to self-hosted once session volume justifies dedicated GPU uptime |
 | Judge | Fireworks `gpt-oss-120b`, JSON-structured (**interim**) | Stays on Fireworks | **Should be Gemma** for bonus-prize eligibility, but no serverless Gemma (2/3/4) is reachable on this account/endpoint — verified against the live `/v1/models` list and direct ID probes (all 404), including the Gemma 3 12B/4B IDs from Fireworks' changelog. Interim: `gpt-oss-120b` via structured `{"ruling": …}` output (fast, reliable). `deepseek-v4-pro` was rejected for the Judge — as a reasoning model it is slow (30–60s) and intermittently returns empty content. Do not self-host this one. |
 | Verification | Fireworks `gpt-oss-120b` | Same GPU as reasoning (self-hosted) | Small/fast verifier per §6.5 — deliberately not the reasoning model; needs clean JSON output. |
+| Objection classifier | Fireworks `gpt-oss-120b`, JSON (`OBJECTION_LLM_MODEL`) | Fast model, co-located | Most latency-sensitive call (streaming speech), so it only runs on gate candidates and debounces per utterance (§6). gpt-oss picked as the account's fast JSON follower; swap via env if a faster model appears. |
 
 Switching is a config change (`.env` value), never a code change — this is deliberate. **Bonus-eligibility
 note:** the Judge must move to a Gemma model before relying on Gemma-track eligibility; tracked as an
@@ -388,6 +396,7 @@ S3-compatible (MinIO locally, DigitalOcean Spaces in production).
 | `JUDGE_LLM_ENDPOINT` | Fireworks endpoint |
 | `JUDGE_LLM_MODEL` | Judge model id (default: `deepseek-v4-pro`; use Gemma once available) |
 | `VERIFICATION_LLM_PROVIDER` / `VERIFICATION_LLM_ENDPOINT` / `VERIFICATION_LLM_MODEL` | Verifier, NOT the reasoning model (§6.5; default `gpt-oss-120b` — swap for a smaller model when deployed) |
+| `OBJECTION_LLM_PROVIDER` / `OBJECTION_LLM_ENDPOINT` / `OBJECTION_LLM_MODEL` | Objection classifier — the latency-sensitive streaming call (§6; default `gpt-oss-120b`) |
 | `FIREWORKS_API_KEY` / `DEEPGRAM_API_KEY` / `ELEVENLABS_API_KEY` | Provider auth |
 | `JWT_SECRET` | Token signing |
 | `AUTH_MODE` | `stub` \| `production` |

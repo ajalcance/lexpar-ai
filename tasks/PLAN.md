@@ -390,3 +390,75 @@ verification PASS→TTS, crisp judge ruling. main.py stays a skeleton. Tests: **
 `addopts = -m "not live"` (CI runs `pytest -m "not live"`) — deselected, not skipped. ruff clean.
 Docs: ARCHITECTURE §6.5 (now live) + §7 (actual model IDs, Gemma-blocked note) + §9 model env vars;
 `.env.example` updated. Deepgram/ElevenLabs voice pipeline still pending.
+
+---
+
+### Objection classifier (the bespoke real-time interrupt logic) — status: done
+
+**Goal:** Implement `agents/objection_classifier.py` — given a partial fragment of the attorney's
+ongoing speech + the current SessionState, decide whether Opposing Counsel should interrupt *now*
+and with what objection type (leading, hearsay, speculation, …), honoring opposing_counsel.md's
+"only when phrasing genuinely invites one — not every turn" rule. Fully testable without Deepgram/
+LiveKit.
+
+**Design — two-stage, so it can run continuously as speech streams (§6):**
+- **Stage 1 (offline, runs on every fragment, ~free): `candidate_grounds(fragment) -> list[str]`** —
+  regex/keyword heuristic for objection-inviting phrasing (leading tag-questions "isn't it true…",
+  "…didn't you?"; hearsay "he told me", "she said that"; speculation "I think / probably / might
+  have"). Empty → immediate **no-fire, no LLM call**. This is what makes "runs continuously" feasible.
+- **Stage 2 (live, only on candidates): `classify_fragment(fragment, state) -> Decision`** — a fast
+  model (gpt-oss-120b, JSON) makes the final fire/no-fire + type decision, applying the "not every
+  turn" discipline and SessionState (e.g., don't re-fire grounds just overruled).
+- `Decision` dataclass (`fire: bool`, `objection_type: str | None`, `reason: str`); pure
+  `_build_messages` + `_parse_decision` for offline tests.
+
+**Model:** reuse `gpt-oss-120b` (fast JSON) — quick live latency check to confirm; add
+`OBJECTION_LLM_*` env (config + llm_router `objection_config()`), overridable, default gpt-oss.
+
+**Harness:** `agents/objection_harness.py` — feeds a scripted sequence of sample fragments (leading
+Qs, hearsay, speculation, clean statements) and prints each fragment's fire/no-fire + type + reason.
+Live (needs key); clean fragments short-circuit (no LLM call).
+
+**Tests:**
+- Offline (CI): `tests/test_objection_classifier.py` — labeled sample set on `candidate_grounds`
+  (leading/hearsay/speculation flagged; clean not) + `_parse_decision` JSON parsing.
+- Live (`@pytest.mark.live`, deselected in CI): append to `tests/test_live_fireworks.py` —
+  `classify_fragment` fires on a leading question and on hearsay, and does not fire on a clean
+  statement.
+
+**Docs:** ARCHITECTURE §6 (objection_classifier now implemented, two-stage) + §6.5 implemented-list
++ §7 (classifier model row) + §9 (`OBJECTION_LLM_*`); `.env.example`; PLAN updated.
+
+**Refinements (confirmed with user):**
+- **Recall-biased gate:** the regex gate errs toward passing candidates through — a too-strict gate
+  silently drops real objections before the LLM sees them (invisible failure). False positives just
+  cost the LLM a little latency; false negatives are silent misses of the core feature.
+- **Debounce per utterance:** a stateful `ObjectionClassifier` tracks the growing utterance and does
+  not re-fire once it has objected on it, until a new utterance starts (continuation detected via
+  prefix). Injectable decider so the debounce is deterministically unit-tested.
+- **Fail closed:** if the stage-2 LLM call errors/times out or returns unparseable output,
+  `classify_fragment` returns **no interruption** (never crash/block) — mirrors verification.py.
+- **Minimal LLM output:** JSON `{fire, objection_type, reason}` only, small max_tokens, temp 0 —
+  this is the most latency-sensitive call in the system.
+
+**Decisions (resolved):** proceed; two-stage heuristic-gate + fast-LLM.
+
+**Result:** Done and live-verified. `objection_classifier.py`: `candidate_grounds` (recall-biased
+regex gate over leading/hearsay/speculation/argumentative), `classify_fragment` (gate → gpt-oss-120b
+JSON `{fire, objection_type, reason}`, fails closed on error/empty/unparseable), and
+`ObjectionClassifier` (per-utterance debounce via prefix continuation, injectable decider). Added an
+`objection` role to config/llm_router (`OBJECTION_LLM_*`, default gpt-oss). `objection_harness.py`
+streams sample fragments and prints decisions. **Latency-fix flagged:** at max_tokens=120 gpt-oss
+returned empty content (hidden reasoning ate the budget) → raised to 512; candidates now decide in
+~2–2.5s and clean fragments short-circuit at 0.0s (no LLM). Tests: **42 offline pass (CI)** (labeled
+gate set; monkeypatched short-circuit/parse/fail-closed; deterministic debounce) + **7 live pass**
+(fires on leading/hearsay, holds on clean; `@pytest.mark.live`, deselected in CI). ruff clean. Docs:
+ARCHITECTURE §6 (implemented, two-stage) + §6.5 + §7 (classifier row) + §9 (`OBJECTION_LLM_*`);
+`.env.example` updated.
+
+**Post-build addition (user request):** each `Decision` now carries an audit `outcome`
+(`gate_rejected` / `llm_no_fire` / `fire` / `fail_closed` / `debounced`), and `ObjectionClassifier`
+has an opt-in review log (`record=True`, off by default — retains work product) exposing
+`gate_rejected()` vs `llm_no_fire()` so what the recall-biased gate filtered can be reviewed
+separately from what the LLM judged. Harness prints the two lists. +3 offline tests → **45 offline,
+7 live**, ruff clean.

@@ -62,6 +62,14 @@ def verification_config() -> LlmConfig:
     )
 
 
+def objection_config() -> LlmConfig:
+    return LlmConfig(
+        config.OBJECTION_PROVIDER,
+        config.OBJECTION_ENDPOINT,
+        config.OBJECTION_MODEL,
+    )
+
+
 def build_endpoint(cfg: LlmConfig) -> LlmEndpoint:
     """Construct an OpenAI-compatible client for the given routing (no network call here)."""
     client = OpenAI(base_url=cfg.endpoint, api_key=_api_key(cfg.provider))
