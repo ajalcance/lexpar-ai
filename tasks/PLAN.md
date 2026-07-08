@@ -818,3 +818,65 @@ Objection styling still renders, no new console errors from the data subscriptio
 the audio barge-in — needs a real room + live agent + a real browser (the headless preview can't
 complete WebRTC). The `publish_data`/`DataReceived` signatures are written to the documented API and
 may need tuning against the installed SDK in a live room.
+
+---
+
+### Gap 5 — render real scorecard + transcript for completed sessions — status: done
+
+**Goal:** Seed a completed session (scorecard + transcript) via the existing Gap-4 harness/agent
+routes (no live voice), verify the frontend renders the REAL data end to end, and fix any rendering
+mismatch. Decide on ledger/verification UI (default: none).
+
+**Part 1 — Scorecard renders real data (mismatch already found):**
+- `scorecard_builder` produces `strengths`/`weaknesses` as `\n`-joined bullet lists, but
+  `Scorecard.tsx` renders `{scorecard.strengths}` in a `<CardContent>` — HTML **collapses the
+  newlines** into one run-on line. **Fix:** `whitespace-pre-line` on the strengths / weaknesses
+  (and ruling) so the lines render as written.
+- Verify: seed → load `/session/:id/scorecard` → real score + multi-line strengths/weaknesses +
+  ruling render (not the 409 "not available yet" fallback).
+
+**Part 2 — real persisted transcript renders (instead of the scripted mock):**
+- Add `api.getSessionTranscript(sessionId)` → GET `/api/sessions/{id}`, map `transcripts[]` (which
+  the backend already returns via `SessionDetailOut`) → `Transcript[]`.
+- Render it via the **reused `TranscriptLine`** on the **Scorecard page** (post-session review) —
+  see decision below. For a completed session this shows the real attorney / opposing-counsel /
+  judge lines (objection styling intact); the scripted mock only ever appears for an *in-progress*
+  session with no agent (SparringRoom fallback, unchanged).
+
+**Part 3 — ledger / verification UI decision:** **Agree with the default — no dedicated UI.** The
+scorecard's strengths already ARE the established-facts ledger and its weaknesses ARE the sustained
+objections; the verification results are generation-time internals (they gate the regenerate loop),
+not user-facing artifacts. A separate raw view would duplicate what the scorecard already summarizes.
+Not building it — no reason found to disagree.
+
+**Tests (offline / CI):** extend `Scorecard.test.tsx` — multi-line strengths render as separate
+lines; add a transcript-section test (mock `getSessionTranscript`). No agent / LiveKit needed.
+
+**Docs:** ARCHITECTURE §4 "Wiring status" (scorecard + transcript now render real for completed
+sessions) + a §5 note; PLAN.
+
+**Verify (fully offline — no live voice/LiveKit):** seed a completed session with the existing
+`session_end_harness.py` against a real backend, then confirm in the browser preview that the
+Scorecard page shows the real score + multi-line strengths/weaknesses + ruling + the real transcript.
+
+**Decisions to confirm:** (1) proceed; (2) where the real transcript renders — a section on the
+**Scorecard page** (post-session review) [recommended] vs a **SparringRoom review-mode** for
+completed sessions.
+
+**Result:** Done and verified end to end (fully offline — no live voice/LiveKit). **Part 1:** fixed
+the newline-collapse mismatch — `Scorecard.tsx` strengths/weaknesses/ruling now use
+`whitespace-pre-line` so the `\n`-joined bullet lists render as separate lines. **Part 2:** added
+`api.getSessionTranscript(sessionId)` (GET `/api/sessions/{id}` → maps `transcripts[]` →
+`Transcript[]`) and a **Transcript** section on the Scorecard page that reuses `TranscriptLine`
+(objection styling intact). Query has no `enabled` guard (matches the scorecard query; `sessionId`
+always comes from the route). **Part 3:** no dedicated ledger/verification UI (agreed with default).
+**Tests:** `Scorecard.test.tsx` rewritten — 4 tests (score/sections/ruling, multi-line strengths
+assert `whitespace-pre-line` + both lines, real transcript section, 409 fallback); all mock both
+`getScorecard` + `getSessionTranscript`. 12/12 frontend tests pass, type-check + lint clean.
+**End-to-end verify:** ran `session_end_harness.py <session_id>` against a scratch backend
+(AGENT_SERVICE_TOKEN, scratch SQLite) to seed complete + scorecard + transcript, then loaded
+`/session/:id/scorecard` in the browser preview — confirmed **Overall score 92** (100 − 8×1
+sustained), two established facts as separate strength lines, `- Sustained objection: hearsay`
+weakness, verbatim ruling, and the real persisted Transcript (You (Attorney) / Opposing Counsel with
+the red "Objection" badge / Judge) — not the scripted mock. **Docs:** ARCHITECTURE §4 "Wiring status"
+updated (completed sessions render real scorecard + transcript; no dedicated ledger/verification UI).

@@ -18,6 +18,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import { TranscriptLine } from '@/components/TranscriptLine';
 import * as api from '@/lib/api';
 import { ApiError } from '@/lib/api';
 
@@ -27,6 +28,11 @@ export function Scorecard() {
   const { data: scorecard, isLoading, isError, error } = useQuery({
     queryKey: ['scorecard', sessionId],
     queryFn: () => api.getScorecard(sessionId),
+    retry: false,
+  });
+  const { data: transcript } = useQuery({
+    queryKey: ['session-transcript', sessionId],
+    queryFn: () => api.getSessionTranscript(sessionId),
     retry: false,
   });
 
@@ -86,7 +92,7 @@ export function Scorecard() {
           <CardHeader>
             <CardTitle className="text-lg">Strengths</CardTitle>
           </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">
+          <CardContent className="text-sm whitespace-pre-line text-muted-foreground">
             {scorecard.strengths}
           </CardContent>
         </Card>
@@ -94,7 +100,7 @@ export function Scorecard() {
           <CardHeader>
             <CardTitle className="text-lg">Weaknesses</CardTitle>
           </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">
+          <CardContent className="text-sm whitespace-pre-line text-muted-foreground">
             {scorecard.weaknesses}
           </CardContent>
         </Card>
@@ -104,10 +110,23 @@ export function Scorecard() {
         <CardHeader>
           <CardTitle className="text-lg">Judge's ruling</CardTitle>
         </CardHeader>
-        <CardContent className="text-sm leading-relaxed text-muted-foreground">
+        <CardContent className="text-sm leading-relaxed whitespace-pre-line text-muted-foreground">
           {scorecard.judgeRuling}
         </CardContent>
       </Card>
+
+      {transcript && transcript.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Transcript</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            {transcript.map((line) => (
+              <TranscriptLine key={line.id} line={line} />
+            ))}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

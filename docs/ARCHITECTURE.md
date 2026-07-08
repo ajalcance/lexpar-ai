@@ -166,15 +166,26 @@ actual endpoint, just with hardcoded credentials behind it for now.
 ### Wiring status (frontend ↔ backend)
 
 The frontend now calls the **real** backend through `lib/api.ts` for auth (login + `/api/auth/me`,
-which `ProtectedRoute` uses to validate the session), cases (list/create), session creation, and
-scorecard retrieval. Two things remain mocked/absent until the agents pipeline exists:
+which `ProtectedRoute` uses to validate the session), cases (list/create), session creation,
+scorecard retrieval, and — once a session is completed — its persisted transcript. Live voice is
+the one thing still absent:
 
-- **Transcript playback** in `SparringRoom` is still a scripted, timer-driven sequence (there is no
-  live STT→LLM→TTS yet). Starting a session still exercises real plumbing: it creates a real
-  `sessions` row (POST /api/sessions) and fetches a real LiveKit token (GET /api/livekit/token).
-- **Scorecards** aren't generated yet (that's the Judge agent's job), so the session stays
-  `in_progress` and GET scorecard returns 409/404. The frontend shows an honest "not available yet"
-  fallback rather than fabricating a score.
+- **Live transcript playback** in `SparringRoom` is still a scripted, timer-driven sequence during
+  a session (there is no live STT→LLM→TTS producing turns in real time yet). Starting a session
+  still exercises real plumbing: it creates a real `sessions` row (POST /api/sessions) and fetches a
+  real LiveKit token (GET /api/livekit/token).
+- **Completed sessions render real data.** When the agent worker (or `session_end_harness.py`) posts
+  `complete` + `scorecard`, the session goes `completed` and the persisted scorecard + transcript are
+  written. `Scorecard.tsx` then renders the **real** heuristic score, strengths, weaknesses, and
+  verbatim judge ruling (GET `/api/sessions/{id}/scorecard`), plus a **Transcript** section built
+  from the real persisted turns (GET `/api/sessions/{id}`, reusing `TranscriptLine` with the
+  objection styling). Multi-line strengths/weaknesses use `whitespace-pre-line` so the per-fact and
+  per-objection bullet lines survive. Verified end-to-end offline via the harness (Gap 5).
+- **Before a scorecard exists** (session still `in_progress`), GET scorecard returns 409/404 and the
+  frontend shows an honest "not available yet" fallback rather than fabricating a score.
+- **No dedicated ledger/verification UI.** SessionState's ledger (established facts, objections) and
+  the verification pass already flow into the scorecard's score/strengths/weaknesses; they are not
+  surfaced as a separate section (deliberately — see Gap 5 in tasks/PLAN.md).
 
 ---
 

@@ -112,6 +112,16 @@ interface ScorecardJson {
   judge_ruling: string | null;
   created_at: string;
 }
+interface TranscriptJson {
+  id: string;
+  speaker: Transcript['speaker'];
+  content: string;
+  was_interruption: boolean;
+  spoken_at: string;
+}
+interface SessionDetailJson extends SessionJson {
+  transcripts: TranscriptJson[];
+}
 
 const toUser = (j: UserJson): User => ({
   id: j.id,
@@ -190,6 +200,19 @@ export async function createSession(caseId: string): Promise<Session> {
 
 export async function getSession(id: string): Promise<Session> {
   return toSession(await request<SessionJson>(`/api/sessions/${id}`));
+}
+
+/** The session's real persisted transcript (attorney / opposing counsel / judge lines). */
+export async function getSessionTranscript(id: string): Promise<Transcript[]> {
+  const data = await request<SessionDetailJson>(`/api/sessions/${id}`);
+  return data.transcripts.map((t) => ({
+    id: t.id,
+    sessionId: id,
+    speaker: t.speaker,
+    content: t.content,
+    wasInterruption: t.was_interruption,
+    spokenAt: t.spoken_at,
+  }));
 }
 
 export async function getScorecard(sessionId: string): Promise<Scorecard> {
