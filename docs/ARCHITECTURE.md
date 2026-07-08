@@ -453,6 +453,10 @@ the backend — see `frontend/.env.example`. Vite only exposes vars prefixed `VI
   until the AMD droplet exists. Bring it up with
   `docker compose -f infra/docker-compose.yml up -d`; LiveKit answers on `http://localhost:7880`
   (returns `OK`).
+- **Apply the DB schema (required first-run step):** a freshly created Postgres has no tables, so
+  the first request that touches one (e.g. login → `users`) fails with `relation "users" does not
+  exist`. After the infra is up, run the migrations once from `backend/`:
+  `alembic upgrade head`. Re-run it after pulling any new migration.
 - **Agents voice worker:** the heavy voice deps are separate (`agents/requirements-voice.txt`, out
   of CI). Run it against a live LiveKit server with:
   `pip install -r agents/requirements.txt -r agents/requirements-voice.txt` then
