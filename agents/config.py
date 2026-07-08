@@ -63,3 +63,9 @@ OBJECTION_MODEL = os.getenv(
     "OBJECTION_LLM_MODEL",
     "accounts/fireworks/models/gpt-oss-120b",
 )
+
+# Voice pipeline (agents/main.py). The Deepgram/ElevenLabs plugins read their API keys from the
+# environment (DEEPGRAM_API_KEY / ELEVENLABS_API_KEY); these just pick the models/voice.
+DEEPGRAM_MODEL = os.getenv("DEEPGRAM_MODEL", "nova-3")
+ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5")  # low-latency Flash
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")

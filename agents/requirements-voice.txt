@@ -1,0 +1,14 @@
+# Voice-pipeline dependencies for the LiveKit Agents worker (agents/main.py).
+# Kept SEPARATE from requirements.txt: these are heavy media libraries that CI cannot exercise
+# (the worker needs a live LiveKit room + a microphone), so CI installs only requirements.txt.
+#
+# To run the worker locally:
+#   pip install -r agents/requirements.txt -r agents/requirements-voice.txt
+#   python agents/main.py dev        # needs a running LiveKit server + keys in .env
+
+livekit-agents>=1.0
+livekit-plugins-deepgram
+livekit-plugins-elevenlabs
+livekit-plugins-silero
+livekit-plugins-openai
+livekit-plugins-turn-detector

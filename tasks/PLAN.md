@@ -462,3 +462,74 @@ has an opt-in review log (`record=True`, off by default — retains work product
 `gate_rejected()` vs `llm_no_fire()` so what the recall-biased gate filtered can be reviewed
 separately from what the LLM judged. Harness prints the two lists. +3 offline tests → **45 offline,
 7 live**, ruff clean.
+
+---
+
+### Real LiveKit Agents voice worker (agents/main.py) — status: done (needs a live room to verify)
+
+**Goal:** Implement `agents/main.py` as a real LiveKit Agents worker — Deepgram streaming STT +
+ElevenLabs Flash TTS (§6) — with the objection classifier wired so a `fire` decision actually
+barges in: cancels the in-progress attorney turn and has Opposing Counsel object immediately, via
+LiveKit's built-in interruption. **Do not modify** opposing_counsel.py / judge.py / verification.py —
+only connect the audio layer around them. Frontend untouched.
+
+**Design**
+- `main.py` — worker entrypoint (`livekit-agents` 1.x): connect to the room, `AgentSession` with
+  Silero VAD, Deepgram STT (interim results on), ElevenLabs Flash TTS. The attorney participant
+  speaks → STT.
+  - **Interim transcripts →** `ObjectionClassifier.consider(fragment)`; on `fire` → **barge-in**:
+    interrupt current handling and Opposing Counsel speaks the objection immediately.
+  - **End of turn (no objection) →** `opposing_counsel.generate_reply` → verification pass
+    (`find_suspicious_citations` + `check_consistency`, unchanged) → speak via TTS; `judge` rules
+    where appropriate. Uses the existing functions verbatim.
+- **Testable, livekit-free glue** in `agents/voice_interrupt.py` (no livekit import; operates on a
+  duck-typed session): `objection_utterance(decision)` (pure) + `async handle_interim(session,
+  classifier, fragment)` — so the "fire → interrupt + speak" wiring is unit-tested with a fake
+  session. `main.py` imports and wires this into the real session.
+- Config: `DEEPGRAM_MODEL`, `ELEVENLABS_MODEL` (default `eleven_flash_v2_5`), `ELEVENLABS_VOICE_ID`
+  in config.py + .env.example + §9. Plugins read DEEPGRAM/ELEVENLABS keys from env; the worker reads
+  LIVEKIT_URL/API_KEY/API_SECRET from env (already present).
+
+**Dependencies — kept OUT of CI (heavy media libs CI can't exercise):**
+- `agents/requirements-voice.txt` — `livekit-agents`, `livekit-plugins-{deepgram,elevenlabs,silero,
+  openai,turn-detector}`. NOT added to `requirements.txt`, so the agents CI job (ruff + offline
+  pytest) stays lean and green. `main.py` imports livekit only when run; ruff lints it statically;
+  no test imports it.
+
+**Tests (offline / CI only):** `tests/test_voice_interrupt.py` — `objection_utterance` text;
+`handle_interim` calls interrupt+say on `fire` and does nothing otherwise (fake async session);
+config defaults. No live test (needs a real room + mic).
+
+**⚠️ Cannot verify here — needs a live LiveKit room + a real microphone (flagged):**
+- The entire real audio path: room join, mic → Deepgram STT, ElevenLabs TTS playback, VAD/turn
+  detection, and the **actual barge-in timing/behavior**.
+- The exact `AgentSession` API wiring (interim-transcript event hookup, the interrupt/say method
+  names, and integrating our custom blocking `generate_reply` as the LLM step) is written to the
+  documented `livekit-agents` 1.x API but can only be validated/tuned against the installed SDK in a
+  running room. I'll implement to the current docs and mark residual uncertainty inline.
+- Because of this, per your instruction the frontend stays on scripted mock data until we confirm
+  this works end to end in a real room.
+
+**Docs:** ARCHITECTURE §6 (main.py implemented; live-vs-needs-room note) + §6.5 + §9 + §10 (how to
+run the worker); `.env.example`; PLAN.
+
+**Decisions (resolved):** proceed; voice deps in a separate `requirements-voice.txt`; on `fire`, a
+short canned "Objection — <type>." for low-latency barge-in.
+
+**Result:** Implemented. `main.py` — LiveKit Agents worker (verified API via LiveKit docs):
+`AgentSession` with Silero VAD, Deepgram STT (interim on), ElevenLabs Flash TTS; Opposing Counsel
+routed through `OpposingCounselAgent.llm_node` which calls `opposing_counsel.generate_reply` + the
+`verification` pass (both unchanged, off-loop via `asyncio.to_thread`); `user_input_transcribed`
+events feed the classifier and a `fire` barges in (`session.interrupt()` + say) via the tested
+`voice_interrupt.py`; Judge closing ruling on shutdown (generation wired, delivery flagged). Kept
+opposing_counsel/judge/verification verbatim. `requirements-voice.txt` holds the heavy deps (out of
+CI); config + `.env.example` + §9 got `DEEPGRAM_MODEL`/`ELEVENLABS_MODEL`/`ELEVENLABS_VOICE_ID`.
+**Tests: 48 offline pass** (+3 for the interrupt glue), 7 live deselected, ruff clean, main.py
+compiles. **Frontend untouched** (stays on scripted mock per instruction).
+
+**⚠️ Not verified here (needs a live LiveKit room + microphone):** the whole audio path — room join,
+mic→Deepgram STT, ElevenLabs playback, VAD/turn detection, and real barge-in timing. The exact
+`AgentSession` wiring (`llm_node` signature, event fields, interrupt/say) is written to the
+livekit-agents 1.x docs but may need tuning against the installed SDK in a running room. Only the
+livekit-free glue (`voice_interrupt.py`), config, and lint are validated. Frontend remains on mock
+until this is confirmed end to end.

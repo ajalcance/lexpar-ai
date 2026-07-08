@@ -201,8 +201,14 @@ FastAPI's role is auth, case management, and persisting the results the agents w
 
 - **LiveKit server**: self-hosted (open-source, Apache-2.0), runs in Docker locally and on the
   AMD droplet in production. Can migrate to LiveKit Cloud later without touching agent code.
-- **LiveKit Agents worker**: Python framework handling the STT → LLM → TTS pipeline, built-in
-  VAD + semantic turn detection for natural barge-in.
+- **LiveKit Agents worker** (`agents/main.py`, implemented): Deepgram streaming STT → Opposing
+  Counsel (Fireworks, via `opposing_counsel.py`) → verification pass → ElevenLabs **Flash** TTS,
+  with Silero VAD + turn detection. Interim transcripts feed the objection classifier; a `fire`
+  decision **barges in** (`session.interrupt()` + an immediate short "Objection — <type>." via the
+  tested `voice_interrupt.py` glue). `opposing_counsel.py` / `judge.py` / `verification.py` are used
+  verbatim — main.py only wires the audio layer around them. Heavy voice deps live in
+  `agents/requirements-voice.txt` (out of CI). **The real audio path — room join, mic→STT, TTS
+  playback, VAD, barge-in timing — is only verifiable in a live room with a microphone.**
   - `opposing_counsel.py` — cross-examines, objects, counter-argues.
   - `judge.py` — monitors the session, delivers rulings.
   - `objection_classifier.py` — **the custom, differentiating piece** (implemented). Watches the
@@ -280,8 +286,11 @@ call.
   `@pytest.mark.live` tests, excluded from CI. Text-only harnesses (`agents/harness.py`,
   `agents/objection_harness.py`) exercise the draft→verify path and the streaming interrupt logic
   without any voice infrastructure.
-- **Pending Deepgram/ElevenLabs keys:** the real-time STT → TTS voice pipeline (`agents/main.py`
-  stays a skeleton). Verification model GPU co-location arrives with self-hosting (§7).
+- **Implemented, needs a live room to verify:** the real-time voice worker (`agents/main.py`) —
+  Deepgram STT + ElevenLabs Flash TTS + objection barge-in. The livekit-free glue (`voice_interrupt.py`)
+  is unit-tested; the actual audio path (mic→STT, TTS playback, VAD, barge-in timing) can only be
+  validated in a live LiveKit room with a microphone. Verification model GPU co-location arrives with
+  self-hosting (§7).
 
 ---
 
@@ -398,6 +407,7 @@ S3-compatible (MinIO locally, DigitalOcean Spaces in production).
 | `VERIFICATION_LLM_PROVIDER` / `VERIFICATION_LLM_ENDPOINT` / `VERIFICATION_LLM_MODEL` | Verifier, NOT the reasoning model (§6.5; default `gpt-oss-120b` — swap for a smaller model when deployed) |
 | `OBJECTION_LLM_PROVIDER` / `OBJECTION_LLM_ENDPOINT` / `OBJECTION_LLM_MODEL` | Objection classifier — the latency-sensitive streaming call (§6; default `gpt-oss-120b`) |
 | `FIREWORKS_API_KEY` / `DEEPGRAM_API_KEY` / `ELEVENLABS_API_KEY` | Provider auth |
+| `DEEPGRAM_MODEL` / `ELEVENLABS_MODEL` / `ELEVENLABS_VOICE_ID` | Voice pipeline (agents/main.py); defaults `nova-3` / `eleven_flash_v2_5` / a stock voice |
 | `JWT_SECRET` | Token signing |
 | `AUTH_MODE` | `stub` \| `production` |
 | `CORS_ORIGINS` | Comma-separated browser origins allowed to call the API (e.g. the Vite dev server) |
@@ -417,6 +427,10 @@ the backend — see `frontend/.env.example`. Vite only exposes vars prefixed `VI
   until the AMD droplet exists. Bring it up with
   `docker compose -f infra/docker-compose.yml up -d`; LiveKit answers on `http://localhost:7880`
   (returns `OK`).
+- **Agents voice worker:** the heavy voice deps are separate (`agents/requirements-voice.txt`, out
+  of CI). Run it against a live LiveKit server with:
+  `pip install -r agents/requirements.txt -r agents/requirements-voice.txt` then
+  `python agents/main.py dev`.
 - **Production (AMD Developer Cloud):** `docker-compose.prod.yml` on the droplet. CI builds and
   tags images on every push; deploy is `docker compose pull && docker compose up -d`.
 - **CI (`.github/workflows/ci.yml`):** lint + type-check + test + build images on every push, so
