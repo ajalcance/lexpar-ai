@@ -533,3 +533,77 @@ mic→Deepgram STT, ElevenLabs playback, VAD/turn detection, and real barge-in t
 livekit-agents 1.x docs but may need tuning against the installed SDK in a running room. Only the
 livekit-free glue (`voice_interrupt.py`), config, and lint are validated. Frontend remains on mock
 until this is confirmed end to end.
+
+---
+
+### Frontend ↔ backend/agents gap analysis (read-only — no code changed)
+
+Snapshot of what the frontend does today vs. what backend/ and agents/ can now do. `S` = small
+(config/wiring), `L` = substantial (new UI + logic). Libs `@livekit/components-react` +
+`livekit-client` are already installed, which lowers the room-join lift.
+
+**Gap 1 — SparringRoom never joins the room or publishes a mic `[L]`.**
+- Finding: `SparringRoom.tsx` only calls `api.getLiveKitToken(sessionId)` in a `useQuery` to show a
+  "Voice room ready" badge (token fetch success), then plays the **scripted mock** transcript via
+  `useSparringSession` → `api.getSessionScript` → `mockTranscript`. `lib/livekit.ts`
+  (`connectToRoom`/`disconnectFromRoom`) exists but is **unused**; no `room.connect`, no mic publish,
+  no audio subscribe. It behaves exactly as it did before `agents/main.py` existed — token only.
+- Replaces: `useSparringSession.ts` + `api.getSessionScript` + `mockTranscript`; the token-only
+  `roomReady` `useQuery` in SparringRoom.
+- Need: connect with the token (`livekit-client`/`LiveKitRoom`), publish the mic track, subscribe to
+  the agent's audio + transcription; drive lifecycle on mount/unmount.
+
+**Gap 2 — No mic-permission request, mute control, or real connection-state UI `[L]`.**
+- Finding: because nothing connects, the browser mic-permission prompt never fires. No mute/unmute.
+  The `idle/connecting/playing/completed` badge reflects the **scripted timer**, not LiveKit
+  `ConnectionState`; "Voice room ready" = token fetch, not a live connection.
+- Minimum needed: connecting + publishing mic (triggers the permission prompt); a mute toggle
+  (`localParticipant.setMicrophoneEnabled`); a connection indicator from
+  `RoomEvent.ConnectionStateChanged` (connecting/connected/reconnecting); a "listening/speaking"
+  indicator from active-speaker events (`isSpeaking` / `ActiveSpeakersChanged`).
+- Replaces: the mock status badges + "Voice room ready" badge in SparringRoom.
+
+**Gap 3 — A fired objection has no path to the frontend as a structured event `[L]`.**
+- Finding: `agents/main.py` on `fire` does `session.interrupt()` + `session.say("Objection — <type>.")`
+  — it **speaks** the objection (audible if connected) but publishes **no structured event**. There is
+  no LiveKit data-channel message carrying `{objection_type, reason}`, and the frontend subscribes to
+  no `DataReceived`/`TranscriptionReceived`. So a real interruption can't render as the visible
+  "OBJECTION (leading)" line the mock shows.
+- Need (both sides, must be built): agent publishes an objection event (LiveKit data channel via
+  `room.localParticipant.publishData`, or transcription metadata) from `main.py`/`voice_interrupt.py`;
+  frontend subscribes and renders it. LiveKit Agents can also forward STT/TTS as
+  `TranscriptionReceived` — a candidate feed for the live transcript itself.
+- Replaces: the `wasInterruption` styling in `mockTranscript`/`TranscriptLine` would be driven by real
+  events instead of the scripted flag.
+
+**Gap 4 — Nothing calls `judge.py` to persist a scorecard; `/scorecard` still 409 `[L]`.**
+- Finding: `scorecard_service.get_scorecard` requires `status == "completed"` **and** a `Scorecard`
+  row. Sessions are created `in_progress`; there is **no API route** to complete one
+  (`session_service.transition_status` exists but is unrouted). Nothing writes `Scorecard` rows —
+  `judge.generate_ruling` produces text, but `main.py` only **logs** it on shutdown (TODO to persist),
+  and there is **no backend write endpoint** for the agent (no POST scorecard/transcript route; agents
+  have no service credential — `AUTH_MODE=stub`). So `/api/sessions/{id}/scorecard` returns **409
+  regardless** → the frontend "not available yet" fallback always shows.
+- Need: (a) complete/end a session (a route the "End session" button calls, or agent-driven on room
+  close); (b) an agent persistence path — new backend endpoint(s) to write transcripts + the scorecard,
+  plus an agent auth/service credential; (c) then `getScorecard` returns real data.
+- Replaces: the 404/409 → "Not available yet" fallback in `Scorecard.tsx` (which would finally render
+  a real score).
+
+**Gap 5 — Backend/agents capabilities with no frontend surface at all.**
+- **SessionState** (case_facts, established-facts ledger, objections ledger + rulings) `[L]`: agents
+  in-memory only — not persisted, no UI. No "what's on the record" / established-facts / objection-
+  ledger view.
+- **Verification results** (suspicious citations, consistency contradictions) `[L]`: computed in
+  agents, discarded, no UI (could surface as a "flagged / regenerated" indicator).
+- **Objection type + reason** `[S once Gap 3 exists]`: the real classifier emits `objection_type` +
+  `reason`; the mock only shows a generic "Objection" badge via `wasInterruption`. Rendering the real
+  type/reason is small **once** the data-event path (Gap 3) exists.
+- **Real transcripts** `[L]`: the `transcripts` table + `GET /api/sessions/{id}` (`SessionDetailOut.
+  transcripts[]`) exist but are **never written**; the frontend uses `getSessionScript` (mock) instead
+  of the real `getSession` transcripts.
+- **Judge rulings** (real Fireworks) `[L]`: generated, never persisted or surfaced.
+
+**Two foundations most gaps hinge on:** (A) the frontend actually joining the LiveKit room + mic
+(Gaps 1–2), and (B) a persistence + eventing path agents → backend → frontend (Gaps 3–5), which also
+needs an **agent auth/service credential** (blocked on replacing `AUTH_MODE=stub`, ARCHITECTURE §11).
