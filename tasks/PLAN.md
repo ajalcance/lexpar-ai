@@ -607,3 +607,66 @@ Snapshot of what the frontend does today vs. what backend/ and agents/ can now d
 **Two foundations most gaps hinge on:** (A) the frontend actually joining the LiveKit room + mic
 (Gaps 1–2), and (B) a persistence + eventing path agents → backend → frontend (Gaps 3–5), which also
 needs an **agent auth/service credential** (blocked on replacing `AUTH_MODE=stub`, ARCHITECTURE §11).
+
+---
+
+### Wire SparringRoom to the real LiveKit room + mic (Gaps 1–2) — status: done
+
+**Goal:** SparringRoom actually connects to the LiveKit room (via the existing
+`lib/livekit.ts connectToRoom` + the token it already fetches) and publishes the browser mic
+(triggering the permission prompt). Add a mute/unmute toggle, a connection-state indicator tied to
+LiveKit's real `ConnectionState`, and a listening/speaking indicator from active-speaker events. The
+scripted mock transcript becomes a **fallback ONLY** when the connection fails or no agent joins
+within a few seconds (Deepgram/ElevenLabs credit pending → the agent won't always be running; keeps
+the app demoable). **Objection detection/display is untouched — that's Gap 3.**
+
+**New hook `hooks/useSparringRoom.ts`** (connection lifecycle; logic in a hook per DEV §11):
+- fetch token (`api.getLiveKitToken`) → `connectToRoom(access)` → publish mic
+  (`localParticipant.setMicrophoneEnabled(true)` — fires the permission prompt) → attach remote agent
+  audio tracks so the agent is audible.
+- subscribe: `RoomEvent.ConnectionStateChanged` (real state), `ActiveSpeakersChanged`
+  (listening/speaking), `ParticipantConnected`/`Disconnected` (agent presence).
+- `mode`: `connecting` | `live` | `fallback`. → `fallback` if token/connect fails, or connected but
+  **no agent within ~5s**; a later agent join promotes to `live`.
+- returns `{ mode, connectionState, isMuted, toggleMute, activeSpeaker, micBlocked }`; mic-denied →
+  stay connected, disable mute, flag `micBlocked` (don't fall back — they can still hear the agent).
+- cleanup: `disconnectFromRoom` on unmount / End session.
+
+**Modify `hooks/useSparringSession.ts`** — add an `enabled` option so the scripted mock only runs
+(and only sets its timers) in fallback mode; no-op when disabled.
+
+**Modify `pages/SparringRoom.tsx`** — use both hooks (`scriptEnabled = mode === 'fallback'`); render
+the connection-state indicator, listening/speaking indicator, and mute button; transcript panel shows
+the scripted mock in fallback (existing `TranscriptLine`, unchanged) and a "live audio — transcript
+view lands with Gap 3" placeholder in live. "End session" disconnects + navigates to the scorecard.
+Replaces the old `getLiveKitToken` `useQuery` + "Voice room ready" badge.
+
+**Not touched:** `TranscriptLine`, `mockTranscript`, objection styling (Gap 3); `lib/api.ts`; backend;
+agents. `lib/livekit.ts connectToRoom`/`disconnectFromRoom` reused as-is (mic/events/audio handled in
+the hook).
+
+**Verification (limits flagged):** I'll bring up the backend + the running LiveKit dev server and
+verify in the browser preview that the page connects and — with no agent worker running and no real
+mic in the preview browser — **falls back to the scripted mock**, with the connection indicator + mute
+control rendering. **Full LIVE (agent audio, active-speaker, real mic input) needs the agent worker +
+a real microphone and cannot be verified here** — which is exactly why the fallback exists.
+
+**Decisions (resolved):** proceed; keep the room connected when no agent joins (promote to live if
+one joins later).
+
+**Result:** Done and verified (fallback path). New `hooks/useSparringRoom.ts` connects via
+`connectToRoom` + the fetched token, publishes the mic (`setMicrophoneEnabled`, prompts permission),
+attaches remote audio, and subscribes to `ConnectionStateChanged` / `ActiveSpeakersChanged` /
+`ParticipantConnected`; returns `{ mode, connectionState, activeSpeaker, isMuted, micBlocked,
+toggleMute }`. `useSparringSession` gained an `enabled` flag so the scripted mock only runs in
+fallback. `SparringRoom.tsx` shows the connection-state badge, listening/speaking badge, and mute
+toggle, and swaps the transcript panel: mock in fallback (objection styling unchanged — Gap 3),
+placeholder in live. Two robustness fixes found during verification: **(a)** defer the connect one
+tick so React StrictMode's dev double-mount doesn't fire two same-identity connects; **(b)** an 8s
+**connect-timeout** so a *stalled* connection (not just a failed one) falls back. **Verified in the
+browser preview** end to end: login → case → session → SparringRoom attempts the real LiveKit
+connection, and (no agent + headless browser can't complete WebRTC) **falls back to the scripted mock
+with the "Offline (demo)" state + disabled Mute**; objection line styling intact. type-check + lint
+clean; existing 5 Vitest tests pass. **Not verifiable here (flagged):** the successful *connected*
+path — real mic publish, active-speaker indicator, agent audio, and connected-but-no-agent → the app
+needs a real browser (mic + WebRTC) and the agent worker running.
