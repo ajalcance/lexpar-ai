@@ -11,6 +11,8 @@ import os
 
 os.environ.setdefault("AUTH_MODE", "stub")
 os.environ.setdefault("AGENT_SERVICE_TOKEN", "test-agent-token")
+# JWT_SECRET is required (>= 32 chars) — provide a valid one for the test suite.
+os.environ.setdefault("JWT_SECRET", "test-jwt-secret-0123456789-abcdefghijklmnop")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

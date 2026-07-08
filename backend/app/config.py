@@ -10,7 +10,12 @@ Security notes: Secrets (JWT_SECRET, provider keys) come from the environment on
 
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Minimum JWT signing-key length. HS256 keys should be >= 256 bits (RFC 7518 §3.2); this also
+# rejects the old insecure default and any blank/short secret.
+MIN_JWT_SECRET_LEN = 32
 
 
 class Settings(BaseSettings):
@@ -41,8 +46,9 @@ class Settings(BaseSettings):
     deepgram_api_key: str = ""
     elevenlabs_api_key: str = ""
 
-    # Auth
-    jwt_secret: str = "dev-insecure-change-me"
+    # Auth. No insecure default: a blank/missing/weak JWT_SECRET fails loudly at startup (below)
+    # rather than silently signing tokens with a guessable key.
+    jwt_secret: str = ""
     auth_mode: str = "stub"
 
     # Scoped service credential for the agents worker (NOT user auth) — grants only the internal
@@ -55,6 +61,19 @@ class Settings(BaseSettings):
     # Token settings (not env-driven; sensible constants)
     jwt_algorithm: str = "HS256"
     access_token_ttl_minutes: int = 60
+
+    @field_validator("jwt_secret")
+    @classmethod
+    def _require_strong_jwt_secret(cls, value: str) -> str:
+        """Refuse to start unless JWT_SECRET is set to a strong signing key (fail loudly)."""
+        cleaned = value.strip()
+        if len(cleaned) < MIN_JWT_SECRET_LEN:
+            raise ValueError(
+                f"JWT_SECRET must be set to a strong secret of at least {MIN_JWT_SECRET_LEN} "
+                "characters (generate one with: openssl rand -hex 32). Refusing to start with a "
+                "blank, missing, or weak signing key."
+            )
+        return cleaned
 
     @property
     def cors_origin_list(self) -> list[str]:

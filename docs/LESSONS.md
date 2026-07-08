@@ -42,3 +42,13 @@ force pytest to run against a real Postgres and add a DB service to CI.
 **Wrong:** Importing both the ORM `Session` model and SQLAlchemy's `Session` in one module collides.
 **Right:** Alias the DB session type — `from sqlalchemy.orm import Session as DbSession` — and keep
 `Session` for the domain model. `DbSession` also reads clearly as "database session."
+
+### [Backend/security] Never give a secret an insecure default — fail loud instead
+**Wrong:** `jwt_secret: str = "dev-insecure-change-me"`. A missing `JWT_SECRET` silently fell back to
+a guessable, source-committed key (tokens forgeable by anyone who read the repo); a blank one didn't
+fail at startup — it crashed later at the first login (`HMAC key must not be empty`).
+**Right:** No default for signing keys. Validate at startup (a pydantic `field_validator` requiring
+≥ 32 chars) so the app **refuses to boot** with a blank/missing/weak secret, with an actionable
+message (`openssl rand -hex 32`). Supply it via env/`.env`; give tests a real (long) value in
+conftest. Prefer fail-closed defaults for other credentials too (e.g. an empty `AGENT_SERVICE_TOKEN`
+rejects all internal calls rather than allowing them).
