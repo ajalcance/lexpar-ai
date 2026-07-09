@@ -100,8 +100,15 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     last_turn = {"text": ""}
 
     session = AgentSession(
+        # Silero VAD needs no API key. STT/TTS keys are passed EXPLICITLY from our own config
+        # (config.py) rather than relying on each plugin's implicit env-var lookup — ElevenLabs
+        # otherwise looks for ELEVEN_API_KEY, not our ELEVENLABS_API_KEY (see docs/LESSONS.md).
         vad=silero.VAD.load(),
-        stt=deepgram.STT(model=config.DEEPGRAM_MODEL, interim_results=True),
+        stt=deepgram.STT(
+            model=config.DEEPGRAM_MODEL,
+            interim_results=True,
+            api_key=config.DEEPGRAM_API_KEY,
+        ),
         # The pipeline requires an llm; OpposingCounselAgent.llm_node overrides how it is used.
         llm=openai.LLM(
             model=config.OPPOSING_COUNSEL_MODEL,
@@ -111,6 +118,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         tts=elevenlabs.TTS(
             model=config.ELEVENLABS_MODEL,
             voice_id=config.ELEVENLABS_VOICE_ID,
+            api_key=config.ELEVENLABS_API_KEY,
         ),
     )
 

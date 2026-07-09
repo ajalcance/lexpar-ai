@@ -64,8 +64,12 @@ OBJECTION_MODEL = os.getenv(
     "accounts/fireworks/models/gpt-oss-120b",
 )
 
-# Voice pipeline (agents/main.py). The Deepgram/ElevenLabs plugins read their API keys from the
-# environment (DEEPGRAM_API_KEY / ELEVENLABS_API_KEY); these just pick the models/voice.
+# Voice pipeline (agents/main.py). We read the keys from our OWN env names here and pass them
+# EXPLICITLY into the plugins (main.py) — do not rely on each plugin's implicit env-var lookup,
+# whose names don't all match ours (Deepgram defaults to DEEPGRAM_API_KEY, which matches, but
+# ElevenLabs defaults to ELEVEN_API_KEY, which does NOT match our ELEVENLABS_API_KEY convention).
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 DEEPGRAM_MODEL = os.getenv("DEEPGRAM_MODEL", "nova-3")
 ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5")  # low-latency Flash
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")

@@ -111,3 +111,14 @@ context still applies) and subscribe to `RoomEvent.AudioPlaybackStatusChanged` /
 `startAudio()` from a real gesture. Also handle the terminal `RoomEvent.Disconnected` (auto-reconnect
 only covers transient drops) and `detach()` tracks + remove listeners on unmount so repeated sessions
 don't leak.
+
+### [Agents/config] Pass provider keys EXPLICITLY — plugin default env-var names don't match ours
+**Wrong:** Constructed `elevenlabs.TTS(model=…, voice_id=…)` without an `api_key`, trusting the
+plugin to read the key from the environment. The ElevenLabs plugin looks for **`ELEVEN_API_KEY`**,
+but our project convention (ARCHITECTURE §9, `.env`, `config.py`) is **`ELEVENLABS_API_KEY`** — so the
+worker crashed at job start with "ElevenLabs API key is required … set ELEVEN_API_KEY". It only *seemed*
+to work for Deepgram because that plugin's default (`DEEPGRAM_API_KEY`) happens to match our name.
+**Right:** Read every provider key from our own env names in `config.py` and pass it **explicitly**
+into the plugin (`elevenlabs.TTS(api_key=config.ELEVENLABS_API_KEY)`, `deepgram.STT(api_key=…)`), never
+relying on each plugin's implicit lookup. One config is the single source of truth; a plugin changing
+(or already having) a different default env-var name can't silently break us. Silero VAD needs no key.
