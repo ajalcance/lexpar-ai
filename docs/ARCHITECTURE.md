@@ -234,12 +234,18 @@ whole transcript in one call** (no per-turn round-trips inside the live voice lo
   - `objection_classifier.py` — **the custom, differentiating piece** (implemented). Watches the
     live partial transcript and decides, in real time, when Opposing Counsel should interrupt and
     with what objection type, following opposing_counsel.md's "only when genuinely invited — not
-    every turn" rule. Two stages so it can run continuously: a cheap, **recall-biased regex gate**
-    (`candidate_grounds`, runs on every fragment; no candidates → no LLM call) followed by a fast
-    model (`classify_fragment`, gpt-oss-120b JSON) that makes the final fire/type decision.
+    every turn" rule. **Three tiers** so it runs continuously *and* barges in at courtroom speed:
+    (1) a cheap, **recall-biased regex gate** (`candidate_grounds`, runs on every fragment; no
+    candidates → no LLM call); (2) a **precision-biased high-confidence gate**
+    (`high_confidence_grounds`) — for phrasing so unambiguous (explicit leading tag-questions,
+    direct "he told me" hearsay) that it **fires immediately with no LLM call at all**, the only way
+    to hit ~0.5 s barge-in given the account has no sub-second model; (3) the fast model
+    (`classify_fragment`, gpt-oss-120b JSON) judges the remaining **ambiguous** candidates.
     `ObjectionClassifier` adds **per-utterance debounce** (no re-firing on a growing fragment) and
-    the LLM stage **fails closed** (any error → no interruption). Bespoke logic on top of the
-    framework, not something LiveKit provides out of the box.
+    the LLM stage **fails closed** (any error → no interruption). Six audit outcomes distinguish
+    `fire_immediate` (tier 2, no model) from `fire` (tier 3, model-judged) so an over-aggressive
+    high-confidence gate is visible in the data. Bespoke logic on top of the framework, not
+    something LiveKit provides out of the box.
   - `llm_router.py` — reads `OPPOSING_COUNSEL_LLM_PROVIDER` / `JUDGE_LLM_PROVIDER` env vars and
     points each agent at the correct OpenAI-compatible endpoint.
 
@@ -321,7 +327,7 @@ call.
 | Opposing Counsel | Fireworks `deepseek-v4-pro` | Self-hosted vLLM on AMD MI300X | Proves AMD platform ownership for the hackathon; switch to self-hosted once session volume justifies dedicated GPU uptime |
 | Judge | Fireworks `gpt-oss-120b`, JSON-structured (**interim**) | Stays on Fireworks | **Should be Gemma** for bonus-prize eligibility, but no serverless Gemma (2/3/4) is reachable on this account/endpoint — verified against the live `/v1/models` list and direct ID probes (all 404), including the Gemma 3 12B/4B IDs from Fireworks' changelog. Interim: `gpt-oss-120b` via structured `{"ruling": …}` output (fast, reliable). `deepseek-v4-pro` was rejected for the Judge — as a reasoning model it is slow (30–60s) and intermittently returns empty content. Do not self-host this one. |
 | Verification | Fireworks `gpt-oss-120b` | Same GPU as reasoning (self-hosted) | Small/fast verifier per §6.5 — deliberately not the reasoning model; needs clean JSON output. |
-| Objection classifier | Fireworks `gpt-oss-120b`, JSON (`OBJECTION_LLM_MODEL`) | Fast model, co-located | Most latency-sensitive call (streaming speech), so it only runs on gate candidates and debounces per utterance (§6). gpt-oss picked as the account's fast JSON follower; swap via env if a faster model appears. |
+| Objection classifier | Fireworks `gpt-oss-120b`, JSON (`OBJECTION_LLM_MODEL`), `max_tokens=512` | Fast model, co-located | Most latency-sensitive call (streaming speech). **Benchmarked against the whole account catalog** (see note below): gpt-oss-120b is the *fastest reliable* model here (~1.3 s), and `max_tokens` cannot drop below 512 without reproducing the empty-content bug. So the latency win came from the **three-tier gate** (§6), not a model swap — clear leading/hearsay fire with no model call at all. Runs only on gate candidates and debounces per utterance. Swap via env if a faster model ever appears. |
 
 Switching is a config change (`.env` value), never a code change — this is deliberate. **Bonus-eligibility
 note:** the Judge must move to a Gemma model before relying on Gemma-track eligibility; tracked as an
@@ -332,6 +338,16 @@ runs at a median ~4s (3.5–7.8s), every run `finish=stop` with non-empty conten
 "generate a rebuttal" task does not trigger the long deliberation that made deepseek slow (30–60s)
 and intermittently empty for the Judge's "rule only if warranted" task — which is why the Judge
 runs on `gpt-oss-120b` (JSON-structured) instead. Verification uses `gpt-oss-120b` for clean JSON.
+
+**Objection-classifier benchmark (2026-07-08).** All account chat models were timed on the
+classifier's actual task (short structured JSON, temp 0, N=7): `gpt-oss-120b` med **1.26 s** (7/7
+`stop`, parseable) — the fastest *and* most reliable. deepseek-v4-pro 3.42 s; glm-5p1 7.86 s;
+glm-5p2 10.76 s (never fired); kimi-k2p5 500-errored; kimi-k2p6 6.56 s (4/7 parse). **The account
+has no sub-second / non-reasoning model** — the model lever is exhausted. Lowering gpt-oss
+`max_tokens` below 512 reproduces the documented empty-content bug (mt=128/64/48/32 → `finish=length`,
+0/7 non-empty) for only ~0.3 s of savings, so 512 stays. The barge-in speedup therefore comes
+entirely from the tier-2 high-confidence gate (§6), which skips the model on clear cases (measured:
+clear leading/hearsay ~1.1–2.1 s → **~0 s**).
 
 ---
 
@@ -466,6 +482,142 @@ the backend — see `frontend/.env.example`. Vite only exposes vars prefixed `VI
 - **CI (`.github/workflows/ci.yml`):** lint + type-check + test + build images on every push, so
   the droplet only ever pulls images that have already passed CI — never building for the first
   time under deployment pressure.
+
+---
+
+## 10.5 AMD Developer Cloud migration runbook (self-host Opposing Counsel on vLLM / MI300X)
+
+The single reason this platform is on the AMD Developer Hackathon is to run inference on AMD
+hardware. Today both agents run on Fireworks (§7). This runbook is the **pre-worked cutover** for the
+day the MI300X droplet becomes available — so it is executed, not designed, under time pressure. The
+cutover itself is a **config change, not a code change** (`llm_router.py` already speaks the
+OpenAI-compatible API to whatever endpoint the env vars name).
+
+**Scope:** move **Opposing Counsel** (the reasoning model) to a self-hosted vLLM server on the
+MI300X. The Judge stays on Fireworks until a Gemma model is available (§7, §11). Verification can
+follow Opposing Counsel onto the same GPU as a second step (co-location, §6.5).
+
+### Step 0 — Before the droplet exists (do this now, once)
+
+- [ ] Decide the candidate open model for Opposing Counsel and record it here (see Step 3). Having the
+      model id chosen in advance is what makes the cutover minutes, not hours.
+- [ ] Confirm the switch points are only env vars: `OPPOSING_COUNSEL_LLM_PROVIDER`,
+      `OPPOSING_COUNSEL_LLM_ENDPOINT`, `OPPOSING_COUNSEL_LLM_MODEL`, and `SELF_HOSTED_API_KEY`
+      (`agents/config.py`). No code path is provider-specific — `llm_router._api_key()` already
+      returns `SELF_HOSTED_API_KEY` for any non-`fireworks` provider.
+- [ ] Keep `agents/harness.py` runnable — it is the fastest offline "does this model produce a sane
+      rebuttal?" check against a new endpoint.
+
+### Step 1 — Provision & reach the droplet
+
+1. Create the GPU droplet in the AMD Developer Cloud console (MI300X instance). Note its public IP
+   and the region — **record the region in §8 / §11** (data-residency question attorneys will ask).
+2. Add your SSH public key at creation; then `ssh root@<droplet-ip>` (or the console-provided user).
+3. Confirm the GPU is visible and the ROCm stack is healthy:
+   `rocm-smi` (lists the MI300X, memory, utilization). If `rocm-smi` is missing, you booted a
+   non-ROCm image — rebuild from the AMD/ROCm base or the vLLM ROCm image (Step 2).
+4. Open only what's needed: the vLLM port (default `8000`) should be reachable **only** from the
+   backend/agents host, not the public internet — bind it to the private network or an SSH tunnel,
+   not `0.0.0.0` on a public IP. (The endpoint has no real auth; vLLM ignores the API key.)
+
+### Step 2 — Bring up the vLLM Quick Start image
+
+vLLM ships an official ROCm/AMD container; AMD's Developer Cloud also documents a vLLM Quick Start
+image. Prefer the prebuilt image over compiling vLLM from source on the box.
+
+1. Pull the ROCm vLLM image (verify the exact tag against the AMD console / vLLM ROCm docs at cutover
+   — image names move):
+   `docker pull rocm/vllm:latest` (or the Quick Start image the console provides).
+2. Launch the OpenAI-compatible server, passing the GPU devices through and mounting a model cache so
+   re-pulls are avoided:
+   ```bash
+   docker run -d --name vllm \
+     --device /dev/kfd --device /dev/dri \
+     --group-add video --ipc host \
+     -p 8000:8000 \
+     -v ~/.cache/huggingface:/root/.cache/huggingface \
+     -e HF_TOKEN=<hf-token-if-model-is-gated> \
+     rocm/vllm:latest \
+     --model <MODEL_ID> \
+     --served-model-name opposing-counsel \
+     --max-model-len 8192
+   ```
+   `--served-model-name` fixes the id the client must send, decoupling it from the HF path — set
+   `OPPOSING_COUNSEL_LLM_MODEL=opposing-counsel` and the HF path can change without touching `.env`.
+3. Watch it load: `docker logs -f vllm` until `Uvicorn running on http://0.0.0.0:8000`. First load
+   downloads weights (minutes) — the mounted cache makes subsequent restarts fast.
+
+### Step 3 — Choose the open model for Opposing Counsel
+
+Requirements, in priority order: (1) **fast, streaming-friendly, non-reasoning** for low
+turn-latency (§10.5 latency note / PLAN latency audit — a reasoning model that deliberates 4–8 s is
+the wrong choice for a real-time rebuttal); (2) strong instruction-following so the persona prompt
+holds; (3) clean output with **no chain-of-thought leakage** (GLM/Kimi were rejected on Fireworks for
+exactly this — §7). Good MI300X-sized candidates (single-card, plenty of headroom):
+
+- **Llama-3.3-70B-Instruct** — strong reasoning-quality-per-latency, no CoT leak, fits comfortably.
+- **Qwen2.5-72B-Instruct** — comparable; good instruction-following.
+- **Mistral-Small / Llama-3.1-8B-Instruct** — if latency beats quality, an 8B class model streams
+  tokens much faster and is a strong fit for a spoken rebuttal.
+
+Pick one, set `<MODEL_ID>` in Step 2, and **record the final choice here** once benchmarked. If the
+Judge's Gemma blocker (§7) is also being solved, a Gemma model can be served the same way on this GPU
+— but that is a separate cutover (`JUDGE_LLM_*`).
+
+### Step 4 — Smoke-test the raw endpoint (before touching the app)
+
+From the backend/agents host (so you also prove reachability):
+```bash
+curl http://<droplet-private-ip>:8000/v1/models      # lists served-model-name
+curl http://<droplet-private-ip>:8000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"opposing-counsel","messages":[{"role":"user","content":"Say ready."}],"max_tokens":16}'
+```
+A 200 with non-empty `choices[0].message.content` means the endpoint is OpenAI-compatible and
+`llm_router` will drive it unchanged.
+
+### Step 5 — Flip the config (the actual cutover — no code change)
+
+In the agents worker's `.env`:
+```
+OPPOSING_COUNSEL_LLM_PROVIDER=self_hosted
+OPPOSING_COUNSEL_LLM_ENDPOINT=http://<droplet-private-ip>:8000/v1
+OPPOSING_COUNSEL_LLM_MODEL=opposing-counsel
+SELF_HOSTED_API_KEY=EMPTY
+```
+Leave `FIREWORKS_API_KEY` in place — the Judge and verification still use it. Also set
+`sessions.llm_backend_used` expectations: the column already exists (§8) to record `self_hosted`
+vs `fireworks` per session.
+
+### Step 6 — Verify the cutover
+
+1. **Offline first:** `python agents/harness.py` — confirms Opposing Counsel now generates a sane
+   rebuttal *through the vLLM endpoint* and the verification pass still passes. This proves the
+   routing before any live room.
+2. **Latency check:** time a few `generate_reply` calls (harness or a one-off). Compare against the
+   Fireworks baseline (deepseek median ~4 s, §7). This is where the model choice in Step 3 is
+   validated — if it's slower than Fireworks, reconsider the model or enable streaming (PLAN).
+3. **Live room:** run `agents/main.py dev` against the LiveKit server and do one spoken exchange;
+   confirm Opposing Counsel responds and objections still fire. (The barge-in classifier still runs
+   on Fireworks unless its `OBJECTION_LLM_*` vars are also repointed — a later step.)
+4. **Watch the GPU:** `rocm-smi` during a session should show utilization on the reasoning turns —
+   the proof the MI300X is actually serving inference.
+
+### Step 7 — Rollback (keep it one line)
+
+If anything regresses, set `OPPOSING_COUNSEL_LLM_PROVIDER=fireworks` and restart the worker — you are
+back on the known-good Fireworks path in seconds, because nothing but env vars changed. Keep the
+Fireworks key funded until the self-hosted path has run a full session cleanly.
+
+### Step 8 — Follow-up: co-locate verification (§6.5)
+
+Once Opposing Counsel is stable on the GPU, serve the verification model on the **same** vLLM box (a
+second `--served-model-name`, or a second container) and point `VERIFICATION_LLM_*` at it. Per §6.5
+this turns the pre-TTS consistency check from a network hop into a local forward pass — a real
+latency win that only the self-hosted path unlocks (quantified in the PLAN latency audit).
+
+**Post-cutover doc updates (self-updating rule):** record the chosen model + region in §7/§8,
+update §7's "Model in use now" for Opposing Counsel, and check the §11 box.
 
 ---
 
