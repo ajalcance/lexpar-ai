@@ -12,6 +12,7 @@
  *   logged. Microphone audio is published to this session's room only.
  */
 
+import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Mic, MicOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -48,11 +49,23 @@ export function SparringRoom() {
     audioBlocked,
     toggleMute,
     enableAudio,
+    endSession,
     objections,
   } = useSparringRoom(sessionId);
   const { lines } = useSparringSession(sessionId, { enabled: mode === 'fallback' });
 
   const isConnected = connectionState === 'connected';
+  const [ending, setEnding] = useState(false);
+
+  const handleEnd = async () => {
+    // In a live session, let the judge deliver the spoken ruling + write the scorecard first, then
+    // go to the scorecard. In fallback (no agent) there's nothing to wait for — navigate straight.
+    if (mode === 'live') {
+      setEnding(true);
+      await endSession();
+    }
+    navigate(`/session/${sessionId}/scorecard`);
+  };
 
   return (
     <div className="flex flex-col gap-6">
@@ -133,9 +146,14 @@ export function SparringRoom() {
       </div>
 
       {mode !== 'connecting' && (
-        <div className="flex justify-end">
-          <Button onClick={() => navigate(`/session/${sessionId}/scorecard`)}>
-            End session &amp; view scorecard
+        <div className="flex items-center justify-end gap-3">
+          {ending && (
+            <p className="text-sm text-muted-foreground">
+              The judge is delivering the ruling…
+            </p>
+          )}
+          <Button onClick={handleEnd} disabled={ending}>
+            {ending ? 'Wrapping up…' : 'End session & view scorecard'}
           </Button>
         </div>
       )}

@@ -174,11 +174,19 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         coro = handle_interim(session, classifier, event.transcript, publish_objection)
         asyncio.create_task(coro)
 
-    async def _persist_at_end() -> None:
-        # Session end: the judge assesses the whole session in one call — rules on every pending
-        # objection (→ score + weaknesses), extracts the facts the attorney established
-        # (→ strengths), and gives a closing ruling — then ONE batch write persists the transcript +
-        # scorecard via the scoped agent token. Skip entirely if the attorney never spoke.
+    finalized = {"done": False}
+
+    async def _finalize_session(speak: bool) -> None:
+        # End of session, run exactly once: the judge assesses the whole session in one call — rules
+        # every pending objection (→ score + weaknesses), extracts the facts the attorney
+        # established (→ strengths), gives a closing ruling. If `speak` (the attorney is still in
+        # the room, having clicked "End session"), the judge DELIVERS it aloud. Then a batch
+        # write persists the transcript + scorecard, and we signal the frontend that it can show the
+        # scorecard. Idempotent so the end-session event, participant-disconnect, and shutdown
+        # backstops can't double-run the (expensive) judge call.
+        if finalized["done"]:
+            return
+        finalized["done"] = True
         if not any(turn.speaker == "attorney" for turn in state.transcript):
             return
         assessment = await asyncio.to_thread(judge.assess_session, state)
@@ -191,6 +199,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             state.add_established_fact(fact)
         ruling = assessment["closing_ruling"]
         state.add_turn("judge", ruling)
+        if speak:
+            try:
+                await session.say(ruling, allow_interruptions=False)  # judge delivers it aloud
+            except Exception:
+                logger.exception("judge closing ruling could not be spoken")
         payload = scorecard_builder.build_session_end_payload(state, ruling)
         turn_count = len(state.transcript)
         try:
@@ -198,9 +211,37 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             await asyncio.to_thread(backend_client.write_scorecard, session_id, payload)
             logger.info("Persisted session %s (scorecard + %d turns)", session_id, turn_count)
         except Exception:
-            logger.exception("Failed to persist session %s at shutdown", session_id)
+            logger.exception("Failed to persist session %s", session_id)
+        # Tell the frontend the ruling is delivered + the scorecard is written, so it can navigate.
+        try:
+            done = json.dumps({"type": "end_complete"}).encode("utf-8")
+            await ctx.room.local_participant.publish_data(done, reliable=True, topic="control")
+        except Exception:
+            pass
 
-    ctx.add_shutdown_callback(_persist_at_end)
+    @ctx.room.on("data_received")
+    def _on_data(packet) -> None:
+        # The attorney clicked "End session": deliver the judge's spoken ruling + persist, then the
+        # frontend waits for our end_complete before navigating to the scorecard.
+        if packet.topic != "control":
+            return
+        try:
+            message = json.loads(packet.data.decode("utf-8"))
+        except Exception:
+            return
+        if message.get("type") == "end_session":
+            asyncio.create_task(_finalize_session(speak=True))
+
+    @ctx.room.on("participant_disconnected")
+    def _on_participant_left(participant) -> None:
+        # Backstop: the attorney closed the tab without clicking End — finalize now (no one to hear
+        # the ruling) instead of waiting for the room's empty-timeout, so the scorecard still lands.
+        asyncio.create_task(_finalize_session(speak=False))
+
+    async def _on_shutdown() -> None:
+        await _finalize_session(speak=False)  # last-resort backstop
+
+    ctx.add_shutdown_callback(_on_shutdown)
 
     await session.start(agent=OpposingCounselAgent(state), room=ctx.room)
 

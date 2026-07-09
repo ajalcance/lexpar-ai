@@ -81,13 +81,15 @@ describe('Scorecard', () => {
     expect(screen.getByText('Objection — hearsay.')).toBeInTheDocument();
   });
 
-  it('shows a fallback when the scorecard is not generated yet', async () => {
+  it('shows a scoring/polling state while the scorecard is still being written', async () => {
+    // 409 = session not yet completed. The page polls (does not fabricate or hard-error), so it
+    // shows the "scoring" state rather than a fallback until the judge finishes writing it.
     vi.spyOn(api, 'getScorecard').mockRejectedValue(
       new ApiError('Scorecard is available only after the session is completed.', 409),
     );
     vi.spyOn(api, 'getSessionTranscript').mockResolvedValue([]);
     renderWithProviders(<Scorecard />);
 
-    expect(await screen.findByText('Not available yet')).toBeInTheDocument();
+    expect(await screen.findByText(/Scoring your session/)).toBeInTheDocument();
   });
 });

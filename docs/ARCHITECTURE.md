@@ -335,7 +335,7 @@ session runs:
   `on_user_turn_completed` hook), not once per Deepgram `is_final` — otherwise a single spoken turn
   shreds into a dozen transcript fragments. The classifier still sees every interim.
 
-### End-of-session judge assessment
+### End-of-session judge assessment (spoken ruling + scorecard)
 
 At session end the Judge makes **one** structured call (`judge.assess_session`) that: rules each
 pending objection `sustained`/`overruled` (→ scorecard **score** and **weaknesses**), extracts the
@@ -343,7 +343,18 @@ pending objection `sustained`/`overruled` (→ scorecard **score** and **weaknes
 ruling. This is what makes the scorecard reflect what actually happened instead of a hollow default
 (score always 100). It **fails safe**: on an unparseable/empty model response, objections stay
 pending (not sustained → the attorney is never penalized on a model glitch), no facts are invented,
-and a neutral closing ruling is used. Batched at shutdown so it adds no latency to the live loop.
+and a neutral closing ruling is used.
+
+**End-of-session handshake (so the judge is *heard*, and the scorecard is ready when the page
+loads).** When the attorney clicks "End session", the browser publishes an `end_session` data
+message (topic `control`) and waits. The worker's `_finalize_session(speak=True)` runs the
+assessment, **speaks the closing ruling aloud** (`session.say`), persists the scorecard + transcript,
+then publishes `end_complete` — only then does the frontend navigate to the scorecard (which is now
+written). This runs **exactly once** (idempotent guard) with two backstops that finalize *silently*
+if the attorney never sends the event: `participant_disconnected` (tab closed) and the job shutdown
+callback — so the scorecard always lands rather than waiting on the room's empty-timeout. The
+scorecard page also **polls** briefly (≈30 s) on a 409/404 to cover the few seconds the judge call +
+persistence take.
 
 ### Co-location
 

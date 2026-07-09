@@ -1301,3 +1301,34 @@ ruff clean.** **Docs:** ARCHITECTURE §5 (context route) + §6.5 (live ledger fe
 assessment); LESSONS (budget-scales-with-complexity). Decisions built as recommended: batch ruling +
 judge-extracted facts, all four together. **Not verified here:** a full live *room* session
 (needs mic + worker) — but every piece is proven via the harness + unit/live tests.
+
+---
+
+### Session-end flow: spoken judge ruling + scorecard reliably appears — status: done
+
+**Problem (live session):** after "End session" the scorecard showed "Not available yet" (stale
+copy), and the judge never spoke. Root cause: the scorecard was written only at *job shutdown*,
+which doesn't happen promptly when the attorney leaves (the agent keeps the room non-empty), and the
+frontend fetched once (no retry). The judge produced a written ruling but never delivered it aloud.
+
+**Fixes (all four, as approved):**
+- **Agent (`main.py`):** refactored persistence into idempotent `_finalize_session(speak)`.
+  Triggered by an `end_session` data message (topic `control`) → assess → **judge speaks the closing
+  ruling** (`session.say`) → persist → publish `end_complete`. Backstops that finalize *silently*:
+  `participant_disconnected` (tab closed) and the shutdown callback. Runs exactly once.
+- **Frontend `useSparringRoom`:** `endSession()` publishes `end_session` and resolves on
+  `end_complete` (or a 30 s timeout, so a missing agent never hangs); `DataReceived` handles the
+  control message.
+- **Frontend `SparringRoom`:** "End session" in a live session shows "The judge is delivering the
+  ruling…", awaits `endSession()`, then navigates; fallback (no agent) navigates straight.
+- **Frontend `Scorecard`:** polls on 409/404 (~30 s, `retry` + 2 s delay) showing a "Scoring your
+  session…" state, fetches the transcript only once the scorecard exists, and the stale "isn't wired
+  up yet" copy → honest "Scorecard not ready".
+
+**Tests:** agents 97 offline + 8 live, ruff clean; frontend type-check + lint + 12 tests (Scorecard
+test updated to assert the polling state). **Docs:** ARCHITECTURE §6.5 (end-of-session handshake +
+spoken ruling). **Not verified here:** the live handshake + spoken ruling need a real room + agent —
+logic is unit-tested and the fallback path is unchanged.
+
+**Deferred (not in scope):** a spoken judge *during* the session (inline rulings after each
+objection) — this delivers only the closing ruling aloud.
