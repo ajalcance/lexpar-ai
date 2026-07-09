@@ -5,15 +5,21 @@ Purpose: The bespoke, differentiating piece (ARCHITECTURE §6). Decides, as the 
     following opposing_counsel.md's rule: object only when the phrasing genuinely invites one —
     not on every turn.
 
-    Two stages so it can run continuously on partial transcript:
+    Three tiers so it can run continuously on partial transcript *and* barge in at courtroom speed:
       1. `candidate_grounds()` — a cheap, RECALL-biased regex gate that runs on every fragment. If
          it finds no objection-inviting phrasing it returns no candidates and we fire nothing (no
          LLM call). Erring toward passing candidates through is deliberate: a too-strict gate would
          silently drop real objections before the LLM ever sees them.
-      2. `classify_fragment()` — only for candidates, a fast model (gpt-oss-120b, JSON) makes the
-         final fire/no-fire + type decision, applying the "not every turn" discipline and the
-         SessionState (e.g. don't re-object on grounds just overruled). Fails closed: any
-         error/timeout/unparseable output → NO interruption.
+      2. `high_confidence_grounds()` — a PRECISION-biased subset of the gate: phrasing so
+         unambiguous (explicit leading tag-questions, direct "he told me" hearsay) that we fire the
+         objection IMMEDIATELY, with **no LLM call at all**. This is the latency win — the account
+         has no sub-second model (gpt-oss-120b, the fastest available, still costs ~1.3s), so the
+         only way to hit real-courtroom timing (~0.5s) on the clear cases is to skip the model.
+      3. `classify_fragment()` — for the remaining AMBIGUOUS candidates (a candidate but not
+         high-confidence), the fast model (gpt-oss-120b, JSON) makes the final fire/no-fire + type
+         decision, applying the "not every turn" discipline and the SessionState (e.g. don't
+         re-object on grounds just overruled). Fails closed: any error/timeout/unparseable output →
+         NO interruption.
 
     `ObjectionClassifier` wraps the above with per-utterance debounce so a growing fragment does not
     trigger repeated objections on the same utterance.
@@ -69,12 +75,42 @@ _GATE_PATTERNS: dict[str, list[str]] = {
 }
 _COMPILED = {g: [re.compile(p, re.IGNORECASE) for p in pats] for g, pats in _GATE_PATTERNS.items()}
 
+# PRECISION-biased subset of the gate: phrasing so unambiguous it fires immediately without the LLM
+# (tier 2). The opposite bias from the recall gate — only patterns that are almost never a false
+# positive belong here. Deliberately EXCLUDES the recall catch-alls (a bare trailing "?", "right?")
+# and the context-dependent grounds (speculation / argumentative / assumes_facts), which stay
+# LLM-judged. If a pattern here proves too aggressive, its fires show up under FIRE_IMMEDIATE in the
+# audit trail (kept distinct from LLM fires on purpose) so we can catch it in the data.
+_HIGH_CONFIDENCE_PATTERNS: dict[str, list[str]] = {
+    "leading": [
+        r"isn'?t it (?:true|correct|the case)",
+        r"wouldn'?t you agree",
+        r"\byou would agree\b",
+        r"\b(?:did|do|does|was|were|is|are|would|could|had|have|has)n'?t (?:you|he|she|they|it)\b",
+    ],
+    "hearsay": [
+        r"\b(?:told|informed|texted|emailed) (?:me|him|her|us|them)\b",
+        r"\bi (?:heard|was told)\b",
+        r"according to\b",
+    ],
+}
+_HC_COMPILED = {
+    g: [re.compile(p, re.IGNORECASE) for p in pats]
+    for g, pats in _HIGH_CONFIDENCE_PATTERNS.items()
+}
+# Priority when several high-confidence grounds match one fragment: leading is the prime cross-exam
+# objection, so it wins over hearsay.
+_IMMEDIATE_PRIORITY = ("leading", "hearsay")
+
 
 # Decision outcomes — the audit categories. GATE_REJECTED never reached the LLM (the gate filtered
-# it); LLM_NO_FIRE reached the LLM but it declined; FAIL_CLOSED is a swallowed error; DEBOUNCED is a
-# suppressed repeat of an already-objected utterance. Reviewing GATE_REJECTED separately from
-# LLM_NO_FIRE is how we audit what the recall-biased gate filtered out before any judgment.
+# it); FIRE_IMMEDIATE fired on a high-confidence pattern WITHOUT the LLM (tier 2); LLM_NO_FIRE and
+# FIRE reached the LLM (tier 3) which declined / fired; FAIL_CLOSED is a swallowed error; DEBOUNCED
+# is a suppressed repeat of an already-objected utterance. Keeping FIRE_IMMEDIATE distinct from FIRE
+# is what lets us see, in the data, whether the high-confidence gate is ever firing too aggressively
+# — the same instinct that splits GATE_REJECTED from LLM_NO_FIRE.
 GATE_REJECTED = "gate_rejected"
+FIRE_IMMEDIATE = "fire_immediate"
 LLM_NO_FIRE = "llm_no_fire"
 FIRE = "fire"
 FAIL_CLOSED = "fail_closed"
@@ -92,11 +128,30 @@ class Decision:
 
 
 def candidate_grounds(fragment: str) -> list[str]:
-    """Stage 1: recall-biased regex gate. Returns the objection grounds the phrasing may invite."""
+    """Tier 1: recall-biased regex gate. Returns the objection grounds the phrasing may invite."""
     text = fragment.strip()
     if not text:
         return []
     return [ground for ground, pats in _COMPILED.items() if any(p.search(text) for p in pats)]
+
+
+def high_confidence_grounds(fragment: str) -> list[str]:
+    """
+    Tier 2: precision-biased subset. Returns grounds whose phrasing is unambiguous enough to fire
+    immediately, with no LLM call. A subset of `candidate_grounds` — never broadens what fires.
+    """
+    text = fragment.strip()
+    if not text:
+        return []
+    return [ground for ground, pats in _HC_COMPILED.items() if any(p.search(text) for p in pats)]
+
+
+def _immediate_objection_type(grounds: list[str]) -> str:
+    """Pick the objection type for an immediate fire when several high-confidence grounds match."""
+    for ground in _IMMEDIATE_PRIORITY:
+        if ground in grounds:
+            return ground
+    return grounds[0]
 
 
 _SYSTEM = (
@@ -144,12 +199,20 @@ def _parse_decision(content: str) -> Decision:
 
 def classify_fragment(fragment: str, state: SessionState) -> Decision:
     """
-    Stage 2 (only for gate candidates): fast-model fire/no-fire + type decision. Fails closed —
-    any error/timeout/unparseable output returns NO interruption.
+    Tiers 1–3. Tier 1: no gate candidate → no fire (GATE_REJECTED, no LLM). Tier 2: a
+    high-confidence candidate → fire IMMEDIATELY (FIRE_IMMEDIATE, no LLM). Tier 3: an ambiguous
+    candidate → the fast model makes the call. Fails closed — any error/timeout/unparseable output
+    returns NO interruption.
     """
     candidates = candidate_grounds(fragment)
     if not candidates:
         return Decision(False, None, "no objection-inviting phrasing", outcome=GATE_REJECTED)
+    high = high_confidence_grounds(fragment)
+    if high:
+        ground = _immediate_objection_type(high)
+        return Decision(
+            True, ground, f"high-confidence {ground} pattern", outcome=FIRE_IMMEDIATE
+        )
     try:
         endpoint = build_endpoint(objection_config())
         content = chat(
@@ -220,6 +283,10 @@ class ObjectionClassifier:
     def gate_rejected(self) -> list[DecisionRecord]:
         """Fragments the gate filtered out before any LLM judgment — review the recall bias here."""
         return [r for r in self.records if r.decision.outcome == GATE_REJECTED]
+
+    def immediate_fires(self) -> list[DecisionRecord]:
+        """High-confidence fires that skipped the LLM — audit whether the gate is too aggressive."""
+        return [r for r in self.records if r.decision.outcome == FIRE_IMMEDIATE]
 
     def llm_no_fire(self) -> list[DecisionRecord]:
         """Fragments that reached the LLM but were judged not to warrant an objection."""

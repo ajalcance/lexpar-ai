@@ -880,3 +880,265 @@ sustained), two established facts as separate strength lines, `- Sustained objec
 weakness, verbatim ruling, and the real persisted Transcript (You (Attorney) / Opposing Counsel with
 the red "Objection" badge / Judge) — not the scripted mock. **Docs:** ARCHITECTURE §4 "Wiring status"
 updated (completed sessions render real scorecard + transcript; no dedicated ledger/verification UI).
+
+---
+
+### Status review & forward-planning pass (2026-07-08) — read-only, no code changed
+
+Full audit of `frontend/` `backend/` `agents/` `infra/` against the docs, a latency audit of the
+voice round-trip, and a "what to build next" recommendation. The AMD migration runbook produced by
+this pass lives in **ARCHITECTURE §10.5** (lasting reference), not here.
+
+#### A. Current-state audit — what's built, stubbed, or blocked
+
+**Built & verified (offline / no live voice):**
+- **Backend (FastAPI) — complete.** All nine §5 user routes + two internal agent routes
+  (`/complete`, `/scorecard`), real HTTPBearer auth stub (admin/admin → JWT), scoped agent service
+  token (`X-Agent-Token`, constant-time, separate from user JWT), portable SQLAlchemy models
+  (`Uuid` + Python defaults, soft-delete, `# SENSITIVE` tags), Alembic `0001_initial`, CORS. **19
+  backend pytest pass.** Fail-closed secrets (JWT_SECRET ≥32 chars, empty AGENT_SERVICE_TOKEN
+  rejects all internal calls).
+- **Frontend (React/Vite) — complete against the real backend.** All five routes; auth via
+  `/api/auth/login` + `/me`; ProtectedRoute; SparringRoom connects to LiveKit + publishes mic with a
+  scripted-mock **fallback**; completed sessions render the **real** scorecard + transcript. **12
+  Vitest pass**, type-check + lint clean.
+- **Agents — logic complete, wired for voice.** `session_state`, `verification` (citation regex +
+  live consistency check), `opposing_counsel`, `judge`, `objection_classifier` (two-stage gate→LLM,
+  debounce, fail-closed), `llm_router`, `scorecard_builder`, `backend_client`, `voice_interrupt`,
+  and `main.py` (LiveKit worker). **57 offline pytest pass; 7 live pass** (`-m live`, deselected in
+  CI). Text harnesses (`harness.py`, `objection_harness.py`, `session_end_harness.py`) exercise every
+  path without voice infra.
+- **All five agents↔backend gaps closed** (Gaps 1–5 above): room+mic, objection data-channel events,
+  agent persistence, real scorecard/transcript rendering.
+
+**Stubbed / pending (by design):**
+- **Auth is `AUTH_MODE=stub`** (admin/admin) — must not touch real attorney/case data (§11). The
+  agent service token is already separate, so replacing user auth won't disturb it.
+- **LiveKit dev keys** (`devkey`/`secret`) — safe only because LiveKit is localhost-only today; must
+  be regenerated before any off-box deploy (§11).
+- **Case file *upload*** — case create is JSON only; MinIO file upload deferred (bucket + endpoint
+  exist in compose, no upload route wired).
+
+**Blocked (external dependency):**
+- **Live voice end-to-end is UNVERIFIED** — the entire real audio path (room join, mic→Deepgram STT,
+  ElevenLabs playback, VAD/turn detection, real barge-in *timing*, and that `publish_data` reaches
+  the browser's `DataReceived`) needs a live room + real mic + running worker. Blocked on
+  **Deepgram/ElevenLabs credit** (keys/credit pending) and a non-headless browser. Everything up to
+  the SDK boundary is unit-tested; the SDK wiring (`llm_node` signature, event fields,
+  `interrupt`/`say`, `publish_data` topic/reliable flags) is written to the livekit-agents 1.x docs
+  and **may need tuning against the installed SDK in a running room**.
+- **AMD MI300X droplet — not yet provisioned.** Both agents run on Fireworks. Cutover runbook is
+  pre-worked in **ARCHITECTURE §10.5**; it's a config flip, not a code change.
+- **Gemma bonus — blocked.** No serverless Gemma (2/3/4) is reachable on this Fireworks account
+  (verified `/v1/models` + direct ID probes, all 404). Judge runs `gpt-oss-120b` (JSON) as interim;
+  move to Gemma when one is deployable (self-host on the MI300X is the likely unlock).
+
+**Doc-vs-reality discrepancies found (flagged — not silently edited beyond §10.5):**
+1. **ARCHITECTURE §2 lists `infra/docker-compose.prod.yml` and `infra/deploy.sh` — neither exists.**
+   `infra/` has only `docker-compose.yml` (local dev). §2 also shows per-service Dockerfiles in the
+   tree; only `backend/Dockerfile` exists (frontend/agents images deferred).
+2. **ARCHITECTURE §10 overstates CI/CD:** "CI builds and tags images on every push; deploy is
+   `docker compose pull && up -d`." Reality: CI `docker-build` only `docker build`s the **backend**
+   image locally as a smoke test — no registry, no tag, no push, and no prod compose to pull. The
+   production deploy path is aspirational.
+3. **§2 repo tree** shows `docs/ARCHITECTURE.md` as the only doc; `LESSONS.md` and
+   `DEVELOPER_GUIDELINES.md` also live in `docs/` (minor).
+   → Recommend a small "doc-accuracy" cleanup task to fix §2/§10 or create the missing files. Not
+   done here (this pass is read-only + the two requested docs).
+
+#### B. Latency audit — the core differentiator (identify + prioritize, don't implement)
+
+Target: turn-taking that feels like Zoom/Meet (~200–500 ms gaps), not a laggy bot. Measured numbers
+from prior live runs (§7 + build logs): Opposing Counsel `deepseek-v4-pro` median **~4 s (3.5–7.8 s)**;
+Judge / verification / objection classifier `gpt-oss-120b` **~2–3 s**; objection classifier with
+`max_tokens=512` decides in **~2–2.5 s** (clean fragments short-circuit at 0 s via the regex gate).
+
+**Round-trip, where time actually goes:**
+
+*Objection path (the signature "interrupt mid-sentence" feature):*
+`attorney speech → Deepgram interim (~100–300 ms) → candidate_grounds regex (~0 ms) → classify_fragment
+LLM (~2–2.5 s) → interrupt()+say() barge-in`. **The classifier LLM call is the whole latency.** A
+real objection lands in ~0.5 s; **2–2.5 s makes the barge-in feel late and breaks the illusion.** Root
+cause: `gpt-oss-120b` is a 120B model that *reasons before emitting* (why `max_tokens=512` was needed
+— `objection_classifier.py:159`), the single worst model class for a sub-second decision.
+
+*Reply path (end of a clean attorney turn):*
+`VAD/turn endpoint (~0.5–1 s silence) → opposing_counsel.generate_reply (blocking, full completion,
+~4 s) → verification: find_suspicious_citations (~0) + check_consistency (blocking LLM, ~2–3 s,
+ALWAYS runs) → [regenerate on fail: +~6–10 s ×≤2] → ElevenLabs Flash TTS (~0.3 s first audio)`.
+**Median ≈ 7–11 s before Opposing Counsel speaks a word.** Two structural causes:
+- `main.py`'s `OpposingCounselAgent.llm_node` **yields one fully-formed string** (`main.py:78–83`) —
+  it generates the *entire* reply, then verifies, then hands TTS a complete blob. **Nothing streams.**
+  LiveKit's native token→TTS streaming is bypassed.
+- `check_consistency` is a **second blocking 2–3 s call that runs on every reply** even when the reply
+  is obviously clean, sequential with generation.
+
+**Prioritized optimizations (recommend; not implementing):**
+
+- **P0 — Objection classifier: swap model + two-tier gate.** (a) Point `OBJECTION_LLM_MODEL` at a
+  small, non-reasoning fast model (8B-class / a Fireworks "fast" JSON model), drop `max_tokens` to
+  ~32 → target **300–500 ms**. Env-only change, already anticipated (`config.py:59`). (b) For
+  unambiguous gate hits (explicit "isn't it true…", tag-questions), fire the *audio* barge-in
+  immediately on the regex gate and use the LLM only to confirm/label — the gate already has the
+  ground with high recall. This is the differentiator; 2.5 s is unacceptable.
+- **P0 — Stream Opposing Counsel LLM → TTS incrementally.** Replace the single-string `llm_node`
+  with a streaming completion feeding ElevenLabs Flash sentence-by-sentence, so TTS starts on the
+  first clause while the rest generates. Cuts first-audio from ~4 s to **~1–1.5 s** — the single
+  biggest win, and what the user explicitly called out. **Tension:** the post-hoc verification/
+  regenerate loop can't gate a reply that's already streaming. Resolution (recommend): move to
+  **sentence-level verification** (verify each sentence before speaking it) OR make verification the
+  cheap common case (below) and accept optimistic streaming with rare mid-stream correction.
+- **P1 — Make verification non-blocking on the clean path.** `check_consistency` runs a 2–3 s LLM
+  call every turn. Options: gate it behind a cheap heuristic (only when the reply asserts facts), run
+  it **concurrently** with TTS start (optimistic), and/or swap `VERIFICATION_LLM_MODEL` to a genuinely
+  small model (also env-only). The regenerate loop (`main.py:88–94`, up to 2×) is a rare tail cost —
+  keep it, but don't let the *median* pay a full second generate+verify serialization.
+- **P1 — Benchmark a faster Opposing Counsel model.** `deepseek-v4-pro` is a reasoning model chosen
+  for quality; for "generate a rebuttal" a fast non-reasoning model that streams may feel far snappier
+  at acceptable quality. Ties directly into the AMD model choice (§10.5 Step 3) — pick a
+  streaming-friendly model there.
+- **P2 — Endpointing/VAD tuning.** Silero VAD + turn-detector silence threshold adds to *every* reply;
+  tune the balance between "cut the attorney off" and "feels laggy."
+- **P2 — Trim prompt/context + enable prompt caching.** Every call ships the full `SessionState.snapshot()`
+  + persona; as the session grows so does TTFT. Cap snapshot size; use Fireworks prompt caching for the
+  static persona/system blocks.
+- **P2 (arrives with AMD) — co-location removes network hops.** Self-hosting reasoning + verification
+  on the MI300X (§6.5, §10.5 Step 8) turns the verification call into a local forward pass and drops
+  per-call Fireworks RTT (~50–200 ms each) across the objection, reply, and verify calls.
+
+#### C. Recommendation — what to build next (for review before implementing)
+
+Ranked. Live voice is blocked on external credit, so the highest-*leverage* unblocked work is the
+latency layer — which is also the differentiator and pays off the moment credit/droplet land.
+
+1. **Objection classifier fast-model swap + two-tier gate (P0, latency).** Biggest
+   differentiator-per-effort; largely env + a focused change in `objection_classifier.py` /
+   `voice_interrupt.py`; testable offline via `objection_harness.py`. Makes the signature feature feel
+   real. **Recommended first.**
+2. **Streaming LLM→TTS for Opposing Counsel (P0, latency).** The other half of "feels like a video
+   call." Bigger change (`main.py` `llm_node` + verification strategy) — pair it with the
+   verification-non-blocking decision. Do second.
+3. **Doc-accuracy cleanup (small, unblocks trust).** Fix ARCHITECTURE §2/§10 (missing prod compose /
+   deploy.sh / overstated CI) or create the missing infra files. Cheap; keeps the source-of-truth
+   honest for future sessions.
+4. **When Deepgram/ElevenLabs credit lands:** the live-room verification pass — tune the SDK wiring
+   (`llm_node`, event fields, `interrupt`/`say`, `publish_data`) against the installed SDK, measure
+   real barge-in timing, and confirm objection events reach the browser. This validates everything the
+   offline suite can't.
+5. **When the MI300X droplet lands:** execute ARCHITECTURE §10.5 (Opposing Counsel → self-hosted
+   vLLM), then co-locate verification (Step 8). Picks up the P1/P2 latency wins for free.
+
+Deliberately **not** recommending: real auth, billing, retention policy, MinIO upload — all correctly
+deferred (§11) and none on the critical path to a compelling live demo.
+
+**Result:** Audit + latency audit + forward plan written here; AMD migration runbook written to
+ARCHITECTURE §10.5. No code changed. Awaiting the user's decision on what to build first.
+
+---
+
+### Objection barge-in latency: model benchmark + two-tier gate — status: done
+
+**Goal (latency audit rec #1):** cut objection barge-in from ~2–2.5 s toward real-courtroom timing
+(~0.5 s), via two independent levers — (1) a faster/reliable classifier model chosen by *measured*
+benchmark, and (2) a true two-tier gate where unambiguous phrasing fires **immediately, with no LLM
+call at all**. Preserve every existing decision property (recall bias, fail-closed, per-utterance
+debounce, the five-outcome audit trail). This is a speed change, not a redesign.
+
+**Precondition confirmed:** `.env` has a live `FIREWORKS_API_KEY`, so the benchmark (live calls) is
+runnable now.
+
+**Step 1 — Benchmark every available chat model for the classifier's specific task**
+- [ ] Enumerate the account's real catalog via `GET /v1/models` (don't assume a "fast non-reasoning
+      model" exists — the Gemma/gpt-oss history says the catalog is limited).
+- [ ] Throwaway benchmark script (in scratchpad, **not committed**): for each chat model, run the
+      classifier's *actual* message shape (`_build_messages` on a representative candidate fragment +
+      a small `SessionState` snapshot), `temperature=0.0`, `response_format={"type":"json_object"}`,
+      N≈7 iterations — the same way gpt-oss-120b was benchmarked. Record per model: **median /
+      min / max latency, `finish_reason` (must be `stop`), non-empty content, valid-JSON parse.**
+- [ ] Probe `max_tokens` per model to find the safe floor: low enough to be fast, **high enough to
+      not reproduce the documented empty-content bug** (reasoning models eat the budget → empty; too
+      low for *any* model truncates the JSON → parse fail → fail-closed → silent miss). The floor
+      must let `{"fire":…,"objection_type":…,"reason":…}` complete with margin.
+- [ ] Pick the genuinely fastest **reliable** model (every run `stop` + non-empty + parseable). Set
+      it as `OBJECTION_LLM_MODEL` and its `max_tokens`. If it differs from `gpt-oss-120b`, update
+      `config.py` default + `.env.example` + ARCHITECTURE §7/§9. Record the full result table in the
+      **Result** below and a distilled finding in LESSONS.md.
+
+**Step 2 — True two-tier gate (the bigger lever): immediate-fire tier**
+- [ ] `objection_classifier.py`: add `HIGH_CONFIDENCE` — a **precise subset** of the gate patterns
+      that is very unlikely to be a false positive: explicit leading tag-questions (`isn't it true`,
+      `wouldn't you agree`, `did/didn't you…`) and explicit hearsay (`he/she told me`, `said that`).
+      **Deliberately excludes** the broad recall catch-alls (e.g. `r"\?\s*$"` any trailing question)
+      and the context-dependent grounds (speculation / argumentative / assumes_facts) — those stay
+      LLM-judged.
+- [ ] `high_confidence_grounds(fragment) -> list[str]` (pure, offline).
+- [ ] In `classify_fragment`: after the unchanged recall gate, if `high_confidence_grounds` is
+      non-empty → return an **immediate** `Decision(fire=True, objection_type=<priority pick>,
+      reason="high-confidence <ground> pattern", outcome=FIRE)` **without any network call**. Only
+      genuinely ambiguous candidates (candidate but not high-confidence) fall through to the existing
+      LLM stage. objection_type priority when several match: leading → hearsay.
+
+**Step 3 — Preserve every existing property (verify, don't rewrite)**
+- [ ] Recall bias: `candidate_grounds` unchanged — high-confidence is a *subset check layered on
+      top*, it never narrows what reaches the LLM.
+- [ ] Fail-closed: the LLM path (`try/except → FAIL_CLOSED`) is untouched.
+- [ ] Debounce: `ObjectionClassifier.consider` is untouched — an immediate fire sets `fire=True` so
+      `_handled` still latches and a growing utterance won't re-fire.
+- [ ] Audit trail: reuse the existing five outcomes; immediate fires carry `outcome=FIRE` (the
+      `reason` string — "high-confidence … pattern" — is what distinguishes them from LLM fires).
+      **No new outcome category** (honoring "not a redesign").
+
+**Step 4 — Measure it: extend `objection_harness.py` (before/after)**
+- [ ] Time each fragment's `consider()`; print per-fragment latency + which tier decided it
+      (immediate-fire / LLM / gate-short-circuit / debounced).
+- [ ] Run the labeled set in two modes and print a summary delta: **(a) LLM-only** (force all
+      candidates through the LLM — simulates today's behavior) vs **(b) two-tier** (new). Reports
+      median + total latency for each, so the improvement is measured, not assumed.
+
+**Step 5 — Update offline tests (`tests/test_objection_classifier.py`)**
+- [ ] New: `high_confidence_grounds` — clear leading / clear hearsay flagged; a trailing-`?`-only or
+      speculation fragment is a *candidate* but **not** high-confidence; clean → empty.
+- [ ] New: immediate-fire path — a high-confidence fragment fires with `outcome=FIRE` + correct
+      `objection_type` **and does not call the LLM** (monkeypatch `chat` to raise; it still fires,
+      proving the LLM was skipped).
+- [ ] New: an ambiguous candidate still routes to the LLM (monkeypatch `chat`; assert invoked).
+- [ ] Keep all existing tests green (recall gate, fail-closed, debounce, outcomes, review log).
+
+**Step 6 — Docs (self-updating rule)**
+- [ ] ARCHITECTURE §6: describe the flow as **three tiers** — recall gate → high-confidence
+      immediate-fire (no LLM) → LLM judgment for ambiguous candidates. §7 classifier row: chosen
+      model + measured latency. §9: `OBJECTION_LLM_MODEL` default if it changed.
+- [ ] LESSONS.md: entry capturing the benchmark finding (what's actually fast/reliable on this
+      account) and the two-tier-gate lever / the max_tokens truncation-vs-empty-content tradeoff.
+- [ ] PLAN: fill the **Result** with the before/after numbers + model table.
+
+**Step 7 — Verify:** `ruff` + `pytest -m "not live"` green (offline); run the extended harness live to
+capture the before/after latency numbers; optionally `pytest -m live` for the classifier.
+
+**Decision (resolved):** immediate fires get their **own** outcome value `fire_immediate`, distinct
+from `fire` — completing the same instinct that split `gate_rejected` from `llm_no_fire`. If the
+high-confidence gate is ever too aggressive we must see it in the data directly, not blended into
+decisions the LLM actually reasoned about. Audit categories become six; the review log gains an
+`immediate_fires()` partition alongside `gate_rejected()` / `llm_no_fire()`.
+
+**Result:** Done and measured. **Step 1 benchmark (live, N=7, classifier's real task shape):** the
+account catalog is 7 models (one image-gen); `gpt-oss-120b` med **1.26 s** (7/7 `stop` + parseable)
+is the *fastest and most reliable* — deepseek-v4-pro 3.42 s, glm-5p1 7.86 s, glm-5p2 10.76 s (fired
+0/7), kimi-k2p5 500-errored, kimi-k2p6 6.56 s (4/7 parse). **No sub-second / non-reasoning model
+exists here — the model lever is exhausted.** `max_tokens` floor probe confirmed the empty-content
+bug: mt=128/64/48/32 all → `finish=length`, 0/7 non-empty, for only ~0.3 s savings → **kept
+`gpt-oss-120b` @ max_tokens=512, no config change.** **Step 2 two-tier gate (the whole win):** added
+`high_confidence_grounds` (precision-biased subset — explicit leading tag-questions + direct hearsay,
+excludes the recall catch-alls and context-dependent grounds) and an immediate-fire branch in
+`classify_fragment` that fires with **no LLM call**. **Step 3:** recall gate, fail-closed, and
+debounce untouched; new sixth outcome `fire_immediate` (distinct from `fire`) + `immediate_fires()`
+review partition. **Step 4 harness (live before/after):** clear leading **~1.1 s → 0.000 s**, clear
+hearsay **~2.1 s → 0.000 s**; the ambiguous speculation case correctly still pays the LLM (~2.2 s);
+session LLM total 5.11 s → 2.22 s. **Step 5:** tests rewritten for three tiers — high-confidence
+grounds, immediate-fire-without-LLM (both leading + hearsay), priority, ambiguous-still-reaches-LLM,
+six-outcome categorization, three-way review partition; existing gate/fail-closed/debounce tests
+kept. **66 offline pass, ruff clean.** **Step 6 docs:** ARCHITECTURE §6 (three tiers) + §7
+(classifier row + benchmark note), LESSONS.md (two entries: gpt-oss empty-content `max_tokens` floor;
+benchmark-don't-assume + architectural-latency), this PLAN. Benchmark script was a scratchpad
+throwaway (not committed). **Not verified here:** real barge-in *timing in a live room* (needs mic +
+worker) — but the decision latency itself is measured via the harness.

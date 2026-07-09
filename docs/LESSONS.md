@@ -64,3 +64,26 @@ when launched from the repo root, a CWD-dependent trap.
 `env_file=ENV_FILE`. Now `.env` loads the same whether uvicorn starts from the repo root or from
 inside `backend/`. General rule: config/asset paths should be anchored to `__file__`, never to the
 CWD.
+
+### [Agents/LLM] gpt-oss returns EMPTY content when `max_tokens` is too low
+**Wrong:** Treated `gpt-oss-120b` like a normal model and set a tight `max_tokens` (e.g. 120, or the
+32–128 range that "should" fit a one-line JSON decision) to cut latency. It reasons *before* emitting;
+the hidden reasoning consumes the whole budget, the response hits `finish_reason=length`, and
+`content` comes back **empty** — which then fails closed (silent no-fire) or crashes a JSON parse.
+Benchmarked: at mt=128/64/48/32 the objection classifier got 0/7 non-empty; only mt≥512 is reliable,
+and it buys only ~0.3 s anyway.
+**Right:** Give reasoning models room — keep `max_tokens` ≥ 512 for gpt-oss even for a tiny JSON
+answer, and always assert non-empty + parseable in the benchmark. If you need lower latency, the
+budget is the wrong lever — change the model or skip the call (see next entry).
+
+### [Agents/LLM] Don't assume a "fast small model" exists — benchmark the actual account catalog
+**Wrong:** Planned to cut objection barge-in latency by swapping `OBJECTION_LLM_MODEL` to "a fast
+non-reasoning model," assuming one was available. This account's Fireworks catalog is tiny (7 models,
+one image-gen) — the same limitation that blocked Gemma (§7). deepseek/glm/kimi are all slower or
+unreliable (CoT leakage, 500s); `gpt-oss-120b` (~1.3 s) is already the *fastest reliable* option.
+**Right:** Benchmark every model on the *actual* task shape before assuming a faster one exists. When
+the model lever is exhausted, get the latency architecturally instead: the objection classifier added
+a **tier-2 high-confidence regex gate** that fires clear leading/hearsay objections with **no model
+call at all** (~1–2 s → ~0 s), keeping the model only for genuinely ambiguous phrasing. Precision-bias
+that immediate tier (opposite of the recall gate) and give it its own audit outcome (`fire_immediate`)
+so an over-eager gate is visible in the data.
