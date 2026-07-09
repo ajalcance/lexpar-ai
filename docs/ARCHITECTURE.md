@@ -363,6 +363,7 @@ measured live against the old blocking path (full `generate_reply` + one whole-r
 over repeated runs. The remaining first-audio cost is deepseek's time-to-first-sentence (~2.5–3 s)
 plus one short verify (~1.3 s) — the next lever is a faster/streaming-friendlier Opposing Counsel
 model once self-hosted on the MI300X, plus the co-located verifier (§6.5 co-location).
+
 **Objection-classifier benchmark (2026-07-08).** All account chat models were timed on the
 classifier's actual task (short structured JSON, temp 0, N=7): `gpt-oss-120b` med **1.26 s** (7/7
 `stop`, parseable) — the fastest *and* most reliable. deepseek-v4-pro 3.42 s; glm-5p1 7.86 s;
