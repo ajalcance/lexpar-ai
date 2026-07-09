@@ -222,8 +222,9 @@ whole transcript in one call** (no per-turn round-trips inside the live voice lo
 - **LiveKit server**: self-hosted (open-source, Apache-2.0), runs in Docker locally and on the
   AMD droplet in production. Can migrate to LiveKit Cloud later without touching agent code.
 - **LiveKit Agents worker** (`agents/main.py`, implemented): Deepgram streaming STT → Opposing
-  Counsel (Fireworks, via `opposing_counsel.py`) → verification pass → ElevenLabs **Flash** TTS,
-  with Silero VAD + turn detection. Interim transcripts feed the objection classifier; a `fire`
+  Counsel (Fireworks, via `opposing_counsel.py`, **streamed**) → sentence-level verification
+  (§6.5, `streaming_verify.py` — TTS starts on the first verified sentence while the rest is
+  still generating) → ElevenLabs **Flash** TTS, with Silero VAD + turn detection. Interim transcripts feed the objection classifier; a `fire`
   decision **barges in** (`session.interrupt()` + an immediate short "Objection — <type>." via the
   tested `voice_interrupt.py` glue). `opposing_counsel.py` / `judge.py` / `verification.py` are used
   verbatim — main.py only wires the audio layer around them. Heavy voice deps live in
@@ -272,27 +273,41 @@ re-deriving it from raw transcript each turn, and it is the ground truth the ver
 checks against. It lives in memory for the session's lifetime; durable copies persist through the
 backend models (`transcripts`, `scorecards`) — the raw ledger is never logged.
 
-### Verification pass (before TTS)
+### Verification pass (streaming, sentence-level, before TTS)
 
-After the reasoning model drafts a reply, a verification pass runs **before** the reply reaches
-TTS. It checks:
+The reply is **streamed** from the reasoning model and verified **sentence by sentence**
+(`agents/streaming_verify.py`) — nothing unverified is ever spoken, but sentence 1 is already
+playing while sentence 2 is still generating/verifying. This replaced the original
+generate-everything-then-verify design, cutting time-to-first-audio roughly in half (measured:
+~8.8–12.7 s → **~4.1–4.5 s**; see §7 latency note). Per completed sentence, two checks:
 
-1. **Consistency** against `SessionState` — the reply must not contradict `case_facts`,
-   `established_facts`, or standing objection rulings (e.g. don't rely on testimony that was just
-   stricken on a sustained objection).
-2. **Fabricated legal citations** — a heuristic checker (`agents/verification.py`) flags
-   citation-shaped text with unrecognized reporters or implausible years; an LLM/DB-backed check
-   comes later.
+1. **Fabricated legal citations** — the heuristic checker (`agents/verification.py`) on the
+   sentence itself; an LLM/DB-backed check comes later.
+2. **Consistency** against `SessionState` — the verifier model sees the *accumulated verified
+   prefix + the candidate sentence* (so pronouns have context; since the prefix already passed,
+   any new contradiction is the candidate's). Must not contradict `case_facts`,
+   `established_facts`, or standing objection rulings.
 
-On **fail**, the draft is discarded and the reasoning model regenerates (bounded retries). On
-**pass**, the reply goes to TTS.
+An incremental `SentenceSegmenter` closes sentences as deltas arrive, with a legal-abbreviation
+guard so "Brown v. Board", "347 U.S. 483", "No. 5" never split mid-citation.
+
+**Mid-stream failure (Option B):** the failed sentence *and the rest of its stream* are discarded
+(later sentences were generated conditioned on the bad one), and **one repair continuation** is
+requested — continue from the already-spoken verified prefix, avoiding the rejected claim — which
+is verified the same way. If the repair also fails, the reply **truncates** at the last verified
+sentence. A citation hit takes the same failure path as a contradiction. Fail-closed throughout:
+a verifier or stream error stops the reply at the last verified sentence; if the *first* sentence
+fails twice, the agent stays silent — silence over falsehood.
 
 ```mermaid
 flowchart TB
-    S[SessionState — case facts + ledger] --> R[Reasoning model — drafts the next reply]
-    R --> V[Verification pass — consistency + citations]
-    V -- fail: regenerate --> R
-    V -- pass --> T[Spoken response → TTS]
+    S[SessionState — case facts + ledger] --> R[Reasoning model — streams the reply]
+    R -- text deltas --> G[SentenceSegmenter]
+    G -- one sentence --> V[Verify sentence — citations + consistency vs prefix]
+    V -- pass --> T[Speak sentence → TTS] --> G
+    V -- fail --> X[Discard sentence + rest of stream]
+    X -- one repair --> C[Continue from verified prefix] --> G
+    X -- repair exhausted --> E[Truncate at last verified sentence]
 ```
 
 ### Co-location
@@ -307,11 +322,14 @@ call.
 - **Implemented + tested (no keys):** `SessionState` and its update methods; the regex citation
   heuristic (`find_suspicious_citations`).
 - **Implemented, live via Fireworks:** the LLM consistency check (`check_consistency`, small
-  verification model), Opposing Counsel + Judge response generation, the objection classifier
-  (`objection_classifier.py`, §6), and `llm_router` (§7). Live calls are covered by
-  `@pytest.mark.live` tests, excluded from CI. Text-only harnesses (`agents/harness.py`,
-  `agents/objection_harness.py`) exercise the draft→verify path and the streaming interrupt logic
-  without any voice infrastructure.
+  verification model), Opposing Counsel + Judge response generation (blocking and **streaming**
+  via `stream_reply`/`chat_stream`), the sentence-level streaming verification pipeline
+  (`streaming_verify.py`), the objection classifier (`objection_classifier.py`, §6), and
+  `llm_router` (§7). Live calls are covered by `@pytest.mark.live` tests, excluded from CI.
+  Text-only harnesses (`agents/harness.py`, `agents/objection_harness.py`,
+  `agents/streaming_harness.py`) exercise the draft→verify path, the streaming interrupt logic,
+  and the per-sentence streaming pipeline (with measured before/after latency) without any voice
+  infrastructure.
 - **Implemented, needs a live room to verify:** the real-time voice worker (`agents/main.py`) —
   Deepgram STT + ElevenLabs Flash TTS + objection barge-in. The livekit-free glue (`voice_interrupt.py`)
   is unit-tested; the actual audio path (mic→STT, TTS playback, VAD, barge-in timing) can only be
@@ -339,6 +357,12 @@ runs at a median ~4s (3.5–7.8s), every run `finish=stop` with non-empty conten
 and intermittently empty for the Judge's "rule only if warranted" task — which is why the Judge
 runs on `gpt-oss-120b` (JSON-structured) instead. Verification uses `gpt-oss-120b` for clean JSON.
 
+**Reply-latency note (streaming, 2026-07-09).** Streaming sentence-level verification (§6.5)
+measured live against the old blocking path (full `generate_reply` + one whole-reply
+`check_consistency`): time to first verified sentence **8.8–12.7 s → 4.1–4.5 s** (54–65% faster)
+over repeated runs. The remaining first-audio cost is deepseek's time-to-first-sentence (~2.5–3 s)
+plus one short verify (~1.3 s) — the next lever is a faster/streaming-friendlier Opposing Counsel
+model once self-hosted on the MI300X, plus the co-located verifier (§6.5 co-location).
 **Objection-classifier benchmark (2026-07-08).** All account chat models were timed on the
 classifier's actual task (short structured JSON, temp 0, N=7): `gpt-oss-120b` med **1.26 s** (7/7
 `stop`, parseable) — the fastest *and* most reliable. deepseek-v4-pro 3.42 s; glm-5p1 7.86 s;

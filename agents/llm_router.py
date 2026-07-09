@@ -3,7 +3,9 @@ File: agents/llm_router.py
 Purpose: Point each agent at the correct OpenAI-compatible LLM endpoint per ARCHITECTURE §7.
     Reads provider/endpoint/model from config and returns a ready OpenAI client + model id, so
     switching Fireworks ↔ self-hosted vLLM is a config change, not a code fork (both speak the
-    OpenAI API). Also provides a thin `chat()` helper used by the agents and the verifier.
+    OpenAI API). Provides a thin `chat()` helper (blocking, full completion) used by the agents and
+    the verifier, and `chat_stream()` (yields text deltas) used by the streaming sentence-level
+    verification path (ARCHITECTURE §6.5).
 Depends on: openai, agents/config.py
 Related: agents/opposing_counsel.py, agents/judge.py, agents/verification.py,
     docs/ARCHITECTURE.md §7
@@ -12,6 +14,7 @@ Security notes: Reads the provider API key from config (environment only) — ne
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 from openai import OpenAI
@@ -96,3 +99,26 @@ def chat(
         **kwargs,
     )
     return response.choices[0].message.content or ""
+
+
+def chat_stream(
+    endpoint: LlmEndpoint,
+    messages: list[dict[str, str]],
+    *,
+    temperature: float = 0.7,
+    max_tokens: int = 512,
+) -> Iterator[str]:
+    """Run a streaming chat completion, yielding text deltas as they arrive (§6.5 streaming)."""
+    stream = endpoint.client.chat.completions.create(
+        model=endpoint.model,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        stream=True,
+    )
+    for chunk in stream:
+        if not chunk.choices:
+            continue
+        delta = chunk.choices[0].delta
+        if delta is not None and delta.content:
+            yield delta.content
