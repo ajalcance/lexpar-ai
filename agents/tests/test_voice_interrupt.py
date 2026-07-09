@@ -59,8 +59,9 @@ def test_objection_utterance_from_type():
 def test_handle_interim_barges_in_and_publishes_on_fire():
     session = FakeSession()
     publisher = FakePublisher()
+    state = SessionState()
     classifier = ObjectionClassifier(
-        SessionState(), decider=lambda f, s: Decision(True, "leading", "x", outcome="fire")
+        state, decider=lambda f, s: Decision(True, "leading", "x", outcome="fire")
     )
     decision = asyncio.run(
         handle_interim(session, classifier, "Isn't it true you lied?", publisher)
@@ -69,13 +70,24 @@ def test_handle_interim_barges_in_and_publishes_on_fire():
     assert session.interrupts == 1
     assert session.said == ["Objection — leading."]
     assert publisher.published == [decision]  # event published at the barge-in moment
+    # The fire is recorded in the ledger (pending, for the judge to rule on) and shows in the
+    # transcript as a barge-in turn — otherwise the spoken objection leaves no trace.
+    assert len(state.objections) == 1
+    assert state.objections[0].grounds == "leading"
+    assert state.objections[0].raised_by == "opposing_counsel"
+    assert state.objections[0].ruling == "pending"
+    assert len(state.transcript) == 1
+    assert state.transcript[0].speaker == "opposing_counsel"
+    assert state.transcript[0].was_interruption is True
+    assert state.transcript[0].content == "Objection — leading."
 
 
 def test_handle_interim_silent_and_no_publish_on_no_fire():
     session = FakeSession()
     publisher = FakePublisher()
+    state = SessionState()
     classifier = ObjectionClassifier(
-        SessionState(), decider=lambda f, s: Decision(False, None, "no")
+        state, decider=lambda f, s: Decision(False, None, "no")
     )
     fragment = "The contract was signed on March 3."
     decision = asyncio.run(handle_interim(session, classifier, fragment, publisher))
@@ -83,3 +95,16 @@ def test_handle_interim_silent_and_no_publish_on_no_fire():
     assert session.interrupts == 0
     assert session.said == []
     assert publisher.published == []
+    assert state.objections == []  # nothing recorded when no objection fires
+    assert state.transcript == []
+
+
+def test_handle_interim_records_generic_objection_when_type_missing():
+    session = FakeSession()
+    state = SessionState()
+    classifier = ObjectionClassifier(
+        state, decider=lambda f, s: Decision(True, None, "x", outcome="fire")
+    )
+    asyncio.run(handle_interim(session, classifier, "some fragment", None))
+    assert state.objections[0].grounds == "objection"  # falls back when type is None
+    assert session.said == ["Objection."]

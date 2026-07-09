@@ -202,18 +202,20 @@ the one thing still absent:
 | GET | `/api/sessions/{id}` | Session status + transcript | yes |
 | GET | `/api/sessions/{id}/scorecard` | Scorecard after session ends | yes |
 | GET | `/api/livekit/token` | Issues a LiveKit room access token for the frontend | yes |
+| GET | `/api/sessions/{id}/context` | (internal) Case facts the worker loads at room join | agent token |
 | POST | `/api/sessions/{id}/complete` | (internal) Mark session completed | agent token |
 | POST | `/api/sessions/{id}/scorecard` | (internal) Write scorecard + full transcript batch at session end | agent token |
 
 FastAPI does not touch real-time audio at all — that's entirely the LiveKit Agents worker's job.
 FastAPI's role is auth, case management, and persisting the results the agents worker produces.
 
-**Internal (agent) routes vs. user routes.** The two `agent token` routes above are written by the
-agents worker at session end, authenticated with a **scoped service credential** (`X-Agent-Token`
-header, `AGENT_SERVICE_TOKEN`) — a *separate mechanism* from user JWT login (`app/security_agent.py`,
-not `app/security.py`). Least privilege (DEV_GUIDELINES §7): the agent token grants only these two
-routes and nothing user-facing; a user JWT does not grant them. The scorecard write **batches the
-whole transcript in one call** (no per-turn round-trips inside the live voice loop).
+**Internal (agent) routes vs. user routes.** The three `agent token` routes above — the worker reads
+the case context at room join and writes the results at session end — are authenticated with a
+**scoped service credential** (`X-Agent-Token` header, `AGENT_SERVICE_TOKEN`), a *separate mechanism*
+from user JWT login (`app/security_agent.py`, not `app/security.py`). Least privilege
+(DEV_GUIDELINES §7): the agent token grants only these routes and nothing user-facing; a user JWT
+does not grant them. The scorecard write **batches the whole transcript in one call** (no per-turn
+round-trips inside the live voice loop).
 
 ---
 
@@ -319,6 +321,29 @@ flowchart TB
     X -- one repair --> C[Continue from verified prefix] --> G
     X -- repair exhausted --> E[Truncate at last verified sentence]
 ```
+
+### Feeding the record during the live session
+
+The ledger only means something if the live loop keeps it current, so the worker writes to it as the
+session runs:
+- **Case facts** are loaded at room join from `GET /api/sessions/{id}/context` (§5) so `SessionState`
+  starts with the real case, not empty.
+- **Objections** — when the classifier fires (§6), `voice_interrupt.handle_interim` both
+  `record_objection(...)` (pending) and adds a `was_interruption` transcript turn, so a spoken
+  objection actually lands on the record.
+- **Attorney turns** are committed **once per completed utterance** (the agent's
+  `on_user_turn_completed` hook), not once per Deepgram `is_final` — otherwise a single spoken turn
+  shreds into a dozen transcript fragments. The classifier still sees every interim.
+
+### End-of-session judge assessment
+
+At session end the Judge makes **one** structured call (`judge.assess_session`) that: rules each
+pending objection `sustained`/`overruled` (→ scorecard **score** and **weaknesses**), extracts the
+2–5 facts the attorney genuinely established (→ scorecard **strengths**), and returns the closing
+ruling. This is what makes the scorecard reflect what actually happened instead of a hollow default
+(score always 100). It **fails safe**: on an unparseable/empty model response, objections stay
+pending (not sustained → the attorney is never penalized on a model glitch), no facts are invented,
+and a neutral closing ruling is used. Batched at shutdown so it adds no latency to the live loop.
 
 ### Co-location
 

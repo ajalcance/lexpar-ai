@@ -46,9 +46,19 @@ async def handle_interim(session, classifier: ObjectionClassifier, transcript: s
     call for gate candidates, so it runs in a worker thread to keep the audio event loop responsive.
     `publish` is injected (an `async (Decision) -> None`) to keep this module livekit-free/testable.
     Returns the decision.
+
+    On a fire it also records the objection into the session ledger and appends a barge-in turn to
+    the transcript (via `classifier.state`), so the end-of-session judge can rule on it and the
+    saved transcript shows it — otherwise a spoken objection would leave no trace in the record.
     """
     decision = await asyncio.to_thread(classifier.consider, transcript)
     if decision.fire:
+        classifier.state.record_objection(
+            grounds=decision.objection_type or "objection", raised_by="opposing_counsel"
+        )
+        classifier.state.add_turn(
+            "opposing_counsel", objection_utterance(decision), was_interruption=True
+        )
         await session.interrupt()
         await session.say(objection_utterance(decision), allow_interruptions=True)
         if publish is not None:

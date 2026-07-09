@@ -98,3 +98,29 @@ def test_full_session_end_then_user_reads_scorecard_and_transcript(client, auth_
     speakers = [t["speaker"] for t in session["transcripts"]]
     assert speakers == ["attorney", "opposing_counsel", "judge"]
     assert session["transcripts"][1]["was_interruption"] is True
+
+
+def test_context_route_returns_case_facts_for_agent(client, auth_headers):
+    facts = "Wrongful-termination retaliation claim."
+    case = client.post(
+        "/api/cases",
+        headers=auth_headers,
+        json={"title": "Rivera v. Coastal", "case_facts": facts},
+    ).json()
+    session = client.post(
+        "/api/sessions", headers=auth_headers, json={"case_id": case["id"]}
+    ).json()
+
+    resp = client.get(f"/api/sessions/{session['id']}/context", headers=AGENT)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["case_facts"] == facts
+    assert body["case_title"] == "Rivera v. Coastal"
+
+
+def test_context_route_requires_agent_token(client, auth_headers):
+    session_id = _new_session(client, auth_headers)
+    ctx_url = f"/api/sessions/{session_id}/context"
+    # No token, and a user JWT, are both rejected — this is an agent-only internal route.
+    assert client.get(ctx_url).status_code == 401
+    assert client.get(ctx_url, headers=auth_headers).status_code == 401

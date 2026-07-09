@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session as DbSession
 
 from app.db import get_db
-from app.schemas.agent import ScorecardWriteIn
+from app.schemas.agent import ScorecardWriteIn, SessionContextOut
 from app.schemas.scorecard import ScorecardOut
 from app.schemas.session import SessionOut
 from app.security_agent import require_agent_service
@@ -26,6 +26,14 @@ router = APIRouter(
     tags=["internal"],
     dependencies=[Depends(require_agent_service)],
 )
+
+
+@router.get("/{session_id}/context", response_model=SessionContextOut)
+def get_session_context(
+    session_id: uuid.UUID,
+    db: DbSession = Depends(get_db),
+) -> SessionContextOut:
+    return agent_write_service.get_session_context(db, session_id)
 
 
 @router.post("/{session_id}/complete", response_model=SessionOut)

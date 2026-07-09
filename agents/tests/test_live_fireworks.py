@@ -36,6 +36,22 @@ def test_generate_ruling_returns_text():
     assert ruling.strip()
 
 
+def test_assess_session_rules_and_returns_well_formed_shape():
+    # Two pending objections + a transcript → the judge returns exactly one ruling per objection
+    # (sustained/overruled), a facts list, and a non-empty closing ruling.
+    state = _demo_state()
+    state.add_turn("attorney", "My client told me his supervisor said the report wouldn't matter.")
+    state.record_objection("hearsay", "opposing_counsel")
+    state.add_turn("attorney", "The contract was signed on March 3, isn't that right?")
+    state.record_objection("leading", "opposing_counsel")
+
+    result = judge.assess_session(state)
+    assert len(result["rulings"]) == 2
+    assert all(r in ("sustained", "overruled") for r in result["rulings"])
+    assert isinstance(result["established_facts"], list)
+    assert result["closing_ruling"].strip()
+
+
 def test_consistency_flags_a_contradiction():
     # The reply denies an established fact; the verifier should flag at least one contradiction.
     contradictions = check_consistency(

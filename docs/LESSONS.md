@@ -74,7 +74,11 @@ Benchmarked: at mt=128/64/48/32 the objection classifier got 0/7 non-empty; only
 and it buys only ~0.3 s anyway.
 **Right:** Give reasoning models room — keep `max_tokens` ≥ 512 for gpt-oss even for a tiny JSON
 answer, and always assert non-empty + parseable in the benchmark. If you need lower latency, the
-budget is the wrong lever — change the model or skip the call (see next entry).
+budget is the wrong lever — change the model or skip the call (see next entry). The floor **scales
+with task complexity, not output size**: the objection classifier is fine at 512, but the judge's
+end-of-session assessment (rule every objection + extract facts + closing ruling) reasons far more
+and came back empty at 512 — it needed **1536**. When you add a heavier reasoning task, re-check the
+budget with a live call, don't assume the old floor carries over.
 
 ### [Agents/LLM] Don't assume a "fast small model" exists — benchmark the actual account catalog
 **Wrong:** Planned to cut objection barge-in latency by swapping `OBJECTION_LLM_MODEL` to "a fast

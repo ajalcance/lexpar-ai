@@ -1,8 +1,9 @@
 """
 File: app/services/agent_write_service.py
-Purpose: The write side of the internal agent routes — complete a session, and (in one call at
-    session end) persist the full transcript batch plus the scorecard. Batching avoids per-turn
-    network round-trips inside the live voice loop (Gap 4).
+Purpose: The read + write side of the internal agent routes — read a session's case context at room
+    join, complete a session, and (in one call at session end) persist the full transcript batch
+    plus the scorecard. Batching avoids per-turn network round-trips inside the live voice loop
+    (Gap 4).
 Depends on: fastapi, sqlalchemy, app/models/*, app/schemas/agent.py, app/services/session_service.py
 Related: app/api/internal.py
 Security notes: Only reachable via the agent service credential. case_facts/transcript/scorecard
@@ -16,11 +17,22 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
+from app.models.case import Case
 from app.models.scorecard import Scorecard
 from app.models.session import Session
 from app.models.transcript import Transcript
-from app.schemas.agent import ScorecardWriteIn
+from app.schemas.agent import ScorecardWriteIn, SessionContextOut
 from app.services import session_service
+
+
+def get_session_context(db: DbSession, session_id: uuid.UUID) -> SessionContextOut:
+    """Return the case facts for a session so the worker can seed its SessionState at room join."""
+    session = session_service.get_session_by_id(db, session_id)
+    case = db.get(Case, session.case_id)
+    return SessionContextOut(
+        case_facts=(case.case_facts if case and case.case_facts else ""),
+        case_title=(case.title if case else ""),
+    )
 
 
 def complete_session(db: DbSession, session_id: uuid.UUID) -> Session:

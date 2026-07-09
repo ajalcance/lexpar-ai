@@ -75,6 +75,15 @@ class OpposingCounselAgent(Agent):
         super().__init__(instructions="You are opposing counsel in a courtroom rehearsal session.")
         self._state = state
 
+    async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
+        # Record ONE coherent attorney turn per completed utterance. Deepgram emits many `is_final`
+        # segments within a single spoken turn; committing here (instead of per-segment) is what
+        # keeps the saved transcript from shredding into fragments. The classifier still sees every
+        # interim via the separate user_input_transcribed handler.
+        text = (getattr(new_message, "text_content", "") or "").strip()
+        if text:
+            self._state.add_turn("attorney", text)
+
     async def llm_node(self, chat_ctx, tools, model_settings):
         attorney_turn = _last_user_text(chat_ctx)
         spoken: list[str] = []
@@ -94,11 +103,19 @@ class OpposingCounselAgent(Agent):
 async def entrypoint(ctx: agents.JobContext) -> None:
     await ctx.connect()
 
-    # TODO(backend): load the session's case_facts (and prior established facts) for this room from
-    # the backend so SessionState reflects the real case. Empty state is fine for a first bring-up.
-    state = SessionState()
+    session_id = _session_id_from_room(ctx.room)
+
+    # Load the session's case facts from the backend (agent-authed) so verification + the judge
+    # reason with the real case. Non-fatal: if it fails, start with empty facts rather than crash.
+    case_facts = ""
+    try:
+        context = await asyncio.to_thread(backend_client.get_session_context, session_id)
+        case_facts = context.get("case_facts", "")
+    except Exception:
+        logger.warning("could not load case context for %s; starting with empty facts", session_id)
+
+    state = SessionState(case_facts=case_facts)
     classifier = ObjectionClassifier(state)
-    last_turn = {"text": ""}
 
     # ElevenLabs' multi-stream-input websocket (the plugin's default `.stream()` path) returns no
     # audio on our free-tier account — replies were never voiced and the socket closed 1006. Wrap
@@ -152,21 +169,28 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     def _on_user_transcript(event) -> None:
         # Every interim/final fragment feeds the objection classifier; a fire barges in via the
         # tested voice_interrupt glue (the classifier debounces so a growing fragment won't refire).
-        if getattr(event, "is_final", False):
-            last_turn["text"] = event.transcript
-            state.add_turn("attorney", event.transcript)  # accumulate the attorney's turn
+        # The attorney's *turn* is recorded separately in the agent's on_user_turn_completed hook
+        # (one coherent turn), so we do NOT add per-fragment turns here.
         coro = handle_interim(session, classifier, event.transcript, publish_objection)
         asyncio.create_task(coro)
 
     async def _persist_at_end() -> None:
-        # Session end (Gap 4): Judge's closing ruling (judge.py unchanged), then ONE batch write —
-        # complete the session and persist the transcript + a scorecard derived from the ruling +
-        # SessionState, using the scoped agent service token.
-        if not last_turn["text"]:
+        # Session end: the judge assesses the whole session in one call — rules on every pending
+        # objection (→ score + weaknesses), extracts the facts the attorney established
+        # (→ strengths), and gives a closing ruling — then ONE batch write persists the transcript +
+        # scorecard via the scoped agent token. Skip entirely if the attorney never spoke.
+        if not any(turn.speaker == "attorney" for turn in state.transcript):
             return
-        ruling = await asyncio.to_thread(judge.generate_ruling, state, last_turn["text"])
+        assessment = await asyncio.to_thread(judge.assess_session, state)
+        for objection, ruling in zip(state.pending_objections(), assessment["rulings"]):
+            try:
+                state.rule_on_objection(objection, ruling)
+            except ValueError:
+                pass  # unknown/duplicate ruling → leave pending (not sustained, no penalty)
+        for fact in assessment["established_facts"]:
+            state.add_established_fact(fact)
+        ruling = assessment["closing_ruling"]
         state.add_turn("judge", ruling)
-        session_id = _session_id_from_room(ctx.room)
         payload = scorecard_builder.build_session_end_payload(state, ruling)
         turn_count = len(state.transcript)
         try:
