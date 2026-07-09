@@ -880,3 +880,57 @@ sustained), two established facts as separate strength lines, `- Sustained objec
 weakness, verbatim ruling, and the real persisted Transcript (You (Attorney) / Opposing Counsel with
 the red "Objection" badge / Judge) — not the scripted mock. **Docs:** ARCHITECTURE §4 "Wiring status"
 updated (completed sessions render real scorecard + transcript; no dedicated ledger/verification UI).
+
+---
+
+### Streaming reply with sentence-level verification — status: done
+
+**Goal (latency audit rec #2):** cut Opposing Counsel's time-to-first-audio from ~7–11 s to
+~2.5–4.5 s by streaming the LLM reply, segmenting it into sentences as tokens arrive, verifying
+**each sentence** (citation heuristic + consistency vs SessionState) before it is spoken, and
+handing verified sentences to TTS one at a time — so **nothing unverified is ever spoken**, but
+sentence 2 verifies while sentence 1 is already playing.
+
+**Design — new module `agents/streaming_verify.py` (livekit-free, injectable, testable):**
+- **Streaming generation (reuse, not rewrite):** `llm_router.chat_stream` (OpenAI `stream=True`,
+  yields deltas) alongside `chat`; `opposing_counsel.stream_reply` reuses `build_messages` verbatim.
+  `generate_reply`, `check_consistency`, the citation heuristic, and judge.py are unchanged.
+- **Incremental `SentenceSegmenter`:** `feed(delta)`/`flush()`, splitting on `.?!` + next-token
+  rules, with a legal-abbreviation guard so "Brown v. Board", "347 U.S. 483", "No. 5", "Mr. Rivera"
+  never split mid-citation. Wrong splits are latency noise, not correctness bugs (every piece is
+  verified either way).
+- **Per-sentence verification with accumulated context:** citation heuristic on the sentence,
+  consistency on `verified_prefix + candidate` (pronouns/ellipsis keep context; the prefix already
+  passed, so a new contradiction is the candidate's). `check_consistency` reused unchanged.
+- **`main.py` wiring:** `llm_node` yields verified sentences from the async bridge
+  (`astream_verified_reply`, thread→queue) instead of one blob; `add_turn` records exactly what was
+  spoken. Old `_verified_reply`/`MAX_VERIFICATION_RETRIES` removed (repair budget lives in the
+  orchestrator, `max_repairs=1`).
+
+**Decisions (resolved):** (1) **Option B** failure mode — on a mid-stream verification failure,
+discard the failed sentence + the rest of its stream (later sentences were generated conditioned on
+the bad one), request **one** repair continuation from the already-spoken verified prefix (avoiding
+the rejected claim), verify it the same way; if the repair also fails, **truncate** at the last
+verified sentence (Option A fallback). Fail-closed throughout (verifier/stream error → stop at last
+verified sentence; first sentence fails twice → silence over falsehood). (2) A citation-heuristic
+hit takes the **same** failure path as a consistency contradiction — one failure path, no
+special-casing.
+
+**Harness — `agents/streaming_harness.py` (text-only, no TTS/audio):** feeds a fake streaming LLM +
+fake verifier (deterministic delays) and reports **time to first verified sentence** — blocking
+baseline vs streaming — plus an Option B failure scenario and the citation-no-split case; `--live`
+runs the real Fireworks stream + verifier for wall-clock numbers.
+
+**Result:** Done and measured live. **Measured (live, 2 runs):** time to first verified sentence
+**8.8 s / 12.7 s (blocking) → 4.1 s / 4.5 s (streaming)** — 54–65% faster; full reply spoken by
+~9.4–10.3 s while speaking starts at ~4 s. Offline harness (deterministic fakes) proves the
+mechanism: 3.20 s → 1.58 s, citation not split, Option B repair spoken, the conditioned
+sentence-after-the-failure never spoken. **Tests: `tests/test_streaming_verify.py` — 20 offline**
+(segmenter ×7, orchestrator clean/context/repair/truncate/empty-prefix/citation-failure ×7,
+fail-closed ×2, async bridge, opposing_counsel plumbing ×3, `chat_stream` stub); ruff clean; 7 live
+deselected. **Docs:** ARCHITECTURE §6 (worker bullet), §6.5 (streaming verification + new mermaid +
+harness list), §7 (reply-latency note). No LESSONS entry — no gotcha emerged. **Remaining first-audio
+cost** is deepseek's time-to-first-sentence (~2.5–3 s) + one short verify (~1.3 s); next lever =
+faster OC model once self-hosted on the MI300X + co-located verifier (§6.5). **Not verifiable here:**
+actual TTS playback overlap in a live room (needs mic + worker) — but the sentence pipeline and its
+latency are measured.

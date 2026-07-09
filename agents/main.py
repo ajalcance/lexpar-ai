@@ -2,13 +2,15 @@
 File: agents/main.py
 Purpose: The real LiveKit Agents worker (ARCHITECTURE §6). Joins a session's room and runs the
     voice pipeline: Deepgram streaming STT → Opposing Counsel (Fireworks, via opposing_counsel.py)
-    → verification pass → ElevenLabs Flash TTS, with Silero VAD + turn detection. The objection
-    classifier watches interim transcripts and, on a "fire" decision, barges in: it interrupts the
-    in-progress turn and Opposing Counsel objects immediately (LiveKit's built-in interruption).
-    opposing_counsel.py / judge.py / verification.py are used verbatim — this file only connects the
-    audio layer around them.
-Depends on: livekit-agents + plugins (see requirements-voice.txt); config, opposing_counsel, judge,
-    verification, objection_classifier, session_state, voice_interrupt
+    → streaming sentence-level verification (§6.5, streaming_verify.py) → ElevenLabs Flash TTS,
+    with Silero VAD + turn detection. Replies are streamed and verified sentence-by-sentence, so
+    TTS starts on the first verified sentence while the rest is still generating — nothing
+    unverified is ever spoken. The objection classifier watches interim transcripts and, on a
+    "fire" decision, barges in: it interrupts the in-progress turn and Opposing Counsel objects
+    immediately (LiveKit's built-in interruption). opposing_counsel.py / judge.py / verification.py
+    are used through streaming_verify — this file only connects the audio layer around them.
+Depends on: livekit-agents + plugins (see requirements-voice.txt); config, judge,
+    streaming_verify, objection_classifier, session_state, voice_interrupt
 Related: backend/app/api/livekit_token.py (issues the room token), agents/voice_interrupt.py,
     docs/ARCHITECTURE.md §6 / §6.5 / §10
 Security notes: Handles live attorney audio + transcripts (work product). Never log raw transcript
@@ -38,17 +40,13 @@ from livekit.plugins import deepgram, elevenlabs, openai, silero
 import backend_client
 import config
 import judge
-import opposing_counsel
 import scorecard_builder
-import verification
 from objection_classifier import ObjectionClassifier
 from session_state import SessionState
+from streaming_verify import astream_verified_reply
 from voice_interrupt import build_objection_event, handle_interim
 
 logger = logging.getLogger("lexpar.agents")
-
-# Bounded regenerate loop for the pre-TTS verification pass (ARCHITECTURE §6.5).
-MAX_VERIFICATION_RETRIES = 2
 
 
 def _session_id_from_room(room) -> str:
@@ -67,8 +65,9 @@ def _last_user_text(chat_ctx) -> str:
 class OpposingCounselAgent(Agent):
     """
     Opposing Counsel routed into LiveKit. The persona + generation live in opposing_counsel.py and
-    the verification pass in verification.py (both unchanged); this overrides the LLM step so the
-    pipeline speaks *our* verified reply instead of a stock model completion.
+    the verification in verification.py, orchestrated by streaming_verify (§6.5): this overrides
+    the LLM step so the pipeline speaks *our* verified sentences — streamed, so TTS starts on
+    sentence 1 while sentence 2 is still generating/verifying — instead of a stock completion.
     """
 
     def __init__(self, state: SessionState):
@@ -77,21 +76,18 @@ class OpposingCounselAgent(Agent):
 
     async def llm_node(self, chat_ctx, tools, model_settings):
         attorney_turn = _last_user_text(chat_ctx)
-        # generate_reply + verification are blocking (Fireworks HTTP); run off the event loop.
-        reply = await asyncio.to_thread(self._verified_reply, attorney_turn)
-        self._state.add_turn("opposing_counsel", reply)  # accumulate for the end-of-session batch
-        yield reply
-
-    def _verified_reply(self, attorney_turn: str) -> str:
-        """Generate, then run the §6.5 verification pass; regenerate a bounded number of times."""
-        reply = opposing_counsel.generate_reply(self._state, attorney_turn)
-        for _ in range(MAX_VERIFICATION_RETRIES):
-            suspicious = verification.find_suspicious_citations(reply)
-            contradictions = verification.check_consistency(reply, self._state)
-            if not suspicious and not contradictions:
-                break
-            reply = opposing_counsel.generate_reply(self._state, attorney_turn)
-        return reply
+        spoken: list[str] = []
+        # Blocking generate/verify runs in a worker thread inside the bridge; the event loop stays
+        # responsive. On a mid-stream verification failure the pipeline repairs once, else truncates
+        # (Option B) — either way every yielded sentence has already passed verification.
+        async for sentence in astream_verified_reply(self._state, attorney_turn):
+            spoken.append(sentence)
+            yield sentence + " "  # trailing space so TTS never jams two sentences together
+        if spoken:
+            # Accumulate exactly what was spoken (post-verification) for the end-of-session batch.
+            self._state.add_turn("opposing_counsel", " ".join(spoken))
+        else:
+            logger.warning("no verified sentences this turn — staying silent (fail closed)")
 
 
 async def entrypoint(ctx: agents.JobContext) -> None:
