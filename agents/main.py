@@ -34,7 +34,8 @@ import json
 import logging
 
 from livekit import agents
-from livekit.agents import Agent, AgentSession, WorkerOptions, cli
+from livekit.agents import Agent, AgentSession, WorkerOptions, cli, inference
+from livekit.agents.tts import StreamAdapter
 from livekit.plugins import deepgram, elevenlabs, openai, silero
 
 import backend_client
@@ -99,15 +100,31 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     classifier = ObjectionClassifier(state)
     last_turn = {"text": ""}
 
+    # ElevenLabs' multi-stream-input websocket (the plugin's default `.stream()` path) returns no
+    # audio on our free-tier account — replies were never voiced and the socket closed 1006. Wrap
+    # the TTS in StreamAdapter, which synthesizes sentence-by-sentence over the HTTP `/stream`
+    # endpoint (verified working on this account) instead of the websocket. See docs/LESSONS.md.
+    eleven_tts = elevenlabs.TTS(
+        model=config.ELEVENLABS_MODEL,
+        voice_id=config.ELEVENLABS_VOICE_ID,
+        api_key=config.ELEVENLABS_API_KEY,
+    )
+
     session = AgentSession(
         # Silero VAD needs no API key. STT/TTS keys are passed EXPLICITLY from our own config
         # (config.py) rather than relying on each plugin's implicit env-var lookup — ElevenLabs
         # otherwise looks for ELEVEN_API_KEY, not our ELEVENLABS_API_KEY (see docs/LESSONS.md).
         vad=silero.VAD.load(),
-        # Pin VAD-based interruption: the default auto-detect tries "adaptive", which connects to
-        # LiveKit Cloud inference — unavailable on our self-hosted server, so every session start
-        # burned ~5s of retries before falling back to VAD anyway.
-        turn_handling={"interruption": {"mode": "vad"}},
+        # Pin LOCAL inference for both turn handling knobs — the SDK's auto-detect prefers LiveKit
+        # Cloud services (dev mode even resolves the turn detector to the cloud "v1"), which we
+        # don't have on a self-hosted server:
+        #  - interruption "adaptive" → cloud inference: ~5s of connect retries per session.
+        #  - turn detection "v1" → cloud detector: a 401 before falling back to the local mini
+        #    model. "v1-mini" IS that local model, pinned directly (no cloud transport at all).
+        turn_handling={
+            "turn_detection": inference.TurnDetector(version="v1-mini"),
+            "interruption": {"mode": "vad"},
+        },
         stt=deepgram.STT(
             model=config.DEEPGRAM_MODEL,
             interim_results=True,
@@ -119,11 +136,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             base_url=config.OPPOSING_COUNSEL_ENDPOINT,
             api_key=config.FIREWORKS_API_KEY,
         ),
-        tts=elevenlabs.TTS(
-            model=config.ELEVENLABS_MODEL,
-            voice_id=config.ELEVENLABS_VOICE_ID,
-            api_key=config.ELEVENLABS_API_KEY,
-        ),
+        tts=StreamAdapter(tts=eleven_tts),
     )
 
     async def publish_objection(decision) -> None:

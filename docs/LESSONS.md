@@ -146,3 +146,43 @@ time, i.e. mid-session, not at construction. Also: scoped keys (TTS-only) 401 on
 **Right:** Verify TTS with a real tiny synthesis call (`POST /v1/text-to-speech/{voice_id}` with a
 two-word body) against the exact voice + model you ship. Default to a current **premade** voice
 (config default is now "George", `JBFqnCBsd6RMkjVDRZzb` — verified 200/audio on the free tier).
+
+### [Agents/TTS] ElevenLabs multi-stream websocket returns no audio on free tier — use StreamAdapter
+**Wrong:** Used `elevenlabs.TTS(...)` directly as the AgentSession TTS. The livekit plugin's
+streaming path (`.stream()`) hardcodes the **`multi-stream-input`** websocket, which on our
+free-tier account opens but yields **zero audio frames**, so the socket closed `1006` ("closed
+unexpectedly") and every reply went out as text only (the objection *text* rides the data channel,
+so classification looked fine — only the voice was missing). The downstream "speech not done in time
+after interruption, cancelling" error was just this: audio that never arrived, timed out at 5s.
+**Right:** The plugin's non-streaming `synthesize()` uses the plain HTTP `/text-to-speech/{voice}/
+stream` endpoint, which *does* work on this account (verified 200/MP3). Wrap the TTS in the agents'
+`StreamAdapter(tts=elevenlabs.TTS(...))` — it drives TTS sentence-by-sentence over that HTTP endpoint
+instead of the websocket. When diagnosing a websocket TTS, test the specific endpoint the plugin uses
+(single-stream vs multi-stream-input vs HTTP /stream) individually; they have different plan/account
+support, and "the key works" (REST 200) doesn't prove the websocket path does.
+
+### [Infra/LiveKit] Docker-on-macOS: signaling connects but WebRTC fails without `--node-ip`
+**Wrong:** Ran `livekit-server --dev` in Docker and assumed mapped ports (7880/7881/7882) were
+enough. Signaling worked (token accepted, room joined, `curl localhost:7880` → OK), but the browser
+died with `ConnectionError: could not establish pc connection` — the server auto-detects its
+**container-internal IP** and advertises it in ICE candidates, which the host browser can't reach
+(Docker Desktop runs containers in a VM). The deceptive part: everything *up to* the media path
+works, so it looks like a frontend bug.
+**Right:** For same-machine dev, run the server with `--node-ip 127.0.0.1` (now in
+`infra/docker-compose.yml`) so ICE candidates point at localhost; confirm the startup log shows
+`"nodeIP": "127.0.0.1"`. A real deployment instead advertises its actual reachable address. If
+signaling works but the connection dies ~5–15 s later with a pc/ICE error, suspect advertised
+addresses first, not the client.
+
+### [Agents/LiveKit] Self-hosted server: pin LOCAL turn handling — the SDK defaults to Cloud
+**Wrong:** Left `AgentSession` turn handling on auto-detect while running against a self-hosted
+LiveKit server. The SDK prefers LiveKit **Cloud** services: interruption auto-picked "adaptive"
+(cloud inference → ~5 s of connect retries per session) and dev mode resolves the turn detector to
+the cloud "v1" (→ a 401 before falling back to the local mini model). Every session start paid
+retry latency + warning noise for services we don't have.
+**Right:** On self-hosted, pin both knobs to local:
+`turn_handling={"turn_detection": inference.TurnDetector(version="v1-mini"), "interruption":
+{"mode": "vad"}}` — "v1-mini" *is* the local fallback model, used directly with no cloud transport.
+Also note `livekit.plugins.turn_detector` (EnglishModel/MultilingualModel) is deprecated in favor of
+`livekit.agents.inference.TurnDetector`, and the plugin models only construct inside a job context —
+verify SDK usage against the installed version, not remembered docs.

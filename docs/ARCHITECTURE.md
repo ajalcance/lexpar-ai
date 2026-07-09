@@ -499,9 +499,10 @@ the backend — see `frontend/.env.example`. Vite only exposes vars prefixed `VI
 ## 10. Deployment
 
 - **Local dev:** `infra/docker-compose.yml` brings up the infra — Postgres, MinIO, and the LiveKit
-  server (dev mode, default keys `devkey`/`secret`). The backend, agents, and frontend dev server run
-  on the host and point at these via `.env` / `VITE_API_BASE_URL`. Both LLM agents point at Fireworks
-  until the AMD droplet exists. Bring it up with
+  server (dev mode, default keys `devkey`/`secret`, and `--node-ip 127.0.0.1` so ICE candidates are
+  reachable from the host browser — required on Docker-for-Mac, see LESSONS). The backend, agents,
+  and frontend dev server run on the host and point at these via `.env` / `VITE_API_BASE_URL`. Both
+  LLM agents point at Fireworks until the AMD droplet exists. Bring it up with
   `docker compose -f infra/docker-compose.yml up -d`; LiveKit answers on `http://localhost:7880`
   (returns `OK`).
 - **Apply the DB schema (required first-run step):** a freshly created Postgres has no tables, so
