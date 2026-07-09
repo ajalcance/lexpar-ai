@@ -1193,3 +1193,111 @@ kept. **66 offline pass, ruff clean.** **Step 6 docs:** ARCHITECTURE §6 (three 
 benchmark-don't-assume + architectural-latency), this PLAN. Benchmark script was a scratchpad
 throwaway (not committed). **Not verified here:** real barge-in *timing in a live room* (needs mic +
 worker) — but the decision latency itself is measured via the harness.
+
+---
+
+### Populate the session record so the scorecard/transcript are real — status: done
+
+**Problem (found in the first full live session):** the voice pipeline runs end to end, but the
+persisted scorecard is a hollow default — **score always 100, empty strengths/weaknesses, judge says
+"no objection has been raised"** even though objections were spoken, and the **transcript is
+shredded** into ~15 tiny fragments with the barge-in objections missing. Root cause: the live loop
+speaks/publishes objections but **never populates `SessionState`'s ledger** (no `record_objection`,
+`rule_on_objection`, or `add_established_fact`), persists an attorney turn **per Deepgram `is_final`**
+(not per spoken turn), never persists barge-in objection turns, and starts `SessionState()` with
+**empty case facts** (`main.py` TODO). `scorecard_builder` is correct — it just has nothing to work
+with.
+
+**Fix 1 — Record + persist fired objections `[S]` (`voice_interrupt.py`, `main.py`).**
+On a classifier fire in `handle_interim`, in addition to `interrupt()`+`say()`+`publish`:
+- `classifier.state.record_objection(grounds=decision.objection_type or "objection",
+  raised_by="opposing_counsel")` → enters it in the objections ledger (pending).
+- `classifier.state.add_turn("opposing_counsel", objection_utterance(decision),
+  was_interruption=True)` → the barge-in now appears in the saved transcript with the red styling.
+Keeps `voice_interrupt` livekit-free (mutates only `classifier.state`). Scoping: the classifier fire
+is the *formal* objection signal; `llm_node` replies stay argument turns (unchanged).
+
+**Fix 2 — End-of-session judge assessment (the crux) `[L]` (`judge.py`, `main.py`).**
+Replace the single closing `generate_ruling` with **one structured judge call** at shutdown,
+`judge.assess_session(state) -> {rulings: [...], established_facts: [...], closing_ruling: str}`:
+- **rulings** — sustained/overruled for each pending objection, in ledger order, from the transcript
+  + objection context. Applied via `state.rule_on_objection` → drives score (−8/sustained) and
+  weaknesses (sustained grounds). Fail-safe: unparseable/short output → remaining default to
+  **overruled** (never fabricate a penalty against the attorney).
+- **established_facts** — 2–5 key facts the attorney put on the record without a sustained objection
+  → `state.add_established_fact` → drives strengths (fixes the empty "no facts established").
+- **closing_ruling** — the verbatim judge line, now generated *after* the ledger is populated so it
+  reflects what actually happened. One LLM call, fits the existing `_persist_at_end` shutdown flow.
+
+**Fix 3 — Group attorney `is_final`s into coherent turns `[M]` (`main.py`).**
+Keep feeding **every** interim/final to the objection classifier (unchanged), but stop adding a
+transcript turn per `is_final`. Instead accumulate the attorney's finals and commit **one** turn when
+the user's turn ends — via the Agent `on_user_turn_completed(chat_ctx, new_message)` hook (full
+committed turn) if it exists in the installed SDK, else buffer-and-flush when `llm_node` starts.
+**Needs SDK verification** of the exact hook/event (written to the docs, tuned against the installed
+`livekit-agents`).
+
+**Fix 4 — Load case facts at room join `[M]` (backend + `main.py`).**
+- Backend: new **agent-authed read route** `GET /api/sessions/{id}/context` (X-Agent-Token, like the
+  write routes) → `{case_facts}` (joins session→case). New schema + a `session_service` read + it
+  reuses `require_agent_service`.
+- Agent: `backend_client.get_session_context(session_id)` at `entrypoint`, seeding
+  `SessionState(case_facts=...)` so verification + the judge reason with the real case (the room name
+  already encodes the id). Tolerate failure → empty facts (current behavior), never crash the room.
+
+**Tests (offline / CI):**
+- `voice_interrupt`: fire now records an objection + adds a `was_interruption` turn; no-fire doesn't.
+- `judge.assess_session`: pure `_build_assessment_messages` + `_parse_assessment` (rulings list,
+  established facts, closing ruling); short/garbled output → overruled-default fail-safe.
+- `scorecard_builder`: already covered — add a case with sustained objections + established facts →
+  score < 100, real weaknesses/strengths (mostly exercises existing paths).
+- Backend: `test_agent_routes` — the new context route returns case facts for the agent token,
+  401s without it; user JWT can't reach it.
+- Agent turn-grouping helper (if buffer-and-flush): unit-test the accumulator (joins finals, resets
+  per turn) without livekit.
+- Live (`@pytest.mark.live`, deselected): `assess_session` returns well-formed rulings on a seeded
+  transcript.
+
+**Docs:** ARCHITECTURE §6/§6.5 (live loop now feeds the ledger; judge end-of-session assessment), §5
+(new internal context route), §8 (who writes what — unchanged); LESSONS if a gotcha emerges; this
+PLAN result.
+
+**Verify:** ruff + `pytest -m "not live"`; extend `session_end_harness.py` to seed a state with
+recorded objections → `assess_session` (live) → confirm a scorecard with score < 100, real
+weaknesses, established-fact strengths, and a coherent ruling; then a full live room session to
+confirm objections + coherent attorney turns land in the persisted transcript.
+
+**Open decisions (please confirm):**
+1. **Judge ruling timing — end-of-session batch (recommended) vs. inline per objection?** Batch = one
+   LLM call at shutdown, no added live-loop latency, fits current flow, but the judge doesn't rule
+   *aloud* mid-session. Inline = more realistic (rules right after each objection, could speak it)
+   but adds an LLM call + latency into the barge-in path and is more complex. I recommend **batch**
+   for now; inline can layer on later.
+2. **Established facts (strengths) — have the judge extract them (part of `assess_session`,
+   recommended) vs. leave strengths as a known gap for now?** Extraction makes strengths meaningful
+   in the same single call; skipping keeps scope tighter.
+3. **Scope check:** OK to add a backend route + touch `judge.py` fairly substantially (Fix 2/4), or
+   keep this round to the cheap wins (Fix 1 + Fix 3) and defer the judge assessment + case-facts
+   loading to a follow-up?
+
+**Result:** Done, all four, live-verified. **Fix 1:** `voice_interrupt.handle_interim` on a fire now
+`record_objection(...)` (pending) + `add_turn(..., was_interruption=True)` via `classifier.state` —
+barge-ins land on the record. **Fix 2:** `judge.assess_session(state)` — one structured call
+(`_build_assessment_messages` renders the transcript; `_parse_assessment` normalizes rulings, drops
+blank facts) returning `{rulings, established_facts, closing_ruling}`, fail-safe on empty/garbage
+(→ no rulings/facts + neutral ruling). `main._persist_at_end` applies rulings → `rule_on_objection`,
+adds facts, uses the closing ruling. Kept `generate_ruling` (harness/tests). **Fix 3:** attorney
+turns committed once per utterance via the agent's `on_user_turn_completed` hook; removed the
+per-`is_final` `add_turn` (classifier still fed every interim). **Fix 4:** backend
+`GET /api/sessions/{id}/context` (agent-authed) + `agent_write_service.get_session_context` +
+`backend_client.get_session_context`; `entrypoint` seeds `SessionState(case_facts=…)`, tolerant of
+failure. **Gotcha:** `assess_session` hit the gpt-oss empty-content bug at `max_tokens=512` (heavier
+reasoning than the classifier) → raised to **1536** (LESSONS updated: the floor scales with task
+complexity). **Verified:** harness with pending objections → live `assess_session` → **score 84**
+(100−8×2), real strengths (judge-extracted facts), weaknesses (sustained hearsay + leading), coherent
+record-aware closing ruling, transcript with both barge-ins. **Tests: agents 97 offline + 8 live
+(new: 3 voice_interrupt ledger, 9 judge assessment, 1 live assess); backend 25 (2 new context-route);
+ruff clean.** **Docs:** ARCHITECTURE §5 (context route) + §6.5 (live ledger feeding + end-of-session
+assessment); LESSONS (budget-scales-with-complexity). Decisions built as recommended: batch ruling +
+judge-extracted facts, all four together. **Not verified here:** a full live *room* session
+(needs mic + worker) — but every piece is proven via the harness + unit/live tests.

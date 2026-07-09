@@ -12,11 +12,19 @@ Security notes: FIREWORKS_API_KEY comes from the environment only — never hard
 import os
 from pathlib import Path
 
+import certifi
 from dotenv import load_dotenv
 
 # Load the repo-root .env (one level above agents/) if present. Real shell/CI env still wins,
 # since load_dotenv does not override variables already set in the environment.
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
+# Wire a CA bundle for aiohttp-based clients (the LiveKit Deepgram/ElevenLabs/inference plugins).
+# macOS python.org builds ship with NO default CA file (ssl cafile=None), so every aiohttp TLS
+# connection fails CERTIFICATE_VERIFY_FAILED while httpx-based clients (openai, backend_client)
+# work — they bundle certifi themselves. setdefault so an explicitly set SSL_CERT_FILE wins.
+# See docs/LESSONS.md ("aiohttp TLS fails on macOS python.org builds").
+os.environ.setdefault("SSL_CERT_FILE", certifi.where())
 
 _FIREWORKS_ENDPOINT = "https://api.fireworks.ai/inference/v1"
 
@@ -64,11 +72,18 @@ OBJECTION_MODEL = os.getenv(
     "accounts/fireworks/models/gpt-oss-120b",
 )
 
-# Voice pipeline (agents/main.py). The Deepgram/ElevenLabs plugins read their API keys from the
-# environment (DEEPGRAM_API_KEY / ELEVENLABS_API_KEY); these just pick the models/voice.
+# Voice pipeline (agents/main.py). We read the keys from our OWN env names here and pass them
+# EXPLICITLY into the plugins (main.py) — do not rely on each plugin's implicit env-var lookup,
+# whose names don't all match ours (Deepgram defaults to DEEPGRAM_API_KEY, which matches, but
+# ElevenLabs defaults to ELEVEN_API_KEY, which does NOT match our ELEVENLABS_API_KEY convention).
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 DEEPGRAM_MODEL = os.getenv("DEEPGRAM_MODEL", "nova-3")
 ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5")  # low-latency Flash
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
+# Default: "George" — a CURRENT premade voice. The old default ("Rachel", 21m00Tcm4TlvDq8ikWAM)
+# is a legacy/library voice: free-tier API calls to it fail 402 "paid_plan_required" at synthesis
+# time even with a valid key. Verify a voice with a real synthesis call, not just key validity.
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb")
 
 # Backend persistence (Gap 4): the worker completes the session + writes the scorecard/transcript
 # at session end, authenticating with the scoped agent service token (NOT a user login).

@@ -36,9 +36,18 @@ services:
 
   # LiveKit media server in dev mode. `--dev` uses the default API key devkey/secret, matching
   # .env.example; LIVEKIT_KEYS makes that explicit. Not for production.
+  #
+  # --node-ip 127.0.0.1 is LOCALHOST-DEV-ONLY. It fixes Docker-on-macOS: without it the server
+  # advertises its container-internal IP in ICE candidates, which the host browser can't reach
+  # (Docker Desktop runs in a VM), so signaling succeeds but the WebRTC peer connection fails
+  # ("could not establish pc connection"). This lives ONLY in this local-dev compose file — it
+  # binds the media path to loopback, so the app is reachable only from the same machine. Do NOT
+  # carry this flag to any shared/LAN or production deploy (docker-compose.prod.yml): pinning
+  # 127.0.0.1 there would make LiveKit unreachable from every other device/browser. Production
+  # advertises its real reachable address instead (or LIVEKIT_NODE_IP). See docs/LESSONS.md.
   livekit:
     image: livekit/livekit-server:latest
-    command: --dev
+    command: --dev --node-ip 127.0.0.1
     environment:
       LIVEKIT_KEYS: "devkey: secret"
     ports:

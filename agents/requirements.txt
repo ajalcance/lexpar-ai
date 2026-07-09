@@ -5,6 +5,7 @@
 openai>=1.40
 python-dotenv>=1.0
 httpx>=0.27
+certifi>=2024.0  # config.py wires SSL_CERT_FILE for the aiohttp-based livekit plugins (LESSONS.md)
 
 # Dev / CI
 pytest>=8.0

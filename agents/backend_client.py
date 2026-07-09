@@ -1,8 +1,8 @@
 """
 File: agents/backend_client.py
-Purpose: Thin HTTP client the worker uses at session end to persist to the backend (Gap 4) —
-    complete the session and write the scorecard + transcript batch — authenticating with the
-    scoped agent service token (X-Agent-Token), not a user login.
+Purpose: Thin HTTP client the worker uses to talk to the backend over the scoped agent service
+    token (X-Agent-Token), not a user login: read the case context at room join, and at session end
+    complete the session and write the scorecard + transcript batch (Gap 4).
 Depends on: httpx, agents/config.py
 Related: backend/app/api/internal.py, agents/scorecard_builder.py, agents/main.py
 Security notes: Sends the AGENT_SERVICE_TOKEN header over the configured backend URL only; never
@@ -20,6 +20,17 @@ _TIMEOUT = 15.0
 
 def _headers() -> dict[str, str]:
     return {"X-Agent-Token": config.AGENT_SERVICE_TOKEN}
+
+
+def get_session_context(session_id: str) -> dict:
+    """Fetch the session's case facts to seed SessionState. Raises on error; the caller handles."""
+    resp = httpx.get(
+        f"{config.AGENT_BACKEND_URL}/api/sessions/{session_id}/context",
+        headers=_headers(),
+        timeout=_TIMEOUT,
+    )
+    resp.raise_for_status()
+    return resp.json()
 
 
 def complete_session(session_id: str) -> None:

@@ -39,8 +39,17 @@ export function SparringRoom() {
   const navigate = useNavigate();
   const sessionId = id ?? '';
 
-  const { mode, connectionState, activeSpeaker, isMuted, micBlocked, toggleMute, objections } =
-    useSparringRoom(sessionId);
+  const {
+    mode,
+    connectionState,
+    activeSpeaker,
+    isMuted,
+    micBlocked,
+    audioBlocked,
+    toggleMute,
+    enableAudio,
+    objections,
+  } = useSparringRoom(sessionId);
   const { lines } = useSparringSession(sessionId, { enabled: mode === 'fallback' });
 
   const isConnected = connectionState === 'connected';
@@ -79,6 +88,17 @@ export function SparringRoom() {
         <p className="text-sm text-destructive">
           Microphone blocked — allow mic access in your browser to argue aloud.
         </p>
+      )}
+
+      {audioBlocked && (
+        <div className="flex items-center gap-3 rounded-md border border-destructive/40 p-3">
+          <p className="text-sm text-destructive">
+            Your browser blocked audio playback — enable it to hear opposing counsel.
+          </p>
+          <Button variant="outline" size="sm" onClick={enableAudio}>
+            Enable audio
+          </Button>
+        </div>
       )}
 
       <div className="flex flex-col gap-4 rounded-lg border bg-card/40 p-6">

@@ -26,3 +26,10 @@ class ScorecardWriteIn(BaseModel):
     weaknesses: str
     judge_ruling: str
     transcript: list[TranscriptTurnIn] = []
+
+
+class SessionContextOut(BaseModel):
+    """The case context the agents worker loads at room join to seed its SessionState."""
+
+    case_facts: str = ""
+    case_title: str = ""

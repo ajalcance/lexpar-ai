@@ -74,7 +74,11 @@ Benchmarked: at mt=128/64/48/32 the objection classifier got 0/7 non-empty; only
 and it buys only ~0.3 s anyway.
 **Right:** Give reasoning models room — keep `max_tokens` ≥ 512 for gpt-oss even for a tiny JSON
 answer, and always assert non-empty + parseable in the benchmark. If you need lower latency, the
-budget is the wrong lever — change the model or skip the call (see next entry).
+budget is the wrong lever — change the model or skip the call (see next entry). The floor **scales
+with task complexity, not output size**: the objection classifier is fine at 512, but the judge's
+end-of-session assessment (rule every objection + extract facts + closing ruling) reasons far more
+and came back empty at 512 — it needed **1536**. When you add a heavier reasoning task, re-check the
+budget with a live call, don't assume the old floor carries over.
 
 ### [Agents/LLM] Don't assume a "fast small model" exists — benchmark the actual account catalog
 **Wrong:** Planned to cut objection barge-in latency by swapping `OBJECTION_LLM_MODEL` to "a fast
@@ -87,3 +91,102 @@ a **tier-2 high-confidence regex gate** that fires clear leading/hearsay objecti
 call at all** (~1–2 s → ~0 s), keeping the model only for genuinely ambiguous phrasing. Precision-bias
 that immediate tier (opposite of the recall gate) and give it its own audit outcome (`fire_immediate`)
 so an over-eager gate is visible in the data.
+
+### [Agents/concurrency] Shared mutable state reached via `asyncio.to_thread` is a data race
+**Wrong:** `ObjectionClassifier.consider()` mutated debounce state (`_prev` / `_handled` / `records`)
+and was called from the voice worker via `asyncio.to_thread` on *every* interim transcript. Interims
+arrive faster than the (~1 s) classifier call returns, so multiple fragments ran `consider()` in
+parallel thread-pool threads — a genuine race that could double-fire or drop a debounce. Passing
+offline tests hid it (they call `consider()` sequentially).
+**Right:** Anything handed to `to_thread` (or otherwise run off the loop) that touches shared mutable
+state needs a lock. Guard `consider()` with a `threading.Lock`; holding it across the blocking model
+call is intended here — the barge-in decision is inherently sequential, so later interims queue and
+the debounce short-circuits them. When logic runs single-threaded in tests but concurrently in the
+real worker, reason about the worker's concurrency, not the test's.
+
+### [Frontend/LiveKit] The agent is silent unless you call `room.startAudio()` on a user gesture
+**Wrong:** Attached the agent's remote audio track to a hidden `<audio>` element and assumed it would
+play. Browsers block audio playback that isn't tied to a user gesture; navigating into the room is not
+one, so the agent could be **silently inaudible with no error** — the single most confusing way for a
+"working" voice session to look broken.
+**Right:** Call `room.startAudio()` (optimistically during connect, in case the click's gesture
+context still applies) and subscribe to `RoomEvent.AudioPlaybackStatusChanged` / read
+`room.canPlaybackAudio`; when blocked, surface an explicit "enable audio" button that calls
+`startAudio()` from a real gesture. Also handle the terminal `RoomEvent.Disconnected` (auto-reconnect
+only covers transient drops) and `detach()` tracks + remove listeners on unmount so repeated sessions
+don't leak.
+
+### [Agents/config] Pass provider keys EXPLICITLY — plugin default env-var names don't match ours
+**Wrong:** Constructed `elevenlabs.TTS(model=…, voice_id=…)` without an `api_key`, trusting the
+plugin to read the key from the environment. The ElevenLabs plugin looks for **`ELEVEN_API_KEY`**,
+but our project convention (ARCHITECTURE §9, `.env`, `config.py`) is **`ELEVENLABS_API_KEY`** — so the
+worker crashed at job start with "ElevenLabs API key is required … set ELEVEN_API_KEY". It only *seemed*
+to work for Deepgram because that plugin's default (`DEEPGRAM_API_KEY`) happens to match our name.
+**Right:** Read every provider key from our own env names in `config.py` and pass it **explicitly**
+into the plugin (`elevenlabs.TTS(api_key=config.ELEVENLABS_API_KEY)`, `deepgram.STT(api_key=…)`), never
+relying on each plugin's implicit lookup. One config is the single source of truth; a plugin changing
+(or already having) a different default env-var name can't silently break us. Silero VAD needs no key.
+
+### [Agents/TLS] aiohttp "failed to connect" on macOS — python.org builds ship NO CA bundle
+**Wrong:** Read the worker's `failed to connect to deepgram` as a Deepgram problem (key, credit,
+network). The key was valid, the account had credit, and curl reached the API fine. The real cause:
+python.org macOS builds have `ssl` default `cafile=None`, so **every aiohttp TLS connection** fails
+`CERTIFICATE_VERIFY_FAILED` — which the LiveKit plugins surface as generic "failed to connect". The
+trap is asymmetric: httpx-based clients (openai, backend_client) bundle certifi and work, so LLM
+calls succeeding "proves" the network while the aiohttp-based voice plugins (Deepgram, ElevenLabs,
+LiveKit inference) all fail together.
+**Right:** When aiohttp-based things all fail to connect while httpx/curl work, suspect the CA bundle
+first — reproduce with a 5-line aiohttp GET and look for `SSLCertVerificationError`. Fix in one place:
+`os.environ.setdefault("SSL_CERT_FILE", certifi.where())` at the top of `agents/config.py` (respects
+an explicit override; certifi added to requirements). Diagnose provider errors with direct REST calls
+before blaming the provider.
+
+### [Agents/TTS] A valid ElevenLabs key is not enough — the VOICE must be usable on the plan
+**Wrong:** Assumed key-level checks proved TTS would work. The default voice id we shipped
+(`21m00Tcm4TlvDq8ikWAM`, "Rachel") is a legacy **library** voice: free-tier API synthesis against it
+fails `402 payment_required ("Free users cannot use library voices via the API")` — at *synthesis*
+time, i.e. mid-session, not at construction. Also: scoped keys (TTS-only) 401 on `/v1/user` and
+`/v1/voices`, so key-validity probes against those endpoints mislead.
+**Right:** Verify TTS with a real tiny synthesis call (`POST /v1/text-to-speech/{voice_id}` with a
+two-word body) against the exact voice + model you ship. Default to a current **premade** voice
+(config default is now "George", `JBFqnCBsd6RMkjVDRZzb` — verified 200/audio on the free tier).
+
+### [Agents/TTS] ElevenLabs multi-stream websocket returns no audio on free tier — use StreamAdapter
+**Wrong:** Used `elevenlabs.TTS(...)` directly as the AgentSession TTS. The livekit plugin's
+streaming path (`.stream()`) hardcodes the **`multi-stream-input`** websocket, which on our
+free-tier account opens but yields **zero audio frames**, so the socket closed `1006` ("closed
+unexpectedly") and every reply went out as text only (the objection *text* rides the data channel,
+so classification looked fine — only the voice was missing). The downstream "speech not done in time
+after interruption, cancelling" error was just this: audio that never arrived, timed out at 5s.
+**Right:** The plugin's non-streaming `synthesize()` uses the plain HTTP `/text-to-speech/{voice}/
+stream` endpoint, which *does* work on this account (verified 200/MP3). Wrap the TTS in the agents'
+`StreamAdapter(tts=elevenlabs.TTS(...))` — it drives TTS sentence-by-sentence over that HTTP endpoint
+instead of the websocket. When diagnosing a websocket TTS, test the specific endpoint the plugin uses
+(single-stream vs multi-stream-input vs HTTP /stream) individually; they have different plan/account
+support, and "the key works" (REST 200) doesn't prove the websocket path does.
+
+### [Infra/LiveKit] Docker-on-macOS: signaling connects but WebRTC fails without `--node-ip`
+**Wrong:** Ran `livekit-server --dev` in Docker and assumed mapped ports (7880/7881/7882) were
+enough. Signaling worked (token accepted, room joined, `curl localhost:7880` → OK), but the browser
+died with `ConnectionError: could not establish pc connection` — the server auto-detects its
+**container-internal IP** and advertises it in ICE candidates, which the host browser can't reach
+(Docker Desktop runs containers in a VM). The deceptive part: everything *up to* the media path
+works, so it looks like a frontend bug.
+**Right:** For same-machine dev, run the server with `--node-ip 127.0.0.1` (now in
+`infra/docker-compose.yml`) so ICE candidates point at localhost; confirm the startup log shows
+`"nodeIP": "127.0.0.1"`. A real deployment instead advertises its actual reachable address. If
+signaling works but the connection dies ~5–15 s later with a pc/ICE error, suspect advertised
+addresses first, not the client.
+
+### [Agents/LiveKit] Self-hosted server: pin LOCAL turn handling — the SDK defaults to Cloud
+**Wrong:** Left `AgentSession` turn handling on auto-detect while running against a self-hosted
+LiveKit server. The SDK prefers LiveKit **Cloud** services: interruption auto-picked "adaptive"
+(cloud inference → ~5 s of connect retries per session) and dev mode resolves the turn detector to
+the cloud "v1" (→ a 401 before falling back to the local mini model). Every session start paid
+retry latency + warning noise for services we don't have.
+**Right:** On self-hosted, pin both knobs to local:
+`turn_handling={"turn_detection": inference.TurnDetector(version="v1-mini"), "interruption":
+{"mode": "vad"}}` — "v1-mini" *is* the local fallback model, used directly with no cloud transport.
+Also note `livekit.plugins.turn_detector` (EnglishModel/MultilingualModel) is deprecated in favor of
+`livekit.agents.inference.TurnDetector`, and the plugin models only construct inside a job context —
+verify SDK usage against the installed version, not remembered docs.

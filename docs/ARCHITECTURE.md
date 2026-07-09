@@ -202,18 +202,20 @@ the one thing still absent:
 | GET | `/api/sessions/{id}` | Session status + transcript | yes |
 | GET | `/api/sessions/{id}/scorecard` | Scorecard after session ends | yes |
 | GET | `/api/livekit/token` | Issues a LiveKit room access token for the frontend | yes |
+| GET | `/api/sessions/{id}/context` | (internal) Case facts the worker loads at room join | agent token |
 | POST | `/api/sessions/{id}/complete` | (internal) Mark session completed | agent token |
 | POST | `/api/sessions/{id}/scorecard` | (internal) Write scorecard + full transcript batch at session end | agent token |
 
 FastAPI does not touch real-time audio at all — that's entirely the LiveKit Agents worker's job.
 FastAPI's role is auth, case management, and persisting the results the agents worker produces.
 
-**Internal (agent) routes vs. user routes.** The two `agent token` routes above are written by the
-agents worker at session end, authenticated with a **scoped service credential** (`X-Agent-Token`
-header, `AGENT_SERVICE_TOKEN`) — a *separate mechanism* from user JWT login (`app/security_agent.py`,
-not `app/security.py`). Least privilege (DEV_GUIDELINES §7): the agent token grants only these two
-routes and nothing user-facing; a user JWT does not grant them. The scorecard write **batches the
-whole transcript in one call** (no per-turn round-trips inside the live voice loop).
+**Internal (agent) routes vs. user routes.** The three `agent token` routes above — the worker reads
+the case context at room join and writes the results at session end — are authenticated with a
+**scoped service credential** (`X-Agent-Token` header, `AGENT_SERVICE_TOKEN`), a *separate mechanism*
+from user JWT login (`app/security_agent.py`, not `app/security.py`). Least privilege
+(DEV_GUIDELINES §7): the agent token grants only these routes and nothing user-facing; a user JWT
+does not grant them. The scorecard write **batches the whole transcript in one call** (no per-turn
+round-trips inside the live voice loop).
 
 ---
 
@@ -245,10 +247,20 @@ whole transcript in one call** (no per-turn round-trips inside the live voice lo
     `ObjectionClassifier` adds **per-utterance debounce** (no re-firing on a growing fragment) and
     the LLM stage **fails closed** (any error → no interruption). Six audit outcomes distinguish
     `fire_immediate` (tier 2, no model) from `fire` (tier 3, model-judged) so an over-aggressive
-    high-confidence gate is visible in the data. Bespoke logic on top of the framework, not
-    something LiveKit provides out of the box.
+    high-confidence gate is visible in the data. `consider()` is **lock-serialized** — the worker
+    feeds interim transcripts through it from concurrent `asyncio.to_thread` calls, so its debounce
+    state must not be raced. Bespoke logic on top of the framework, not something LiveKit provides
+    out of the box.
   - `llm_router.py` — reads `OPPOSING_COUNSEL_LLM_PROVIDER` / `JUDGE_LLM_PROVIDER` env vars and
     points each agent at the correct OpenAI-compatible endpoint.
+- **Browser client** (`frontend/src/hooks/useSparringRoom.ts`): connects with the per-session token,
+  publishes the mic, and plays the agent's audio. Resilience baked in: LiveKit's built-in
+  auto-reconnect covers transient drops (surfaced as a `reconnecting` state); a **terminal
+  `Disconnected`** is surfaced and logged rather than left as a dead-but-"live"-looking view; audio
+  playback blocked by the **browser autoplay policy** exposes an "enable audio" affordance
+  (`room.startAudio()` on a user gesture) instead of the agent being silently inaudible; on unmount
+  the subscribed tracks are `detach()`-ed and room listeners removed, so repeated test sessions
+  don't leak tracks, handlers, or connections.
 
 ---
 
@@ -309,6 +321,29 @@ flowchart TB
     X -- one repair --> C[Continue from verified prefix] --> G
     X -- repair exhausted --> E[Truncate at last verified sentence]
 ```
+
+### Feeding the record during the live session
+
+The ledger only means something if the live loop keeps it current, so the worker writes to it as the
+session runs:
+- **Case facts** are loaded at room join from `GET /api/sessions/{id}/context` (§5) so `SessionState`
+  starts with the real case, not empty.
+- **Objections** — when the classifier fires (§6), `voice_interrupt.handle_interim` both
+  `record_objection(...)` (pending) and adds a `was_interruption` transcript turn, so a spoken
+  objection actually lands on the record.
+- **Attorney turns** are committed **once per completed utterance** (the agent's
+  `on_user_turn_completed` hook), not once per Deepgram `is_final` — otherwise a single spoken turn
+  shreds into a dozen transcript fragments. The classifier still sees every interim.
+
+### End-of-session judge assessment
+
+At session end the Judge makes **one** structured call (`judge.assess_session`) that: rules each
+pending objection `sustained`/`overruled` (→ scorecard **score** and **weaknesses**), extracts the
+2–5 facts the attorney genuinely established (→ scorecard **strengths**), and returns the closing
+ruling. This is what makes the scorecard reflect what actually happened instead of a hollow default
+(score always 100). It **fails safe**: on an unparseable/empty model response, objections stay
+pending (not sustained → the attorney is never penalized on a model glitch), no facts are invented,
+and a neutral closing ruling is used. Batched at shutdown so it adds no latency to the live loop.
 
 ### Co-location
 
@@ -489,9 +524,10 @@ the backend — see `frontend/.env.example`. Vite only exposes vars prefixed `VI
 ## 10. Deployment
 
 - **Local dev:** `infra/docker-compose.yml` brings up the infra — Postgres, MinIO, and the LiveKit
-  server (dev mode, default keys `devkey`/`secret`). The backend, agents, and frontend dev server run
-  on the host and point at these via `.env` / `VITE_API_BASE_URL`. Both LLM agents point at Fireworks
-  until the AMD droplet exists. Bring it up with
+  server (dev mode, default keys `devkey`/`secret`, and `--node-ip 127.0.0.1` so ICE candidates are
+  reachable from the host browser — required on Docker-for-Mac, see LESSONS). The backend, agents,
+  and frontend dev server run on the host and point at these via `.env` / `VITE_API_BASE_URL`. Both
+  LLM agents point at Fireworks until the AMD droplet exists. Bring it up with
   `docker compose -f infra/docker-compose.yml up -d`; LiveKit answers on `http://localhost:7880`
   (returns `OK`).
 - **Apply the DB schema (required first-run step):** a freshly created Postgres has no tables, so
