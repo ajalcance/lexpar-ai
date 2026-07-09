@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from dataclasses import dataclass
 
 from llm_router import build_endpoint, chat, objection_config
@@ -248,6 +249,14 @@ class ObjectionClassifier:
     With `record=True` it keeps a review log so gate-rejected fragments can be inspected separately
     from LLM no-fire decisions (see `gate_rejected()` / `llm_no_fire()`). Off by default because the
     log retains transcript fragments (attorney work product) — enable only for testing/review.
+
+    Thread-safe: the voice worker feeds interim transcripts through `consider()` via
+    `asyncio.to_thread`, so several fragments can land in parallel threads. A lock serializes the
+    debounce state (`_prev` / `_handled` / `records`) — the decision is inherently sequential (we
+    never want two overlapping classifications racing on the same growing utterance), so serializing
+    it is correct, not merely defensive. The lock is held across the decider's (blocking) call,
+    which naturally queues later interims behind the in-flight one; the debounce then short-circuits
+    them.
     """
 
     def __init__(self, state: SessionState, decider=classify_fragment, record: bool = False):
@@ -257,23 +266,25 @@ class ObjectionClassifier:
         self._handled = False
         self._record = record
         self.records: list[DecisionRecord] = []
+        self._lock = threading.Lock()
 
     def consider(self, fragment: str) -> Decision:
-        frag = fragment.strip()
-        if not self._is_continuation(self._prev, frag):
-            self._handled = False  # a new utterance re-arms the classifier
-        self._prev = frag
-        if self._handled:
-            decision = Decision(
-                False, None, "already objected on this utterance", outcome=DEBOUNCED
-            )
-        else:
-            decision = self._decide(frag, self.state)
-            if decision.fire:
-                self._handled = True
-        if self._record:
-            self.records.append(DecisionRecord(fragment=frag, decision=decision))
-        return decision
+        with self._lock:
+            frag = fragment.strip()
+            if not self._is_continuation(self._prev, frag):
+                self._handled = False  # a new utterance re-arms the classifier
+            self._prev = frag
+            if self._handled:
+                decision = Decision(
+                    False, None, "already objected on this utterance", outcome=DEBOUNCED
+                )
+            else:
+                decision = self._decide(frag, self.state)
+                if decision.fire:
+                    self._handled = True
+            if self._record:
+                self.records.append(DecisionRecord(fragment=frag, decision=decision))
+            return decision
 
     @staticmethod
     def _is_continuation(prev: str, current: str) -> bool:

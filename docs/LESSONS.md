@@ -87,3 +87,27 @@ a **tier-2 high-confidence regex gate** that fires clear leading/hearsay objecti
 call at all** (~1–2 s → ~0 s), keeping the model only for genuinely ambiguous phrasing. Precision-bias
 that immediate tier (opposite of the recall gate) and give it its own audit outcome (`fire_immediate`)
 so an over-eager gate is visible in the data.
+
+### [Agents/concurrency] Shared mutable state reached via `asyncio.to_thread` is a data race
+**Wrong:** `ObjectionClassifier.consider()` mutated debounce state (`_prev` / `_handled` / `records`)
+and was called from the voice worker via `asyncio.to_thread` on *every* interim transcript. Interims
+arrive faster than the (~1 s) classifier call returns, so multiple fragments ran `consider()` in
+parallel thread-pool threads — a genuine race that could double-fire or drop a debounce. Passing
+offline tests hid it (they call `consider()` sequentially).
+**Right:** Anything handed to `to_thread` (or otherwise run off the loop) that touches shared mutable
+state needs a lock. Guard `consider()` with a `threading.Lock`; holding it across the blocking model
+call is intended here — the barge-in decision is inherently sequential, so later interims queue and
+the debounce short-circuits them. When logic runs single-threaded in tests but concurrently in the
+real worker, reason about the worker's concurrency, not the test's.
+
+### [Frontend/LiveKit] The agent is silent unless you call `room.startAudio()` on a user gesture
+**Wrong:** Attached the agent's remote audio track to a hidden `<audio>` element and assumed it would
+play. Browsers block audio playback that isn't tied to a user gesture; navigating into the room is not
+one, so the agent could be **silently inaudible with no error** — the single most confusing way for a
+"working" voice session to look broken.
+**Right:** Call `room.startAudio()` (optimistically during connect, in case the click's gesture
+context still applies) and subscribe to `RoomEvent.AudioPlaybackStatusChanged` / read
+`room.canPlaybackAudio`; when blocked, surface an explicit "enable audio" button that calls
+`startAudio()` from a real gesture. Also handle the terminal `RoomEvent.Disconnected` (auto-reconnect
+only covers transient drops) and `detach()` tracks + remove listeners on unmount so repeated sessions
+don't leak.

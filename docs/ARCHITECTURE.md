@@ -245,10 +245,20 @@ whole transcript in one call** (no per-turn round-trips inside the live voice lo
     `ObjectionClassifier` adds **per-utterance debounce** (no re-firing on a growing fragment) and
     the LLM stage **fails closed** (any error → no interruption). Six audit outcomes distinguish
     `fire_immediate` (tier 2, no model) from `fire` (tier 3, model-judged) so an over-aggressive
-    high-confidence gate is visible in the data. Bespoke logic on top of the framework, not
-    something LiveKit provides out of the box.
+    high-confidence gate is visible in the data. `consider()` is **lock-serialized** — the worker
+    feeds interim transcripts through it from concurrent `asyncio.to_thread` calls, so its debounce
+    state must not be raced. Bespoke logic on top of the framework, not something LiveKit provides
+    out of the box.
   - `llm_router.py` — reads `OPPOSING_COUNSEL_LLM_PROVIDER` / `JUDGE_LLM_PROVIDER` env vars and
     points each agent at the correct OpenAI-compatible endpoint.
+- **Browser client** (`frontend/src/hooks/useSparringRoom.ts`): connects with the per-session token,
+  publishes the mic, and plays the agent's audio. Resilience baked in: LiveKit's built-in
+  auto-reconnect covers transient drops (surfaced as a `reconnecting` state); a **terminal
+  `Disconnected`** is surfaced and logged rather than left as a dead-but-"live"-looking view; audio
+  playback blocked by the **browser autoplay policy** exposes an "enable audio" affordance
+  (`room.startAudio()` on a user gesture) instead of the agent being silently inaudible; on unmount
+  the subscribed tracks are `detach()`-ed and room listeners removed, so repeated test sessions
+  don't leak tracks, handlers, or connections.
 
 ---
 
