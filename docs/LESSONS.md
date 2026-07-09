@@ -122,3 +122,27 @@ to work for Deepgram because that plugin's default (`DEEPGRAM_API_KEY`) happens 
 into the plugin (`elevenlabs.TTS(api_key=config.ELEVENLABS_API_KEY)`, `deepgram.STT(api_key=…)`), never
 relying on each plugin's implicit lookup. One config is the single source of truth; a plugin changing
 (or already having) a different default env-var name can't silently break us. Silero VAD needs no key.
+
+### [Agents/TLS] aiohttp "failed to connect" on macOS — python.org builds ship NO CA bundle
+**Wrong:** Read the worker's `failed to connect to deepgram` as a Deepgram problem (key, credit,
+network). The key was valid, the account had credit, and curl reached the API fine. The real cause:
+python.org macOS builds have `ssl` default `cafile=None`, so **every aiohttp TLS connection** fails
+`CERTIFICATE_VERIFY_FAILED` — which the LiveKit plugins surface as generic "failed to connect". The
+trap is asymmetric: httpx-based clients (openai, backend_client) bundle certifi and work, so LLM
+calls succeeding "proves" the network while the aiohttp-based voice plugins (Deepgram, ElevenLabs,
+LiveKit inference) all fail together.
+**Right:** When aiohttp-based things all fail to connect while httpx/curl work, suspect the CA bundle
+first — reproduce with a 5-line aiohttp GET and look for `SSLCertVerificationError`. Fix in one place:
+`os.environ.setdefault("SSL_CERT_FILE", certifi.where())` at the top of `agents/config.py` (respects
+an explicit override; certifi added to requirements). Diagnose provider errors with direct REST calls
+before blaming the provider.
+
+### [Agents/TTS] A valid ElevenLabs key is not enough — the VOICE must be usable on the plan
+**Wrong:** Assumed key-level checks proved TTS would work. The default voice id we shipped
+(`21m00Tcm4TlvDq8ikWAM`, "Rachel") is a legacy **library** voice: free-tier API synthesis against it
+fails `402 payment_required ("Free users cannot use library voices via the API")` — at *synthesis*
+time, i.e. mid-session, not at construction. Also: scoped keys (TTS-only) 401 on `/v1/user` and
+`/v1/voices`, so key-validity probes against those endpoints mislead.
+**Right:** Verify TTS with a real tiny synthesis call (`POST /v1/text-to-speech/{voice_id}` with a
+two-word body) against the exact voice + model you ship. Default to a current **premade** voice
+(config default is now "George", `JBFqnCBsd6RMkjVDRZzb` — verified 200/audio on the free tier).

@@ -104,6 +104,10 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         # (config.py) rather than relying on each plugin's implicit env-var lookup — ElevenLabs
         # otherwise looks for ELEVEN_API_KEY, not our ELEVENLABS_API_KEY (see docs/LESSONS.md).
         vad=silero.VAD.load(),
+        # Pin VAD-based interruption: the default auto-detect tries "adaptive", which connects to
+        # LiveKit Cloud inference — unavailable on our self-hosted server, so every session start
+        # burned ~5s of retries before falling back to VAD anyway.
+        turn_handling={"interruption": {"mode": "vad"}},
         stt=deepgram.STT(
             model=config.DEEPGRAM_MODEL,
             interim_results=True,
