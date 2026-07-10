@@ -65,9 +65,13 @@ def test_constants_shape():
 
 # --- new columns through the API ------------------------------------------------------------------
 
-def test_stub_user_gets_attorney_role(client, auth_headers):
+def test_first_login_bootstraps_admin(client, auth_headers):
+    # §13 UI-native bootstrap: the FIRST user to authenticate on an admin-less deployment is
+    # promoted automatically, so Court setup is a pure-UI workflow (no script ever needed).
+    # (The Phase-1 "no user silently becomes admin" rule governs the MIGRATION backfill of
+    # pre-existing rows — runtime first-login bootstrap is the deliberate exception.)
     me = client.get("/api/auth/me", headers=auth_headers).json()
-    assert me["role"] == "attorney"  # no user silently becomes admin
+    assert me["role"] == "admin"
 
 
 def test_session_creation_requires_valid_proceeding_type(client, auth_headers):

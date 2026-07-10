@@ -26,10 +26,22 @@ PLAIN_CHUNK = "Plain paragraph with no heading at all, also placeholder text."
 
 @pytest.fixture()
 def admin_headers(client, auth_headers, db_session):
-    """Log the stub user in, then EXPLICITLY promote them to admin (mirrors the operator action)."""
+    """The stub user's first login IS the admin (§13 first-login bootstrap); set explicitly anyway
+    so this fixture stays correct even if the arrangement around it changes."""
     me = client.get("/api/auth/me", headers=auth_headers).json()
     user = db_session.get(User, uuid.UUID(me["id"]))
     user.role = "admin"
+    db_session.commit()
+    return auth_headers
+
+
+@pytest.fixture()
+def attorney_headers(client, auth_headers, db_session):
+    """A NON-admin authenticated user for 403 gating tests. The first login auto-promotes (§13
+    bootstrap), so an ordinary attorney must be arranged by demoting after login."""
+    me = client.get("/api/auth/me", headers=auth_headers).json()
+    user = db_session.get(User, uuid.UUID(me["id"]))
+    user.role = "attorney"
     db_session.commit()
     return auth_headers
 
@@ -43,11 +55,11 @@ def _court(db_session, name="Seeded Court", **kwargs) -> Court:
 
 # --- admin gating -------------------------------------------------------------------------------
 
-def test_create_court_requires_auth_and_admin(client, auth_headers):
+def test_create_court_requires_auth_and_admin(client, attorney_headers):
     body = {"name": "New Court"}
     assert client.post("/api/courts", json=body).status_code == 401  # no token
     # authenticated attorney, not admin → 403 (authenticated but not authorized)
-    assert client.post("/api/courts", headers=auth_headers, json=body).status_code == 403
+    assert client.post("/api/courts", headers=attorney_headers, json=body).status_code == 403
 
 
 def test_admin_can_create_court(client, admin_headers):
@@ -61,14 +73,14 @@ def test_admin_can_create_court(client, admin_headers):
     assert resp.json()["is_active"] is True
 
 
-def test_rule_routes_are_admin_gated(client, auth_headers, db_session):
+def test_rule_routes_are_admin_gated(client, attorney_headers, db_session):
     court = _court(db_session)
     assert (
-        client.get(f"/api/courts/{court.id}/rules", headers=auth_headers).status_code == 403
+        client.get(f"/api/courts/{court.id}/rules", headers=attorney_headers).status_code == 403
     )
     resp = client.post(
         f"/api/courts/{court.id}/rules",
-        headers=auth_headers,
+        headers=attorney_headers,
         files={"file": ("r.pdf", b"%PDF-fake", "application/pdf")},
     )
     assert resp.status_code == 403

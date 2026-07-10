@@ -2042,3 +2042,44 @@ end-to-end (seed the court via `scripts/seed_court.py` with real official PDFs f
 blocks stay empty and provenance rows carry no chunk ids). Phases 7 (golden-set eval — to be
 informed by observed live flag rates) and 8 (docs incl. ARCHITECTURE §13) NOT started, per
 instruction.
+
+---
+
+### UI-native admin bootstrap: first login becomes admin — status: done
+
+**Goal:** the operator NEVER runs a script/CLI to get a working admin — the whole Court setup is
+browser-only: log in → /admin → create court → upload PDFs. First authenticated user is promoted
+to admin automatically.
+
+- [x] `auth_service.ensure_admin_bootstrap(db, user)` — promote iff NO active admin exists;
+      implemented as ONE atomic conditional UPDATE (check+promote in a single statement, aliased
+      NOT-EXISTS guard excluding soft-deleted admins), wired into `authenticate()` (stub +
+      production login) AND `register_user()` (register returns a token = a first login).
+      Race reasoning documented in the file header (chosen: atomic statement; residual
+      simultaneous-first-logins window under Postgres READ COMMITTED is benign — two admins on an
+      empty fresh install — with the pg advisory-lock upgrade path documented; identifier-only
+      audit log on promotion).
+- [x] Test ripple (stub user now becomes admin on first login): rewrote
+      `test_stub_user_gets_attorney_role` → `test_first_login_bootstraps_admin`; new
+      `attorney_headers` demotion fixture for the two 403 gating tests; new tests — first login →
+      admin via API + second user NOT promoted, guard-holds-when-admin-exists (the atomic
+      condition in isolation), soft-deleted-admin-only → promotes (no lockout), repeat-login
+      idempotency.
+- [x] `scripts/seed_court.py`: `--promote-admin` REMOVED entirely; header reframed as OPTIONAL
+      CI/headless automation tooling, explicitly pointing at the UI workflow; grants no roles.
+      Kept the name (it still accurately seeds court+rules) and kept it a thin wrapper —
+      ingestion already lives in `court_knowledge_service`, shared with the /admin upload route,
+      so no relocation was warranted. Fail-loud on empty rules dir re-verified (exit 1).
+- [x] Docs: DEVELOPER_GUIDELINES §7 bullet + CLAUDE.md note (first-login-becomes-admin;
+      Court/rule setup is pure UI via /admin, never a script).
+- [x] Admin.tsx confirmed unchanged — it keys off `user.role` only; this task changed how the
+      role is obtained, not the surface.
+- [x] Suites green throughout: **backend 68 (was 64; +4 net), agents 154, frontend 30 Vitest +
+      type-check + lint, ruff clean incl. scripts/.** No live LiveKit.
+
+**Result:** Done. The only manual step in the entire Court setup workflow is now the browser:
+log in (first login on an admin-less deployment auto-promotes, stub AND production paths) →
+/admin → create the Court → upload the official PDFs. The bootstrap can never escalate anyone
+once an active admin exists (atomic guard, tested in isolation), a soft-deleted-only-admin
+deployment can recover (tested), and the seed script survives purely as documented optional
+automation tooling with its role-granting ability removed.

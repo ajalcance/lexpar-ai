@@ -20,6 +20,10 @@ switch, not a code fork.
 **Known placeholder:** auth is currently stubbed (`admin`/`admin`, `AUTH_MODE=stub`) — must
 not touch real attorney or case data until replaced (tracked in ARCHITECTURE.md §11).
 
+**Admin bootstrap:** the first user to authenticate on an admin-less deployment is promoted to
+admin automatically (`auth_service.ensure_admin_bootstrap`) — Court/rule-document setup is a pure
+UI workflow via `/admin`, never a script (see DEVELOPER_GUIDELINES §7).
+
 **Status:** both agents (Opposing Counsel and Judge) run through Fireworks AI until the AMD
 Developer Cloud droplet exists.
 

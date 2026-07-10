@@ -1,20 +1,25 @@
 """
 File: scripts/seed_court.py
-Purpose: Seed the Court record and ingest OPERATOR-SUPPLIED official rule documents (§13).
-    Reads PDFs from seed_data/court_rules/ (gitignored — the operator places real, officially
-    sourced documents there; nothing ships in the repo) and runs the real ingestion pipeline
-    (extract → chunk → embed → persist). FAILS LOUDLY when the folder is missing or empty —
-    it NEVER falls back to generated or synthesized rule text, by design (§13 hard constraint).
+Purpose: OPTIONAL automation tooling (CI / headless deployments ONLY — this is NOT the operator
+    workflow). The normal path is pure UI and needs no script, ever: the FIRST user to log in is
+    promoted to admin automatically (app/services/auth_service.py ensure_admin_bootstrap), then
+    creates the Court and uploads the official rule PDFs at /admin. This script exists solely so
+    an automated environment can do the same headlessly: it seeds the Court record and runs the
+    real ingestion pipeline (extract → chunk → embed → persist) over PDFs the automation placed
+    in seed_data/court_rules/ (gitignored; nothing ships in the repo). It is a thin wrapper —
+    ingestion itself lives in court_knowledge_service and is the same code the /admin upload
+    route runs. FAILS LOUDLY when the folder is missing or empty — it NEVER falls back to
+    generated or synthesized rule text, by design (§13 hard constraint).
 Depends on: backend app (SessionLocal, models, court services); a reachable database
     (alembic upgrade head applied) and FIREWORKS_API_KEY for embeddings.
-Related: backend/app/services/court_knowledge_service.py, docs/ARCHITECTURE.md §13
-Security notes: Promoting a user to admin (--promote-admin) is an explicit operator action —
-    this script never makes anyone admin implicitly.
+Related: backend/app/services/{auth_service,court_knowledge_service}.py,
+    frontend/src/pages/Admin.tsx (the actual operator workflow), docs/ARCHITECTURE.md §13
+Security notes: This script grants no roles — admin access comes only from the first-login
+    bootstrap (or explicit DB action). It only creates court/rule records.
 
-Usage:
+Usage (automation only):
     python scripts/seed_court.py [--name "<court name>"] [--jurisdiction "<description>"]
                                  [--rules-dir seed_data/court_rules]
-                                 [--promote-admin someone@example.com]
 
 Optional per-file provenance: put a manifest.json in the rules dir mapping filename →
     {"title": ..., "source_citation": ..., "source_reference": ...}. Files without an entry are
@@ -73,12 +78,6 @@ def main() -> None:
     parser.add_argument("--name", default=DEFAULT_COURT_NAME)
     parser.add_argument("--jurisdiction", default=DEFAULT_JURISDICTION)
     parser.add_argument("--rules-dir", default=str(REPO_ROOT / "seed_data" / "court_rules"))
-    parser.add_argument(
-        "--promote-admin",
-        metavar="EMAIL",
-        default=None,
-        help="Explicitly promote this existing user to the admin role (operator action).",
-    )
     args = parser.parse_args()
 
     rules_dir = Path(args.rules_dir)
@@ -91,20 +90,11 @@ def main() -> None:
 
     from app.db import SessionLocal
     from app.models.court import Court
-    from app.models.user import User
     from app.services import court_knowledge_service, storage_service
 
     manifest = _load_manifest(rules_dir)
     db = SessionLocal()
     try:
-        if args.promote_admin:
-            user = db.scalar(select(User).where(User.email == args.promote_admin.lower()))
-            if user is None:
-                sys.exit(f"ERROR: no user with email {args.promote_admin!r} to promote.")
-            user.role = "admin"
-            db.commit()
-            print(f"Promoted {user.email} to admin.")
-
         # Idempotent: reuse the court if a previous seed created it.
         court = db.scalar(select(Court).where(Court.name == args.name))
         if court is None:

@@ -129,6 +129,13 @@ week has to be undone to build one later.
   Log identifiers (`case_id`, `session_id`), not content.
 - Least privilege: API keys and DB roles scoped to what a service actually needs, not broad
   admin credentials reused everywhere.
+- **Admin bootstrap is first-login, UI-native (§13):** on a deployment with no active admin, the
+  FIRST user to authenticate (login or register) is promoted to admin automatically — one atomic
+  conditional UPDATE in `auth_service.ensure_admin_bootstrap`, a no-op forever after the first
+  active admin exists (it can never escalate anyone on a bootstrapped deployment). Consequence:
+  **Court and rule-document setup is a pure UI workflow** — log in → `/admin` → create the Court →
+  upload the official PDFs. No script or CLI is ever part of the normal operator path
+  (`scripts/seed_court.py` remains only as optional CI/headless-automation tooling).
 - Design sensitive columns (`cases.case_facts`, `transcripts.content`) as if field-level
   encryption is coming — don't build anything that would make adding it later a schema
   migration nightmare (e.g., don't scatter raw text access across a dozen unrelated queries).
