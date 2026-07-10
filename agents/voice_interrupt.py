@@ -3,8 +3,13 @@ File: agents/voice_interrupt.py
 Purpose: The LiveKit-free glue between the objection classifier and the audio session, so the
     "fire → barge in" wiring is unit-testable without a live room. `handle_interim` takes a
     duck-typed session (anything with async `interrupt()` and `say()`), runs the classifier on a
-    transcript fragment off the event loop, and on a fire decision interrupts and speaks a short
-    objection immediately.
+    transcript fragment off the event loop, and on a fire decision: records the objection into the
+    session ledger + appends a `was_interruption` barge-in turn (so the record and the saved
+    transcript reflect it), interrupts and speaks the short objection line, publishes the structured
+    objection event on the data channel (injected `publish`, Gap 3), and drives the inline Judge
+    (injected `judge_rule`) — gating the ruling's audio behind a `wait_for_clear` awaitable so a
+    fast ruling on the judge's own track never talks over the still-playing objection line. Stays
+    livekit-free: every LiveKit-touching action is an injected callable.
 Depends on: asyncio; agents/objection_classifier.py (no livekit import)
 Related: agents/main.py (wires this into the real AgentSession), docs/ARCHITECTURE.md §6
 Security notes: Operates on live transcript fragments (work product) in memory only; the objection

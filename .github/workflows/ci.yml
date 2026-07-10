@@ -37,8 +37,10 @@ jobs:
       - run: ruff check .
       - run: pytest
 
-  # Only the no-key modules (session_state, verification) are implemented + tested here; the
-  # LLM/STT/TTS pipeline files stay skeletons and are not imported by the tests.
+  # The agent logic is fully implemented and covered by the offline suite (110+ tests: session
+  # state, verification, streaming pipeline, objection classifier, judge assessment/inline rulings,
+  # scorecard builder, the livekit-free voice/judge glue). Live Fireworks and the heavy voice deps
+  # (requirements-voice.txt) are excluded here — see the `pytest -m "not live"` step below.
   agents:
     runs-on: ubuntu-latest
     defaults:

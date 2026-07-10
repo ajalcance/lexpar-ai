@@ -39,7 +39,11 @@ class LlmEndpoint:
     model: str
 
 
-def _api_key(provider: str) -> str:
+def api_key_for(provider: str) -> str:
+    """The API key for a provider: the Fireworks key for `fireworks`, else the self-hosted key.
+    Public so callers that build their own OpenAI-compatible client (e.g. the LiveKit voice
+    pipeline's base LLM) resolve the key the same way — keeping the Fireworks↔vLLM switch a pure
+    config change (ARCHITECTURE §10.5)."""
     if provider == "fireworks":
         return config.FIREWORKS_API_KEY or "EMPTY"
     return config.SELF_HOSTED_API_KEY
@@ -75,7 +79,7 @@ def objection_config() -> LlmConfig:
 
 def build_endpoint(cfg: LlmConfig) -> LlmEndpoint:
     """Construct an OpenAI-compatible client for the given routing (no network call here)."""
-    client = OpenAI(base_url=cfg.endpoint, api_key=_api_key(cfg.provider))
+    client = OpenAI(base_url=cfg.endpoint, api_key=api_key_for(cfg.provider))
     return LlmEndpoint(client=client, model=cfg.model)
 
 

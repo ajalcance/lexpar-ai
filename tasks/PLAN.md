@@ -1735,3 +1735,42 @@ LLM extracted parties/claims/dates correctly and cosine retrieval returned the r
 **Tests: backend 38, agents 122 offline + live smoke, frontend 23; ruff + type-check + build clean.**
 **Docs:** ARCHITECTURE §12 + LESSONS (passlib/bcrypt). **⚠️ Needs live infra:** full upload→MinIO→
 ingest round-trip and retrieval quality in a live sparring session; the no-audio confirmation.
+
+---
+
+### Post-audit doc/header/config cleanup + inert cutover-key fix — status: done
+
+Follow-up to the 2026-07-10 consistency audit. All items are documentation/header drift or a
+currently-inert config footgun — **no runtime behavior changes on `main` today**. Explicitly NOT
+touching judge-participant logic (`judge_participant.py`, `judge_voice.py`, `activeSpeaker.ts`,
+`useSparringRoom.ts` — audit confirmed correct), AUTH_MODE, PR #8, infra compose, or Dockerfiles.
+
+**Phase 1 — doc/header fixes (no code behavior change):**
+- [x] `agents/main.py` header `Depends on:` — added `backend_client`, `scorecard_builder`,
+      `judge_participant` (JudgeParticipant), `judge_voice` (JudgeVoice), and `llm_router`.
+- [x] `agents/judge.py` header — now lists `quick_ruling` as a third API-calling entry point.
+- [x] `agents/voice_interrupt.py` top-of-file Purpose — now mentions ledger recording, the barge-in
+      turn, the data-event publish, and driving `judge_rule` via the `wait_for_clear` gate.
+- [x] `.github/workflows/ci.yml` — replaced the stale skeleton comment with an accurate description
+      of the offline suite's coverage.
+- [x] `.env.example` + ARCHITECTURE §9 — documented `SELF_HOSTED_API_KEY`; also fixed the §10.5
+      Step-0 reference (`llm_router._api_key()` → `api_key_for()`).
+
+**Phase 2 — one real fix (inert today, footgun for the MI300X cutover):**
+- [x] `agents/llm_router.py` — promoted `_api_key` → public `api_key_for(provider)` with a
+      docstring; `build_endpoint` updated to use it.
+- [x] `agents/main.py` base-LLM — `api_key=llm_router.api_key_for(config.OPPOSING_COUNSEL_PROVIDER)`
+      (was hardcoded `config.FIREWORKS_API_KEY`); added `import llm_router`.
+- [x] Re-ran offline agent suite + ruff — **119 offline pass, 9 live deselected, ruff clean.**
+
+**Result:** Done. All five Phase-1 doc/header fixes applied (three agent file headers, the CI
+comment, and `SELF_HOSTED_API_KEY` in both `.env.example` and ARCHITECTURE §9, plus the §10.5
+runbook reference). Phase 2: `llm_router._api_key` promoted to a public `api_key_for(provider)`
+(both `build_endpoint` and the voice pipeline's base LLM in `main.py` now resolve the key the same
+way), so the OC base-LLM object is no longer pinned to the Fireworks key — a `self_hosted` cutover is
+now a pure config switch for it too (still inert on `main`: `OpposingCounselAgent.llm_node` overrides
+generation, so no runtime behavior changed today). **Tests: 119 offline pass (incl. `test_llm_router`,
+which covers the rename), 9 live deselected; ruff clean.** No live room used (per instruction — a
+judge-participant live test is running in parallel). No LESSONS entry — the changes were mechanical
+and nothing non-obvious surfaced. **Untouched as instructed:** judge-participant/judge-voice logic,
+`activeSpeaker.ts`, `useSparringRoom.ts`, AUTH_MODE, PR #8, infra compose, Dockerfiles.

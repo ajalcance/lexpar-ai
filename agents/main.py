@@ -9,8 +9,9 @@ Purpose: The real LiveKit Agents worker (ARCHITECTURE §6). Joins a session's ro
     "fire" decision, barges in: it interrupts the in-progress turn and Opposing Counsel objects
     immediately (LiveKit's built-in interruption). opposing_counsel.py / judge.py / verification.py
     are used through streaming_verify — this file only connects the audio layer around them.
-Depends on: livekit-agents + plugins (see requirements-voice.txt); config, judge,
-    streaming_verify, objection_classifier, session_state, voice_interrupt
+Depends on: livekit-agents + plugins (see requirements-voice.txt); config, judge, llm_router,
+    streaming_verify, objection_classifier, session_state, voice_interrupt, backend_client,
+    scorecard_builder, judge_participant (JudgeParticipant), judge_voice (JudgeVoice)
 Related: backend/app/api/livekit_token.py (issues the room token), agents/voice_interrupt.py,
     docs/ARCHITECTURE.md §6 / §6.5 / §10
 Security notes: Handles live attorney audio + transcripts (work product). Never log raw transcript
@@ -42,6 +43,7 @@ from livekit.plugins import deepgram, elevenlabs, openai, silero
 import backend_client
 import config
 import judge
+import llm_router
 import opposing_counsel
 import scorecard_builder
 from judge_participant import JudgeParticipant
@@ -185,11 +187,14 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             interim_results=True,
             api_key=config.DEEPGRAM_API_KEY,
         ),
-        # The pipeline requires an llm; OpposingCounselAgent.llm_node overrides how it is used.
+        # The pipeline requires an llm; OpposingCounselAgent.llm_node overrides how it is used, so
+        # this base client isn't actually driven today. Resolve its key the SAME way llm_router does
+        # (api_key_for the provider) rather than hardcoding the Fireworks key — so a self_hosted
+        # cutover (§10.5) stays a pure config switch for this object too, not a code change.
         llm=openai.LLM(
             model=config.OPPOSING_COUNSEL_MODEL,
             base_url=config.OPPOSING_COUNSEL_ENDPOINT,
-            api_key=config.FIREWORKS_API_KEY,
+            api_key=llm_router.api_key_for(config.OPPOSING_COUNSEL_PROVIDER),
         ),
         tts=StreamAdapter(tts=eleven_tts),
     )

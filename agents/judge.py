@@ -2,12 +2,13 @@
 File: agents/judge.py
 Purpose: The Judge agent. Loads its persona prompt from prompts/judge.md, assembles the session
     context (case facts + established facts + objection ledger) from SessionState, and generates
-    judicial output. Two entry points, both structured JSON so the text comes back clean:
-    generate_ruling (a single spoken ruling, used mid-session/harness) and assess_session (the
-    end-of-session pass — rules on every pending objection, extracts the facts the attorney
-    established, and gives a closing ruling, all in one call so the scorecard reflects what actually
-    happened). Message assembly + parsing are pure; only the *_ruling / assess_session calls hit the
-    API.
+    judicial output. Three API-calling entry points, all structured JSON so the text comes back
+    clean: generate_ruling (a single spoken ruling, used mid-session/harness); quick_ruling (the
+    inline sustained/overruled call the Judge speaks right after an objection barges in, §6.5); and
+    assess_session (the end-of-session pass — rules on every pending objection, extracts the facts
+    the attorney established, and gives a closing ruling, all in one call so the scorecard reflects
+    what actually happened). Message assembly + parsing are pure; only the *_ruling / quick_ruling /
+    assess_session calls hit the API.
 Depends on: json; agents/llm_router.py, agents/session_state.py, prompts/judge.md
 Related: agents/opposing_counsel.py, agents/main.py, agents/scorecard_builder.py,
     backend/app/models/scorecard.py, docs/ARCHITECTURE.md §6 / §6.5 / §7
