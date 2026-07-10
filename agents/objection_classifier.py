@@ -41,9 +41,79 @@ from dataclasses import dataclass
 from llm_router import build_endpoint, chat, objection_config
 from session_state import SessionState
 
-# Objection taxonomy the classifier may return. The gate detects the first four heuristically;
-# `assumes_facts` is left to the LLM (hard to spot with regex) when other candidates are present.
-OBJECTION_TYPES = ("leading", "hearsay", "speculation", "argumentative", "assumes_facts")
+# Objection taxonomy the classifier may return (ARCHITECTURE §13). The regex gate detects
+# leading/hearsay/speculation/argumentative heuristically; `assumes_facts`,
+# `mischaracterizes_record`, and `calls_for_legal_conclusion` are LLM-judged (context-dependent,
+# not reliably regex-detectable); `relevance` likewise (what is relevant depends on the issues).
+OBJECTION_TYPES = (
+    "leading",
+    "hearsay",
+    "speculation",
+    "argumentative",
+    "assumes_facts",
+    "relevance",
+    "mischaracterizes_record",
+    "calls_for_legal_conclusion",
+)
+
+# Which objection grounds are ELIGIBLE per proceeding type (§13). Keys MUST match
+# backend/app/models/session.py PROCEEDING_TYPES (separate package, no shared import — the
+# cross-reference is deliberate). Wired into the gate tiers + LLM stage in Phase 4; until then
+# this is the declared taxonomy the docs/tests pin down.
+#
+# Procedural reasoning (decided, not guessed):
+# - The witness-testimony grounds — `leading` (suggesting the answer to a witness), `hearsay`
+#   (an out-of-court statement offered through a witness), `speculation` (testimony without
+#   personal knowledge) — presuppose a WITNESS answering questions. In `oral_argument` and
+#   `motion_hearing` (counsel argues to the bench; no witness is being examined) there is no one
+#   to lead and no testimony to be hearsay, so none of the three is eligible. This is exactly the
+#   mismatch the grounding audit flagged: the recall gate's trailing-"?" pattern fires `leading`
+#   on argument-shaped speech, where the objection is procedurally incoherent.
+# - `leading` is eligible ONLY on `direct_examination`: leading questions are generally PERMITTED
+#   on cross-examination, so it is excluded from `cross_examination` too.
+# - `argumentative` targets badgering/argument-disguised-as-question during EXAMINATION of a
+#   witness; argument itself is supposed to be argumentative, so it is excluded from the two
+#   argument-shaped types.
+# - The argument-appropriate grounds: `relevance` (straying outside the issues), `assumes_facts` /
+#   `mischaracterizes_record` (asserting facts not in, or misstating, the record), and
+#   `calls_for_legal_conclusion`. The last carries a dual reading, documented deliberately: in
+#   examinations it takes its classic meaning (a question improperly asking the witness for a
+#   legal conclusion); in argument it targets counsel urging the court to adopt a conclusion with
+#   no grounding in the record or cited authority — useful sparring feedback even though pure
+#   legal argument is of course proper in argument. All four apply everywhere.
+PROCEEDING_ELIGIBLE_GROUNDS: dict[str, tuple[str, ...]] = {
+    "oral_argument": (
+        "relevance",
+        "assumes_facts",
+        "mischaracterizes_record",
+        "calls_for_legal_conclusion",
+    ),
+    "direct_examination": (
+        "leading",
+        "hearsay",
+        "speculation",
+        "argumentative",
+        "assumes_facts",
+        "relevance",
+        "mischaracterizes_record",
+        "calls_for_legal_conclusion",
+    ),
+    "cross_examination": (
+        "hearsay",
+        "speculation",
+        "argumentative",
+        "assumes_facts",
+        "relevance",
+        "mischaracterizes_record",
+        "calls_for_legal_conclusion",
+    ),
+    "motion_hearing": (
+        "relevance",
+        "assumes_facts",
+        "mischaracterizes_record",
+        "calls_for_legal_conclusion",
+    ),
+}
 
 # Recall-biased phrasing gates. Broad on purpose — the LLM is the judgment layer.
 _GATE_PATTERNS: dict[str, list[str]] = {

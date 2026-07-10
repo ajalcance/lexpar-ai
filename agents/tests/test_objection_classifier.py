@@ -350,3 +350,40 @@ def test_review_log_off_by_default():
     )
     classifier.consider("The contract was signed on March 3.")
     assert classifier.records == []
+
+
+# --- §13: taxonomy expansion + proceeding-type eligibility mapping (constants; wiring = Phase 4) --
+
+def test_taxonomy_includes_argument_grounds():
+    for ground in ("relevance", "mischaracterizes_record", "calls_for_legal_conclusion"):
+        assert ground in oc.OBJECTION_TYPES
+    # the original five remain
+    for ground in ("leading", "hearsay", "speculation", "argumentative", "assumes_facts"):
+        assert ground in oc.OBJECTION_TYPES
+
+
+def test_eligible_grounds_cover_every_proceeding_type_and_only_known_grounds():
+    # Keys must match backend/app/models/session.py PROCEEDING_TYPES (no shared import — pinned).
+    assert set(oc.PROCEEDING_ELIGIBLE_GROUNDS) == {
+        "oral_argument",
+        "direct_examination",
+        "cross_examination",
+        "motion_hearing",
+    }
+    for grounds in oc.PROCEEDING_ELIGIBLE_GROUNDS.values():
+        assert grounds  # no proceeding type is left with zero eligible grounds
+        assert set(grounds) <= set(oc.OBJECTION_TYPES)
+
+
+def test_witness_grounds_not_eligible_in_argument_proceedings():
+    # The audit-flagged mismatch: no witness in argument → leading/hearsay/speculation
+    # are procedurally incoherent there.
+    for proceeding in ("oral_argument", "motion_hearing"):
+        grounds = set(oc.PROCEEDING_ELIGIBLE_GROUNDS[proceeding])
+        assert not grounds & {"leading", "hearsay", "speculation", "argumentative"}
+
+
+def test_leading_eligible_only_on_direct_examination():
+    assert "leading" in oc.PROCEEDING_ELIGIBLE_GROUNDS["direct_examination"]
+    # Leading questions are generally permitted on cross — not an eligible ground there.
+    assert "leading" not in oc.PROCEEDING_ELIGIBLE_GROUNDS["cross_examination"]

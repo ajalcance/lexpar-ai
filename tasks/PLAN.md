@@ -1774,3 +1774,98 @@ which covers the rename), 9 live deselected; ruff clean.** No live room used (pe
 judge-participant live test is running in parallel). No LESSONS entry — the changes were mechanical
 and nothing non-obvious surfaced. **Untouched as instructed:** judge-participant/judge-voice logic,
 `activeSpeaker.ts`, `useSparringRoom.ts`, AUTH_MODE, PR #8, infra compose, Dockerfiles.
+
+---
+
+### Court & Procedural Rules Grounding + Enterprise Hardening — status: Phase 1 done (checkpoint), Phases 2-8 not started
+
+**Why:** the grounding audit (2026-07-10) established the agents have ZERO engineered procedural
+grounding — no rules corpus, no jurisdiction prompt; all grounding is the uploaded pleading.
+This build adds a Court/rules corpus, dual-corpus retrieval, proceeding-type-aware objections,
+and citation provenance. **HARD CONSTRAINT: no statutory/procedural rule text is ever generated,
+paraphrased, or invented anywhere in this codebase** — ingestion is generic over operator-supplied
+official documents; seed scripts fail loudly on missing input, never fall back to synthesized text.
+
+**Resumability rule:** each phase = implement → tests green → commit → Result note HERE, so a
+future session knows exactly what is done vs. not started. **Hard stop after Phase 1** (schema
+checkpoint — report the exact schema before Phase 2).
+
+**Phase plan (full):**
+1. **Data model** — `Court`, `CourtRuleDocument`, `CourtRuleChunk` (portable types: `Uuid`,
+   Python defaults, JSON embeddings — LESSONS/SQLite-CI pattern); `cases.court_id` (FK, nullable
+   at DB), `sessions.proceeding_type` (oral_argument | direct_examination | cross_examination |
+   motion_hearing; existing rows → oral_argument), `users.role` (attorney default | admin; all
+   existing rows explicitly attorney). Alembic `0003`. Objection-taxonomy expansion
+   (`relevance`, `mischaracterizes_record`, `calls_for_legal_conclusion`) +
+   `PROCEEDING_ELIGIBLE_GROUNDS` mapping (constants only — wiring is Phase 4). Update the two
+   schema-coupled fixtures (`test_agent_routes.py:104`, `test_case_knowledge.py:55-85`); leave
+   every free-text "Rivera" harness/fixture untouched.
+2. **Ingestion + admin gating** — `court_knowledge_service.py` (extract→chunk→embed→persist,
+   reusing the §12 pipeline pieces), admin-only `POST /api/courts` + `POST /api/courts/{id}/rules`
+   (new `require_admin` dependency), attorney-readable `GET /api/courts`, `scripts/seed_court.py`
+   reading operator-supplied files from `seed_data/court_rules/` (gitignored; loud failure if
+   empty, pointing at official sources only).
+3. **Dual-corpus retrieval (agents)** — `court_id` into SessionState via the context route;
+   court-passage retrieval (cosine, scoped by court_id); **fix the Judge's missing RAG** (audit
+   bug) — pleading retrieval into quick_ruling/generate_ruling/assess_session; court-rules
+   retrieval into those three + OC stream_reply + classifier tier-3; prompts carry two SEPARATE
+   blocks (`RELEVANT PLEADING EXCERPTS:` / `RELEVANT PROCEDURAL RULES:`).
+4. **Proceeding-type-aware classifier** — session creation requires proceeding_type (backend +
+   frontend); eligible-grounds filtering at ALL tiers (ineligible grounds never reach the LLM);
+   regex for new grounds where confidently detectable; update both persona `.md` "Inputs"
+   sections (already stale per audit).
+5. **Citation grounding** — citation-shaped token extraction from OC/Judge output; cross-check
+   against the chunks actually in that turn's prompt; structured warning log (flag, don't
+   rewrite); `RulingProvenance` table persisted per ruling.
+6. **Frontend** — Court selector (case create), Proceeding Type selector (session create),
+   citation-grounding indicator on scorecard, minimal admin UI (role-gated both ends).
+7. **Testing** — standard pytest for all new pieces + a golden-set legal-reasoning eval
+   (~15-20 labeled statements, precision/recall, `@pytest.mark.live`), documented in docs/EVALS.md.
+8. **Docs** — ARCHITECTURE §13, persona-prompt accuracy check, LESSONS (only if genuinely earned),
+   every phase's Result note present.
+
+**Phase 1 checklist:**
+- [x] Models: `court.py` (Court), `court_rule.py` (CourtRuleDocument, CourtRuleChunk;
+      `section_reference` nullable — extracted only when confidently parseable, else NULL);
+      decided AGAINST `# SENSITIVE` on rule text (public official law, not privileged work
+      product — tagging would dilute the tag's grep-value; reasoning in the file header).
+- [x] Column adds: `cases.court_id` (nullable FK), `sessions.proceeding_type` (String, default
+      oral_argument), `users.role` (String, default attorney). String + code constants, not
+      sa.Enum — matches house style (session.status), portable across SQLite/Postgres.
+- [x] Alembic `0003_court_grounding` (backfills: proceeding_type=oral_argument,
+      role=attorney explicitly; no existing user becomes admin).
+- [x] Pydantic: CaseCreate gains `court_id` **optional in Phase 1** (validated-if-present;
+      DEVIATION from spec's "required" — the UI cannot supply a court until Phases 2+6 exist, and
+      requiring it now breaks live case creation, violating "do not regress"; flips to required
+      with Phase 6). CaseOut + court_id; SessionOut + proceeding_type; UserOut + role.
+- [x] `case_service.create_case` accepts court_id, 422 on unknown/inactive court.
+- [x] `objection_classifier.py`: OBJECTION_TYPES + 3 new grounds; `PROCEEDING_ELIGIBLE_GROUNDS`
+      with documented procedural reasoning (leading: direct-only; leading/hearsay NOT eligible in
+      oral_argument — the audit-flagged mismatch).
+- [x] Tests: new backend court-model/API coverage; updated the two named fixtures; agents
+      taxonomy/mapping tests. Full offline suites + ruff green.
+- [x] Commit; Result note; **STOP — report exact schema before Phase 2.**
+
+**Phase 1 Result:** Done, tested, committed. **New tables** — `courts` (id Uuid PK, name String
+NOT NULL, jurisdiction_description Text NULL, is_active Bool NOT NULL def True, created_at,
+deleted_at); `court_rule_documents` (id, court_id FK→courts idx, title String NOT NULL,
+source_citation String NULL, source_reference String NULL, storage_path String NOT NULL,
+ingestion_status String NOT NULL def 'pending', error Text NULL, chunk_count Int NOT NULL def 0,
+uploaded_by_user_id FK→users NULL, created_at, deleted_at); `court_rule_chunks` (id,
+court_rule_document_id FK idx, court_id FK idx denormalized, chunk_index Int, chunk_text Text,
+embedding JSON, section_reference String NULL, created_at). **Column adds** — cases.court_id
+(Uuid FK NULL idx); sessions.proceeding_type (String NOT NULL def 'oral_argument'; enum-in-code
+PROCEEDING_TYPES = oral_argument|direct_examination|cross_examination|motion_hearing); users.role
+(String NOT NULL def 'attorney'; USER_ROLES = attorney|admin). Alembic `0003_court_grounding`
+backfills both. **Taxonomy** — OBJECTION_TYPES now 8 grounds (+relevance,
+mischaracterizes_record, calls_for_legal_conclusion); PROCEEDING_ELIGIBLE_GROUNDS mapping with
+documented reasoning: witness grounds (leading/hearsay/speculation/argumentative) excluded from
+oral_argument + motion_hearing; leading eligible ONLY on direct (permitted on cross);
+the four argument-appropriate grounds eligible everywhere. Constants only — gate/LLM wiring is
+Phase 4. **API deviations flagged:** CaseCreate.court_id optional (validated-if-present, 422 on
+unknown/inactive) until the UI can supply it — spec said required, but that would break live case
+creation before Phases 2/6 exist. SessionCreate untouched (proceeding_type defaults; required at
+creation in Phase 4 per plan). **Tests: backend 46 (was 38; +8 incl. the two updated fixtures),
+agents 126 offline (was 122; +4 taxonomy/mapping), ruff clean both.** **No-fabrication check
+passed:** diff greped — no statutory/rule text anywhere; the only citation-shaped string is the
+spec's own `source_citation` field example. Frontend untouched.

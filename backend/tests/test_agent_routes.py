@@ -100,13 +100,23 @@ def test_full_session_end_then_user_reads_scorecard_and_transcript(client, auth_
     assert session["transcripts"][1]["was_interruption"] is True
 
 
-def test_context_route_returns_case_facts_for_agent(client, auth_headers):
+def test_context_route_returns_case_facts_for_agent(client, auth_headers, db_session):
+    # §13: cases now carry the forum whose rules ground them — create one and reference it.
+    import uuid as _uuid
+
+    from app.models.court import Court
+
+    court = Court(id=_uuid.uuid4(), name="Test Court")
+    db_session.add(court)
+    db_session.commit()
+
     facts = "Wrongful-termination retaliation claim."
     case = client.post(
         "/api/cases",
         headers=auth_headers,
-        json={"title": "Rivera v. Coastal", "case_facts": facts},
+        json={"title": "Rivera v. Coastal", "case_facts": facts, "court_id": str(court.id)},
     ).json()
+    assert case["court_id"] == str(court.id)
     session = client.post(
         "/api/sessions", headers=auth_headers, json={"case_id": case["id"]}
     ).json()

@@ -34,6 +34,9 @@ class SessionOut(BaseModel):
     id: uuid.UUID
     case_id: uuid.UUID
     status: str
+    # §13: which proceeding is being rehearsed. Creation input stays optional until the frontend
+    # selector lands (Phase 4 makes it required at creation); the model defaults it meanwhile.
+    proceeding_type: str
     llm_backend_used: str | None = None
     started_at: datetime
     ended_at: datetime | None = None

@@ -22,6 +22,12 @@ class Case(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    # The forum whose procedural rules ground this case's sessions (ARCHITECTURE §13). Nullable
+    # at the DB level for migration safety (pre-§13 rows have no court); new case creation
+    # supplies it once the Court catalog + selector exist (Phases 2/6).
+    court_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("courts.id"), nullable=True, index=True
+    )
     title: Mapped[str] = mapped_column(String, nullable=False)
     # SENSITIVE: attorney work product — never log in plaintext.
     case_facts: Mapped[str | None] = mapped_column(Text, nullable=True)

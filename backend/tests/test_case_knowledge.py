@@ -9,6 +9,7 @@ Depends on: pytest, app.services.{document,embedding,case_knowledge}_service, Te
 import uuid
 
 from app.models.case import Case
+from app.models.court import Court
 from app.services import case_knowledge_service, document_service, embedding_service
 
 AGENT = {"X-Agent-Token": "test-agent-token"}
@@ -52,7 +53,10 @@ def _keyword_embedder(keywords):
 
 
 def _seed_case(db_session):
-    case = Case(id=uuid.uuid4(), user_id=uuid.uuid4(), title="Rivera v. Coastal")
+    # §13: cases now reference the forum whose rules ground them.
+    court = Court(id=uuid.uuid4(), name="Test Court")
+    db_session.add(court)
+    case = Case(id=uuid.uuid4(), user_id=uuid.uuid4(), title="Rivera v. Coastal", court_id=court.id)
     db_session.add(case)
     db_session.commit()
     return case

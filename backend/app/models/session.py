@@ -17,6 +17,18 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db import Base
 from app.models.transcript import Transcript
 
+# Proceeding types (ARCHITECTURE §13). Plain strings + code-level constants, not sa.Enum —
+# matches the house pattern for sessions.status and stays portable across Postgres/SQLite.
+# MUST stay in sync with agents/objection_classifier.py PROCEEDING_ELIGIBLE_GROUNDS keys
+# (agents is a separate package with no shared import; the cross-reference is deliberate).
+PROCEEDING_TYPES = (
+    "oral_argument",
+    "direct_examination",
+    "cross_examination",
+    "motion_hearing",
+)
+DEFAULT_PROCEEDING_TYPE = "oral_argument"
+
 
 class Session(Base):
     __tablename__ = "sessions"
@@ -25,6 +37,12 @@ class Session(Base):
     case_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("cases.id"), nullable=False)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default="in_progress")
+    # What kind of proceeding is being rehearsed (§13) — drives which objection grounds are
+    # eligible (agents PROCEEDING_ELIGIBLE_GROUNDS). Existing rows were backfilled to
+    # oral_argument in migration 0003 (matches the scripted-mock history of this codebase).
+    proceeding_type: Mapped[str] = mapped_column(
+        String, nullable=False, default=DEFAULT_PROCEEDING_TYPE
+    )
     llm_backend_used: Mapped[str | None] = mapped_column(String, nullable=True)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)

@@ -7,6 +7,8 @@ Related: app/db.py (Base), alembic/env.py, tests/conftest.py
 
 from app.models.case import Case
 from app.models.case_document import CaseChunk, CaseDocument
+from app.models.court import Court
+from app.models.court_rule import CourtRuleChunk, CourtRuleDocument
 from app.models.scorecard import Scorecard
 from app.models.session import Session
 from app.models.transcript import Transcript
@@ -17,6 +19,9 @@ __all__ = [
     "Case",
     "CaseDocument",
     "CaseChunk",
+    "Court",
+    "CourtRuleDocument",
+    "CourtRuleChunk",
     "Session",
     "Transcript",
     "Scorecard",

@@ -15,12 +15,33 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
 from app.models.case import Case
+from app.models.court import Court
 from app.models.user import User
 from app.schemas.case import CaseCreate
 
 
 def create_case(db: DbSession, user: User, data: CaseCreate) -> Case:
-    case = Case(user_id=user.id, title=data.title, case_facts=data.case_facts)
+    # §13: when a court is named it must be a real, active one — a case grounded in a
+    # nonexistent/retired forum would silently produce ungrounded sessions later.
+    if data.court_id is not None:
+        court = db.scalar(
+            select(Court).where(
+                Court.id == data.court_id,
+                Court.is_active.is_(True),
+                Court.deleted_at.is_(None),
+            )
+        )
+        if court is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Unknown or inactive court.",
+            )
+    case = Case(
+        user_id=user.id,
+        title=data.title,
+        case_facts=data.case_facts,
+        court_id=data.court_id,
+    )
     db.add(case)
     db.commit()
     db.refresh(case)

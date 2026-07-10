@@ -15,6 +15,11 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
 
+# User roles (ARCHITECTURE §13). Strings + constants, not sa.Enum (portable, house style).
+# `admin` gates the court/rule-corpus management routes (Phase 2) — never a default.
+USER_ROLES = ("attorney", "admin")
+DEFAULT_USER_ROLE = "attorney"
+
 
 class User(Base):
     __tablename__ = "users"
@@ -23,6 +28,9 @@ class User(Base):
     email: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     full_name: Mapped[str | None] = mapped_column(String, nullable=True)
     password_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    # 'attorney' (default) | 'admin'. Migration 0003 set ALL pre-existing rows to attorney
+    # explicitly — no user silently becomes admin; promotion is a deliberate operator action.
+    role: Mapped[str] = mapped_column(String, nullable=False, default=DEFAULT_USER_ROLE)
     firm_name: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
