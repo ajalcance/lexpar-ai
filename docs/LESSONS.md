@@ -294,3 +294,24 @@ runtime with the installed bcrypt.
 password to 72 bytes yourself (bcrypt's inherent limit — standard practice). One thin
 `security_password.py` wrapper, no passlib. When a "convenience" wrapper lib pins an old release,
 check it against the actually-installed backend version before adopting it.
+
+### [Frontend/LiveKit] Attach already-subscribed tracks — a subscribed-but-unattached track is silent yet still "speaking"
+**Wrong:** Attached remote audio ONLY from the `RoomEvent.TrackSubscribed` handler, which was
+registered AFTER `await room.connect()`. autoSubscribe delivers tracks that were already published
+when the browser connects (the agent / judge participant are usually in the room first) DURING
+`connect()`, so `TrackSubscribed` fires before the listener exists — those tracks (Opposing Counsel
+especially) were never `track.attach()`-ed to an `<audio>` element and played **silently**. The trap
+is what still worked: the visualizer's `AnalyserNode` reads the subscribed track's `mediaStreamTrack`
+directly, and `ActiveSpeakersChanged` is computed server-side from the published audio — BOTH
+independent of the `<audio>` element — so the equalizer bars moved and the "X speaking" badge showed
+while the user heard nothing, and no autoplay "enable audio" banner appeared (playback never got as
+far as being blocked). It reads exactly like a TTS bug but the audio was reaching the client fine.
+**Right:** Either register `TrackSubscribed` BEFORE connecting, or (if a connect helper owns the
+connect) sweep `room.remoteParticipants` right after registering the handler and `attach` any
+`publication.track` already present — with a **dedup guard** so a track arriving via both the sweep
+and the event isn't attached twice (doubled audio). Corollary #1: "bars move / badge says speaking"
+proves frames reach the client, NOT that they're audible — audibility is the `<audio>` element +
+autoplay unlock, a separate concern; diagnose playback before blaming TTS. Corollary #2: register the
+gesture-unblock listeners UNCONDITIONALLY — `canPlaybackAudio` can read `true` before any track plays
+and flip `false` later when audio arrives, so gating the unblock on it at connect time skips it and
+strands the user with no banner and no recovery but the explicit button.

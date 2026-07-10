@@ -2303,8 +2303,9 @@ audio" button remains as the visible fallback.
 
 **Result:** Done. Frontend-only (`useSparringRoom.ts`); no backend/agent changes. **Tests: frontend
 64 unchanged; type-check + lint clean.** No new Vitest — `useSparringRoom`'s connection lifecycle has
-no unit test in this codebase (needs a live `Room`, not meaningfully mockable). **⚠️ Needs the live
-pass to confirm:** that Opposing Counsel + the Judge are now actually audible — the real proof can
-only come from a live session (same constraint as all prior voice work). No LESSONS entry yet — will
-add one ("register TrackSubscribed before connect OR sweep existing tracks after") once the live pass
-confirms this was the fix.
+no unit test in this codebase (needs a live `Room`, not meaningfully mockable). **Live pass:
+CONFIRMED** — the user ran a live session and can now hear Opposing Counsel + the Judge, so Bug A
+(missed attach of already-subscribed tracks) was the culprit. **LESSONS entry added**
+([Frontend/LiveKit] attach already-subscribed tracks — a subscribed-but-unattached track feeds the
+analyser/active-speaker so bars move + the badge shows "speaking" while playback is silent; sweep
+existing tracks after connect + register the autoplay unblock unconditionally).
