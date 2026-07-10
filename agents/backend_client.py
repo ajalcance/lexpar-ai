@@ -11,11 +11,24 @@ Security notes: Sends the AGENT_SERVICE_TOKEN header over the configured backend
 
 from __future__ import annotations
 
+import uuid
+
 import httpx
 
 import config
 
 _TIMEOUT = 15.0
+
+
+def is_valid_session_id(session_id: str) -> bool:
+    """True if `session_id` is a real session UUID. The worker derives the id from the room name
+    ('session-<uuid>'); rooms that don't match (scratch/test rooms, 'user-<id>' rooms) would only
+    produce 422s from every backend call — the worker no-ops for them instead."""
+    try:
+        uuid.UUID(session_id)
+        return True
+    except ValueError:
+        return False
 
 
 def _headers() -> dict[str, str]:

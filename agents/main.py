@@ -118,6 +118,14 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     session_id = _session_id_from_room(ctx.room)
 
+    # Workers are auto-dispatched into EVERY new room on the server. Only rooms named
+    # "session-<uuid>" are real sparring sessions (livekit_token.py); anything else (scratch/test
+    # rooms, user-scoped rooms) would just 422 on every backend call — no-op instead of running
+    # the whole voice pipeline in a ghost room.
+    if not backend_client.is_valid_session_id(session_id):
+        logger.warning("room %r is not a session room — agent idle, not starting", ctx.room.name)
+        return
+
     # Load the session's case facts from the backend (agent-authed) so verification + the judge
     # reason with the real case. Non-fatal: if it fails, start with empty facts rather than crash.
     case_facts = ""

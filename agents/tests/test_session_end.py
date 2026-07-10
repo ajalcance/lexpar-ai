@@ -81,3 +81,13 @@ def test_payload_transcript_shape():
     assert turn["content"] == "Hello."
     assert turn["was_interruption"] is False
     assert isinstance(turn["spoken_at"], str)  # ISO timestamp
+
+
+def test_is_valid_session_id_accepts_uuids_rejects_room_artifacts():
+    # The worker no-ops in rooms that aren't real sessions ("session-<uuid>"): scratch/test rooms
+    # (e.g. the judge-participant verification room) otherwise 422 on every backend call.
+    import backend_client
+
+    assert backend_client.is_valid_session_id("699efd2d-2427-4c76-a8c5-26da01033d2f") is True
+    assert backend_client.is_valid_session_id("judge-verify") is False
+    assert backend_client.is_valid_session_id("") is False
