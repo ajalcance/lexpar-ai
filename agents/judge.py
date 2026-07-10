@@ -23,6 +23,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 
+import audio_tags
 import citation_check
 import court_knowledge
 import prompts
@@ -117,18 +118,20 @@ def _render_transcript(state: SessionState) -> str:
 
 
 def _build_assessment_messages(
-    state: SessionState, excerpts: str = "", rules: str = ""
+    state: SessionState, excerpts: str = "", rules: str = "", *, expressive: bool = False
 ) -> list[dict[str, str]]:
     """Assemble the end-of-session assessment messages (persona + grounded record + transcript).
-    Pure — retrieval happens in assess_session."""
+    Pure — retrieval happens in assess_session. `expressive` selects the audio-tag-authoring
+    prompt variant (Track B) for the final ruling; default is byte-identical to before."""
     context = (
         f"{_grounded_context(state, excerpts, rules)}\n\n"
         f"FULL TRANSCRIPT:\n{_render_transcript(state)}"
     )
+    instruction = "judge_assessment_expressive" if expressive else "judge_assessment"
     return [
         {"role": "system", "content": prompts.render("judge")},
         {"role": "system", "content": context},
-        {"role": "user", "content": prompts.render("judge_assessment")},
+        {"role": "user", "content": prompts.render(instruction)},
     ]
 
 
@@ -249,12 +252,17 @@ def quick_ruling(state: SessionState, objection: Objection, fragment: str) -> Qu
     return QuickRuling(ruling, reason, retrieval.chunk_ids, flagged)
 
 
-def assess_session(state: SessionState) -> dict:
+def assess_session(state: SessionState, *, expressive: bool = False) -> dict:
     """
     End-of-session pass: rule on every pending objection, extract established facts, and give a
     closing ruling — one live API call. Fails safe: on any error/unparseable output, returns no
     rulings (objections stay pending = not sustained, so the attorney is never penalized on a
     model failure), no facts, and a neutral closing ruling.
+
+    `expressive` (Track B) authors ElevenLabs v3 audio-tag delivery cues into the closing ruling.
+    Always returns BOTH `closing_ruling` (CLEAN — the source of truth for the transcript, scorecard,
+    and citation check) and `closing_ruling_spoken` (the TTS input: tagged when expressive, else ==
+    clean). When not expressive, the default path is byte-identical to before + the extra key.
     """
     # §13 grounding for the assessment: what is being judged is the pending objections (plus the
     # session's closing context), so the retrieval query is their grounds + the last attorney
@@ -271,7 +279,7 @@ def assess_session(state: SessionState) -> dict:
     try:
         content = chat(
             endpoint,
-            _build_assessment_messages(state, excerpts, rules),
+            _build_assessment_messages(state, excerpts, rules, expressive=expressive),
             temperature=0.3,
             # gpt-oss reasons before emitting; the assessment (rule every objection + extract facts
             # + closing ruling) needs a bigger budget than the classifier's 512, else the hidden
@@ -285,13 +293,21 @@ def assess_session(state: SessionState) -> dict:
             "rulings": [],
             "established_facts": [],
             "closing_ruling": _FALLBACK_CLOSING,
+            "closing_ruling_spoken": _FALLBACK_CLOSING,
             "chunk_ids": [],
             "flagged_citations": [],
         }
     if not result["closing_ruling"]:
         result["closing_ruling"] = _FALLBACK_CLOSING
-    # §13 Phase 5: turn-scoped citation check on the closing ruling (flag + log, never rewrite).
-    flagged = citation_check.flag_ungrounded(result["closing_ruling"], retrieval.shown_text)
+    # Clean/tagged split (Track B): the CLEAN (stripped) ruling is the source of truth persisted,
+    # displayed, and citation-checked; the tagged text is spoken by v3 only. When not expressive,
+    # clean == raw (no strip), so this is a no-op beyond adding the key.
+    raw_closing = result["closing_ruling"]
+    clean_closing = audio_tags.strip_audio_tags(raw_closing) if expressive else raw_closing
+    result["closing_ruling"] = clean_closing
+    result["closing_ruling_spoken"] = raw_closing if expressive else clean_closing
+    # §13 Phase 5: turn-scoped citation check on the CLEAN closing ruling (flag + log, no rewrite).
+    flagged = citation_check.flag_ungrounded(clean_closing, retrieval.shown_text)
     if flagged:
         logger.warning(
             "ungrounded citation(s) in closing ruling [session=%s path=final_ruling "

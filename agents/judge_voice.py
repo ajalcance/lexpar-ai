@@ -32,12 +32,20 @@ class JudgeVoice:
         self._primary = primary
         self._fallback = fallback
 
-    async def say(self, text: str) -> bool:
+    async def say(
+        self, text: str, *, expressive: bool = False, expressive_text: str | None = None
+    ) -> bool:
         """Speak `text`; returns True if the primary (judge participant) carried it, False if the
-        fallback did. A fallback failure propagates — callers already guard judge speech."""
+        fallback did. A fallback failure propagates — callers already guard judge speech.
+
+        Track B: for the final ruling the caller passes `expressive=True` + `expressive_text` (the
+        v3 audio-tag version). The PRIMARY (v3 judge participant) speaks the tagged text; the
+        FALLBACK always speaks the clean `text` — so a degraded fallback on flash never voices
+        literal '[sighs]'. Inline rulings call with the defaults (clean text, flash)."""
+        spoken = expressive_text if (expressive and expressive_text is not None) else text
         if self._primary is not None:
             try:
-                await self._primary(text)
+                await self._primary(spoken, expressive=expressive)
                 return True
             except Exception:
                 logger.exception(

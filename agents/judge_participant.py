@@ -53,12 +53,19 @@ def build_judge_token(api_key: str, api_secret: str, room_name: str) -> str:
 class JudgeParticipant:
     """A second, independent room participant that speaks with the judge's voice."""
 
-    def __init__(self, url: str, api_key: str, api_secret: str, room_name: str, tts) -> None:
+    def __init__(
+        self, url: str, api_key: str, api_secret: str, room_name: str, tts, expressive_tts=None
+    ) -> None:
         self._url = url
         self._api_key = api_key
         self._api_secret = api_secret
         self._room_name = room_name
         self._tts = tts
+        # Optional second TTS (ElevenLabs v3) for the expressive FINAL ruling only (Track B). It
+        # shares the single published AudioSource, which is fine because both instances use the
+        # plugin's default output format (mp3_22050_32 → 22050 Hz); if a v3 config ever pins a
+        # different encoding, pin the fast instance to match or the shared source will mis-rate.
+        self._expressive_tts = expressive_tts
         self._room: rtc.Room | None = None
         self._source: rtc.AudioSource | None = None
         self._say_lock = asyncio.Lock()  # judge lines never overlap each other
@@ -90,14 +97,18 @@ class JudgeParticipant:
         self._source = source
         return source
 
-    async def say(self, text: str) -> None:
+    async def say(self, text: str, *, expressive: bool = False) -> None:
         """Synthesize `text` on the judge TTS and play it through the judge participant's track.
-        Blocks until playout completes (callers sequence rulings after the objection line)."""
+        Blocks until playout completes (callers sequence rulings after the objection line). With
+        `expressive` and a v3 `expressive_tts` configured, the final ruling is synthesized on v3
+        (audio tags rendered); otherwise the fast instance is used (inline rulings)."""
         if self._room is None:
             raise RuntimeError("judge participant is not connected")
+        use_v3 = expressive and self._expressive_tts is not None
+        tts = self._expressive_tts if use_v3 else self._tts
         async with self._say_lock:
             source: rtc.AudioSource | None = None
-            async for synthesized in self._tts.synthesize(text):
+            async for synthesized in tts.synthesize(text):
                 frame = synthesized.frame
                 if source is None:
                     source = await self._ensure_track(frame.sample_rate, frame.num_channels)

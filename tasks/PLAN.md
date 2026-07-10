@@ -2388,3 +2388,24 @@ stability .40 / sim .75 / style .30 / speaker-boost off — modest on the latenc
 clean; main.py compiles.** Backend/frontend untouched. Committed on its own (Track A independent of
 Track B). **⚠️ Real verification is the live pass** — offline proves wiring/shape only; whether it
 SOUNDS more expressive (and whether OC's `style` adds perceptible lag) is ear-only.
+
+**Track B Result (v3 + audio-tag hybrid for the final ruling, gated):** Done, committed separately
+so Track A stands independent of it. **New:** `agents/audio_tags.py` (`strip_audio_tags` — removes
+allowlisted AND invented lowercase-bracketed tags, spares citations) and the
+`judge_assessment_expressive.md` prompt variant (registry; = default assessment + a tag-authoring
+addendum, default `judge_assessment.md` byte-identical). **Clean/tagged split:** `assess_session(…,
+expressive=)` returns `closing_ruling` (CLEAN — source of truth for `add_turn`/scorecard/
+`citation_check`) + `closing_ruling_spoken` (tagged only when expressive); non-expressive path
+byte-identical + the extra key. **Wiring:** a second v3 judge TTS instance built only when
+`JUDGE_EXPRESSIVE_FINAL_RULING` (default OFF); `JudgeParticipant.say(…, expressive=)` picks it (shares
+the AudioSource — both default mp3_22050_32); `JudgeVoice.say(…, expressive=, expressive_text=)` sends
+the tagged text to the v3 primary and the CLEAN text to the flash fallback (a degraded fallback never
+voices literal `[sighs]`); `_finalize_session` persists clean, speaks tagged. **Tests: agents 179
+(Track A+B; +11 over Track A's 168 — audio_tags ×5, judge_voice expressive-routing ×3, prompt-variant
+golden ×1, assess_session clean/tagged split ×2), ruff clean, main.py compiles; backend 74
+unchanged.** **Docs:** ARCHITECTURE §6.5 (per-call-site TTS split) + §9 (env vars); LESSONS
+(clean/tagged split + the unset-voice_settings monotone gotcha); `.env.example`. **⚠️ Gated on the
+live pass:** whether ElevenLabs serves v3 on the plugin's `/stream` HTTP path (Phase-1's one
+offline-unresolvable unknown) and whether v3 + tags actually sound better — turn `JUDGE_EXPRESSIVE_
+FINAL_RULING=true` only after that live confirmation. Both tracks committed, unpushed, ready for the
+live pass.

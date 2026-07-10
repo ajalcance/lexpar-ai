@@ -130,6 +130,13 @@ JUDGE_VOICE_SETTINGS = {
     "use_speaker_boost": _getbool("JUDGE_VOICE_USE_SPEAKER_BOOST", True),
 }
 
+# Track B (gated): use ElevenLabs v3 + authored audio tags for the Judge's FINAL ruling only, where
+# the SessionFinale deliberation-wave gives real latency slack. OFF by default — turn on only after
+# the live v3-on-/stream smoke test confirms v3 renders on the plugin's HTTP path and sounds right.
+# OC live replies and the Judge's quick_ruling stay on the fast model regardless.
+JUDGE_EXPRESSIVE_FINAL_RULING = _getbool("JUDGE_EXPRESSIVE_FINAL_RULING", False)
+JUDGE_V3_MODEL = os.getenv("JUDGE_V3_MODEL", "eleven_v3")
+
 # Backend persistence (Gap 4): the worker completes the session + writes the scorecard/transcript
 # at session end, authenticating with the scoped agent service token (NOT a user login).
 AGENT_BACKEND_URL = os.getenv("AGENT_BACKEND_URL", "http://localhost:8000")

@@ -118,6 +118,31 @@ def test_assess_session_fails_safe_on_error(monkeypatch):
     result = judge_mod.assess_session(_seeded_state())
     assert result["rulings"] == []
     assert result["closing_ruling"] == judge_mod._FALLBACK_CLOSING
+    assert result["closing_ruling_spoken"] == judge_mod._FALLBACK_CLOSING  # fallback has both
+
+
+# --- Track B: expressive final ruling (clean/tagged split) ------------------------------------
+
+def test_assess_session_default_leaves_spoken_equal_to_clean(monkeypatch):
+    # Non-expressive (default) path: no strip, spoken == clean — byte-identical behavior + the key.
+    monkeypatch.setattr(
+        judge_mod, "chat", lambda *a, **k: '{"rulings": [], "closing_ruling": "So ordered."}'
+    )
+    result = judge_mod.assess_session(_seeded_state())
+    assert result["closing_ruling"] == "So ordered."
+    assert result["closing_ruling_spoken"] == "So ordered."
+
+
+def test_assess_session_expressive_strips_tags_from_clean_but_keeps_them_spoken(monkeypatch):
+    monkeypatch.setattr(
+        judge_mod,
+        "chat",
+        lambda *a, **k: '{"rulings": [], "closing_ruling": "[solemnly] So ordered."}',
+    )
+    result = judge_mod.assess_session(_seeded_state(), expressive=True)
+    # CLEAN (persisted/displayed/citation-checked) has no tags; SPOKEN (v3 TTS input) keeps them.
+    assert result["closing_ruling"] == "So ordered."
+    assert result["closing_ruling_spoken"] == "[solemnly] So ordered."
 
 
 # --- quick_ruling (inline judge ruling, model call monkeypatched) -----------------------------

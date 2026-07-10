@@ -421,6 +421,16 @@ When an objection fires and Opposing Counsel's line is spoken, the Judge immedia
 - **The Judge speaks with a distinct voice** (`JUDGE_VOICE_ID`, default "Daniel"): judge lines are
   synthesized on a second ElevenLabs TTS instance and played via `session.say(audio=…)`, so a user
   can tell who's speaking by ear — like a real courtroom.
+- **TTS expressiveness — a per-call-site model/settings split.** Both voices carry explicit
+  `voice_settings` (`config.{OC,JUDGE}_VOICE_SETTINGS`, `.env`-tunable) — `style` was previously unset
+  (flat/monotone); OC's is deliberately modest since it's on the latency-critical streaming path. The
+  fast model (`eleven_flash_v2_5`) serves OC's live replies and the Judge's `quick_ruling`. The
+  Judge's **final ruling only** can optionally use **ElevenLabs v3** with authored **audio tags**
+  (`JUDGE_EXPRESSIVE_FINAL_RULING`, off by default) — a second v3 judge TTS instance — because the
+  SessionFinale deliberation-wave gives that path real latency slack. Tags are authored via the
+  `judge_assessment_expressive` prompt variant and stripped to a **clean** source-of-truth text
+  (`audio_tags.strip_audio_tags`) for persistence/display/`citation_check`; the **tagged** text is the
+  v3 TTS input only (see LESSONS for the clean/tagged split). v3 stays off the latency-critical paths.
 - **Not interruptible** (`allow_interruptions=False`) — you don't talk over the judge; and while the
   ruling is in flight the classifier is on `hold()` (§6), so OC can't object over the judge either.
 - **Fail-safe:** on any error/timeout (10 s bound) the judge stays **silent** and the objection
@@ -649,6 +659,8 @@ S3-compatible (MinIO locally, DigitalOcean Spaces in production).
 | `SELF_HOSTED_API_KEY` | Key for any LLM role whose provider is not `fireworks` (self-hosted vLLM per §10.5). vLLM ignores it; default `EMPTY` is a valid placeholder. Resolved by `llm_router.api_key_for()` |
 | `DEEPGRAM_MODEL` / `ELEVENLABS_MODEL` / `ELEVENLABS_VOICE_ID` | Voice pipeline (agents/main.py); defaults `nova-3` / `eleven_flash_v2_5` / "George" (premade, free-tier-usable) |
 | `JUDGE_VOICE_ID` | The Judge's DISTINCT voice (§6.5 inline rulings; default "Daniel") — speakers are tellable apart by ear |
+| `{OC,JUDGE}_VOICE_{STABILITY,SIMILARITY_BOOST,STYLE,USE_SPEAKER_BOOST}` | ElevenLabs `voice_settings` expressiveness (§6.5). `style`=0 reverts to flat delivery; tune by ear |
+| `JUDGE_EXPRESSIVE_FINAL_RULING` / `JUDGE_V3_MODEL` | Track B (gated, default off): v3 + audio tags for the Judge's final ruling only (§6.5) |
 | `JWT_SECRET` | Token signing — **required, ≥ 32 chars**; the app refuses to start with a blank/missing/weak key (`openssl rand -hex 32`) |
 | `AUTH_MODE` | `stub` \| `production` |
 | `CORS_ORIGINS` | Comma-separated browser origins allowed to call the API (e.g. the Vite dev server) |

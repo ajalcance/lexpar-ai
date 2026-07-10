@@ -114,6 +114,18 @@ def test_oc_continuation_restart_renders_byte_identical():
     assert prompts.render("oc_continuation_restart", failure_reason="a contradiction") == expected
 
 
+def test_expressive_assessment_is_the_default_plus_a_tag_addendum():
+    # Track B: the expressive variant MUST be the byte-identical default assessment prompt plus an
+    # appended audio-tag-authoring addendum — so the default (non-v3) path is provably unchanged.
+    default = STATIC_GOLDENS["judge_assessment"]
+    assert prompts.render("judge_assessment") == default  # default path unchanged
+    expressive = prompts.render("judge_assessment_expressive")
+    assert expressive.startswith(default + "\n")
+    addendum = expressive[len(default) + 1 :]
+    assert "[solemnly]" in addendum
+    assert "delivery only" in addendum  # frames tags as delivery, not content
+
+
 def test_personas_load_with_their_immutable_constraint_intact():
     # The personas were already .md files (unchanged); confirm the registry loads them and the
     # no-fabrication constraint region survived the routing change.

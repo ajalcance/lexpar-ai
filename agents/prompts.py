@@ -36,6 +36,7 @@ PROMPT_NAMES: tuple[str, ...] = (
     "oc_continuation_restart",       # OC mid-stream repair (nothing spoken yet)
     "judge_ruling_instruction",      # generate_ruling JSON contract
     "judge_assessment",              # end-of-session assessment instruction
+    "judge_assessment_expressive",   # ^ + v3 audio-tag authoring for the final ruling (Track B)
     "judge_quick_ruling",            # inline sustained/overruled system prompt
     "objection_classifier_system",   # tier-3 classifier system prompt ($eligible)
     "consistency_verifier",          # pre-TTS consistency verifier system prompt

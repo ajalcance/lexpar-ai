@@ -188,6 +188,19 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         api_key=config.ELEVENLABS_API_KEY,
     )
 
+    # Track B (gated): a SECOND judge TTS on ElevenLabs v3 for the FINAL ruling only, where the
+    # SessionFinale deliberation-wave gives latency slack. Same voice + settings, v3 model — so the
+    # audio tags the expressive assessment prompt authors are rendered. Off unless the env flag is
+    # set (after the live v3-on-/stream smoke test). Inline rulings + OC stay on the fast model.
+    judge_v3_tts = None
+    if config.JUDGE_EXPRESSIVE_FINAL_RULING:
+        judge_v3_tts = elevenlabs.TTS(
+            model=config.JUDGE_V3_MODEL,
+            voice_id=config.JUDGE_VOICE_ID,
+            voice_settings=elevenlabs.VoiceSettings(**config.JUDGE_VOICE_SETTINGS),
+            api_key=config.ELEVENLABS_API_KEY,
+        )
+
     session = AgentSession(
         # Silero VAD needs no API key. STT/TTS keys are passed EXPLICITLY from our own config
         # (config.py) rather than relying on each plugin's implicit env-var lookup — ElevenLabs
@@ -239,6 +252,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         api_secret=config.LIVEKIT_API_SECRET,
         room_name=ctx.room.name,
         tts=judge_tts,
+        expressive_tts=judge_v3_tts,
     )
     judge_connected = await judge_participant.connect()
 
@@ -361,7 +375,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         finalized["done"] = True
         if not any(turn.speaker == "attorney" for turn in state.transcript):
             return
-        assessment = await asyncio.to_thread(judge.assess_session, state)
+        assessment = await asyncio.to_thread(
+            judge.assess_session, state, expressive=config.JUDGE_EXPRESSIVE_FINAL_RULING
+        )
         for objection, ruling in zip(state.pending_objections(), assessment["rulings"]):
             try:
                 state.rule_on_objection(objection, ruling)
@@ -369,11 +385,17 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                 pass  # unknown/duplicate ruling → leave pending (not sustained, no penalty)
         for fact in assessment["established_facts"]:
             state.add_established_fact(fact)
-        ruling = assessment["closing_ruling"]
+        ruling = assessment["closing_ruling"]  # CLEAN — persisted, displayed, citation-checked
         state.add_turn("judge", ruling)
         if speak:
             try:
-                await _judge_say(ruling)  # the judge delivers it aloud, in the judge's voice
+                # Track B: the v3 participant speaks the tagged text; a degraded fallback speaks the
+                # clean text (never literal tags on flash). When the flag is off, spoken == clean.
+                await judge_voice.say(
+                    ruling,
+                    expressive=config.JUDGE_EXPRESSIVE_FINAL_RULING,
+                    expressive_text=assessment["closing_ruling_spoken"],
+                )
             except Exception:
                 logger.exception("judge closing ruling could not be spoken")
         payload = scorecard_builder.build_session_end_payload(state, ruling)

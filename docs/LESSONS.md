@@ -336,3 +336,22 @@ SEPARATE commits — mixing them hides a behavior change inside a "just moved it
 design (documented, not done): collapsing the duplicated no-fabrication lines into one shared
 `_core_constraints.md` is the correct end state, but it changes prompt bytes, so it must be its own
 explicit, tested behavior change — never folded into the move.
+
+### [Agents/TTS] Delivery cues (v3 audio tags) must never leak into persisted/displayed text — keep a clean/tagged split
+**Wrong:** Authoring ElevenLabs v3 audio tags (`[solemnly]`, `[pauses]`) into the Judge's
+`closing_ruling` and using that one string everywhere. It's spoken (good) but the SAME string is also
+persisted as the scorecard's `judge_ruling`, rendered in the transcript, and run through
+`citation_check` — so literal `[sighs]` leaks into the *written* verdict and the grounding check.
+Also naïvely stripping only the known allowlist leaves any tag the model invents off-list to leak.
+**Right:** One authored ruling, two derived forms. The **clean** (tag-stripped) text is the single
+source of truth — `state.add_turn`, the scorecard, `citation_check`, the frontend all use it; the
+**tagged** text is used ONLY as the v3 TTS input and never leaves that one call. Strip with a pattern
+that catches BOTH allowlisted and invented tags (lowercase, short, bracketed: `\[[a-z][a-z ]{0,20}\]`)
+so an off-list `[grumbles]` can't leak either, while sparing citations (`Section 23`, and
+`[Section 23]` with caps/digits don't match the lowercase-only pattern). Fallback corollary: if the
+primary (v3 participant) fails, the degraded fallback (flash) must speak the CLEAN text — flash would
+otherwise voice a literal `[sighs]`. General rule: when one generated string feeds both **delivery**
+(TTS) and the **record** (persistence/display/verification), the delivery-only decorations belong on a
+separate derived value, never the shared one. (Separate, quieter gotcha from the same task: leaving
+ElevenLabs `voice_settings` unset makes the plugin omit it entirely, so the API uses each voice's flat
+default — `style`≈0 — which reads as monotone; pass explicit `voice_settings` to get expressiveness.)
