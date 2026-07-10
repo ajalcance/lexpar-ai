@@ -2227,3 +2227,48 @@ all bars at 1.0. Fix: pass a wider `minDecibels: -85 / maxDecibels: -20` so voic
 (the window is tunable for live feel — raise `maxDecibels` toward `-10` if bars still peg, lower
 toward `-30` if too timid). Offline suites unchanged (the hook test asserts via `objectContaining`);
 the varying-bars behavior itself still needs the live pass to confirm.
+
+---
+
+### Interactive judge-ruling visualization at session end (verdict finale) — status: done
+
+Ending a session was a dead spot: "Wrapping up…" then a redirect to the Scorecard, at exactly the
+moment the Judge is composing + speaking the real final ruling. Three gated phases (audit → design →
+implement), each reviewed.
+
+**Phase 1 (audit) — the load-bearing finding:** the browser **stays connected with the Judge's
+track live through the spoken ruling**. Proof from code: the frontend `endSession()` awaits
+`end_complete` before navigating, and the agent publishes `end_complete` only AFTER
+`_finalize_session` runs `assess_session` → `_judge_say(ruling)` (awaits playout) → persist. So the
+whole ruling — generation AND delivery — happens while connected, `activeSpeaker → 'judge'`; the
+visualizer infra already taps it. This is a styling/state-framing task, **not** a
+connection-lifecycle change. "Wrapping up" is a state inside `SparringRoom` (the `ending` bool), not
+a route/timer; `navigate()` fires when `endSession()` resolves. The Scorecard's not-ready poll is a
+distinct, later (post-navigation) backstop — no overlap. Dead-air gap identified: `assess_session`
+(LLM, several seconds) before the judge speaks.
+
+**Phase 2 (design, reviewed):** two-phase machine AWAITING (dead air) → RULING (judge speaking) →
+Scorecard, via existing signals (`ending` + `activeSpeaker==='judge'`/`judgeSpeaking`) with a
+`hasSpoken` latch so pauses/persist-tail don't flip copy back. Approved decisions: (1) two-phase
+machine; (2) **distinct amber "deliberation" wave** for AWAITING (not the ambient shimmer — the
+verdict is being composed, not a quiet room); (3) **judge-focused** visual, no presence dots (a
+single-speaker moment); (4) hide/disable Mute during the finale.
+
+**Result:** Done, offline-verified; no live LiveKit / no preview (standing constraint); **no
+backend/agent changes** (Phase 1 confirmed none needed — all signals already exist). **New:**
+`lib/rulingPhase.ts` (pure `latchHasSpoken` + `rulingPhase`), `components/SessionFinale.tsx`
+(render-only: reuses `useAudioVisualization` with `idleStyle:'deliberating'`, judge track+color, no
+dots, aria-hidden, phase heading is the real signal). **Modified:** `lib/audioBars.ts`
+(`deliberatingBars` — taller/slower amber wave), `useAudioVisualization` (`idleStyle:'ambient'|
+'deliberating'` option, default ambient so the live visual is untouched), `SparringRoom` (hasSpoken
+latch + phase derivation; renders `SessionFinale` in place of the live panel during `ending`; Mute +
+active-speaker badge hidden during finale; removed the now-redundant bottom "delivering the ruling…"
+line). Triggers are real events (first judge audio → RULING; `end_complete` → navigate), no arbitrary
+timeouts beyond the pre-existing 30s `endSession` safety net. **Tests: frontend 64 (was 54; +10 —
+rulingPhase state machine + latch ×6, deliberatingBars math ×2, SessionFinale copy-per-phase ×2);
+type-check + lint clean.** Cleanup + reduced-motion are covered by the existing
+`useAudioVisualization` tests (the finale reuses that hook verbatim — not duplicated). **Docs:**
+ARCHITECTURE §4 wiring status (one `SessionFinale` bullet); the end-of-session handshake itself is
+unchanged (already in §6.5), so no §6.5 edit. **⚠️ Needs the live pass:** the amber deliberation wave
+during real `assess_session` latency, the hand-off to audio-reactive bars when the judge speaks, no
+copy flicker across inter-sentence pauses (the latch's purpose), and the timing into the Scorecard.

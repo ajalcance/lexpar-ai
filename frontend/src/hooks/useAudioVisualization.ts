@@ -15,7 +15,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { createAudioAnalyser } from 'livekit-client';
 import type { LocalAudioTrack, RemoteAudioTrack } from 'livekit-client';
-import { BAR_COUNT, binFrequencies, idleBars, smoothBars, staticBars } from '@/lib/audioBars';
+import {
+  BAR_COUNT,
+  binFrequencies,
+  deliberatingBars,
+  idleBars,
+  smoothBars,
+  staticBars,
+} from '@/lib/audioBars';
 
 /** The kinds of track the equalizer analyses (the active speaker's audio). */
 export type VisualizedTrack = LocalAudioTrack | RemoteAudioTrack;
@@ -35,6 +42,9 @@ interface Options {
   audioReady: boolean;
   /** Concrete CSS color for the bars (role tint from the caller; grey when idle). */
   color: string;
+  /** What the no-audio state looks like: the ambient live-session shimmer (default) or the taller,
+   *  slower "deliberation" wave used for the session-finale dead-air window. */
+  idleStyle?: 'ambient' | 'deliberating';
 }
 
 /** True when the user asked for reduced motion; updates if they change it mid-session. */
@@ -78,17 +88,25 @@ function drawBars(
   }
 }
 
-export function useAudioVisualization({ track, enabled, audioReady, color }: Options) {
+export function useAudioVisualization({
+  track,
+  enabled,
+  audioReady,
+  color,
+  idleStyle = 'ambient',
+}: Options) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const analyserRef = useRef<AnalyserHandle | null>(null);
   const freqRef = useRef<Uint8Array<ArrayBuffer>>(new Uint8Array(0));
   const barsRef = useRef<number[]>(new Array(BAR_COUNT).fill(0));
   const colorRef = useRef(color);
+  const idleStyleRef = useRef(idleStyle);
   const rafRef = useRef<number | null>(null);
   const reducedMotion = usePrefersReducedMotion();
 
-  // Latest color without restarting the draw loop.
+  // Latest color / idle style without restarting the draw loop.
   colorRef.current = color;
+  idleStyleRef.current = idleStyle;
 
   // Attach/detach the analyser to the active speaker's track. React runs the previous effect's
   // cleanup (closing the old AudioContext) before re-running on a track swap — so there is at most
@@ -157,7 +175,11 @@ export function useAudioVisualization({ track, enabled, audioReady, color }: Opt
         handle.analyser.getByteFrequencyData(freqRef.current);
         target = binFrequencies(freqRef.current);
       } else {
-        target = idleBars(BAR_COUNT, typeof performance !== 'undefined' ? performance.now() : 0);
+        const now = typeof performance !== 'undefined' ? performance.now() : 0;
+        target =
+          idleStyleRef.current === 'deliberating'
+            ? deliberatingBars(BAR_COUNT, now)
+            : idleBars(BAR_COUNT, now);
       }
       barsRef.current = reducedMotion ? target : smoothBars(barsRef.current, target);
       if (ctx && canvas) drawBars(ctx, canvas, barsRef.current, colorRef.current);

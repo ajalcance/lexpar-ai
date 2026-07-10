@@ -11,10 +11,13 @@ import {
   ATTACK,
   BAR_COUNT,
   DECAY,
+  DELIBERATE_BASE,
+  DELIBERATE_SWING,
   IDLE_BASE,
   IDLE_SWING,
   STATIC_LEVEL,
   binFrequencies,
+  deliberatingBars,
   idleBars,
   smoothBars,
   staticBars,
@@ -60,6 +63,24 @@ describe('idleBars', () => {
 describe('staticBars', () => {
   it('is a flat low frame at STATIC_LEVEL (reduced-motion)', () => {
     expect(staticBars(BAR_COUNT)).toEqual(new Array(BAR_COUNT).fill(STATIC_LEVEL));
+  });
+});
+
+describe('deliberatingBars', () => {
+  it('stays within [DELIBERATE_BASE, DELIBERATE_BASE+DELIBERATE_SWING] and animates over time', () => {
+    const a = deliberatingBars(BAR_COUNT, 0);
+    const b = deliberatingBars(BAR_COUNT, 1200);
+    expect(a).toHaveLength(BAR_COUNT);
+    for (const v of [...a, ...b]) {
+      expect(v).toBeGreaterThanOrEqual(DELIBERATE_BASE - 1e-9);
+      expect(v).toBeLessThanOrEqual(DELIBERATE_BASE + DELIBERATE_SWING + 1e-9);
+    }
+    expect(a).not.toEqual(b); // it's a moving wave, not frozen
+  });
+
+  it('is taller than the ambient idle shimmer (reads as "the judge is working")', () => {
+    // Peak of the deliberation wave clears the entire idle-shimmer band.
+    expect(DELIBERATE_BASE).toBeGreaterThan(IDLE_BASE + IDLE_SWING);
   });
 });
 

@@ -3,25 +3,28 @@
  * Purpose: The live sparring room. Connects to the real LiveKit room and publishes the mic
  *   (useSparringRoom), showing real connection-state, listening/speaking, and mute controls. If the
  *   connection fails or no agent joins within a few seconds it falls back to the scripted mock
- *   transcript (useSparringSession) so the app stays demoable. Objection detection/display is
- *   unchanged (Gap 3).
- * Depends on: react-router-dom, hooks/useSparringRoom, hooks/useSparringSession,
- *   components/TranscriptLine, components/ui/*
+ *   transcript (useSparringSession) so the app stays demoable. On "End session" it stays connected
+ *   and shows the verdict finale (SessionFinale: judge deliberating → delivering the ruling) before
+ *   navigating to the scorecard. Objection detection/display is unchanged (Gap 3).
+ * Depends on: react-router-dom, hooks/useSparringRoom, hooks/useSparringSession, lib/rulingPhase,
+ *   components/{TranscriptLine,SparringVisualizer,SessionFinale}, components/ui/*
  * Related: agents/main.py (the worker that joins the same room), pages/Scorecard.tsx
  * Security notes: Renders transcript content (attorney work product) for the session only; never
  *   logged. Microphone audio is published to this session's room only.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Mic, MicOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Breadcrumbs } from '@/components/Breadcrumbs';
+import { SessionFinale } from '@/components/SessionFinale';
 import { SparringVisualizer } from '@/components/SparringVisualizer';
 import { TranscriptLine } from '@/components/TranscriptLine';
 import { useSparringRoom, type ConnStatus } from '@/hooks/useSparringRoom';
 import { useSparringSession } from '@/hooks/useSparringSession';
+import { latchHasSpoken, rulingPhase } from '@/lib/rulingPhase';
 
 const CONNECTION_LABEL: Record<ConnStatus, string> = {
   connecting: 'Connecting…',
@@ -62,6 +65,16 @@ export function SparringRoom() {
   const isConnected = connectionState === 'connected';
   const [ending, setEnding] = useState(false);
 
+  // Session finale (verdict moment): once "End session" is clicked the room stays connected while
+  // the judge composes (AWAITING — dead air) then speaks the ruling (RULING). `hasSpoken` latches on
+  // the first judge audio so inter-sentence pauses / the persist tail don't flip the copy back.
+  const judgeAudio = activeSpeaker === 'judge' || judgeSpeaking;
+  const [hasSpoken, setHasSpoken] = useState(false);
+  useEffect(() => {
+    setHasSpoken((prev) => (ending ? latchHasSpoken(prev, judgeAudio) : false));
+  }, [ending, judgeAudio]);
+  const phase = rulingPhase(ending, hasSpoken); // 'live' | 'awaiting' | 'ruling'
+
   const handleEnd = async () => {
     // In a live session, let the judge deliver the spoken ruling + write the scorecard first, then
     // go to the scorecard. In fallback (no agent) there's nothing to wait for — navigate straight.
@@ -88,7 +101,7 @@ export function SparringRoom() {
           <Badge variant={connectionVariant(connectionState)}>
             {CONNECTION_LABEL[connectionState]}
           </Badge>
-          {isConnected && (
+          {isConnected && !ending && (
             <Badge
               variant={
                 judgeSpeaking || activeSpeaker === 'judge' || activeSpeaker === 'opposing_counsel'
@@ -105,15 +118,18 @@ export function SparringRoom() {
                   : 'Listening'}
             </Badge>
           )}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={toggleMute}
-            disabled={!isConnected || micBlocked}
-          >
-            {isMuted ? <MicOff className="size-4" /> : <Mic className="size-4" />}
-            {isMuted ? 'Unmute' : 'Mute'}
-          </Button>
+          {/* Mute is hidden during the finale — the attorney is done arguing while the judge rules. */}
+          {!ending && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={toggleMute}
+              disabled={!isConnected || micBlocked}
+            >
+              {isMuted ? <MicOff className="size-4" /> : <Mic className="size-4" />}
+              {isMuted ? 'Unmute' : 'Mute'}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -135,42 +151,54 @@ export function SparringRoom() {
       )}
 
       <div className="flex flex-col gap-4 rounded-lg border bg-card/40 p-6">
-        {/* Live-audio visual (additive) — equalizer for the active speaker + presence dots. The
-            text speaker badge above remains the real attribution; this is aria-hidden. In
-            connecting/fallback it shows a neutral idle shimmer rather than looking broken. */}
-        <SparringVisualizer
-          track={activeTrack}
-          activeSpeaker={activeSpeaker}
-          levels={audioLevels}
-          enabled={mode === 'live'}
-          audioReady={!audioBlocked}
-        />
-
-        {mode === 'connecting' && (
-          <p className="text-sm text-muted-foreground">Connecting to the courtroom…</p>
-        )}
-
-        {mode === 'live' && (
+        {ending ? (
+          // The verdict moment: the room is still connected while the judge composes then speaks the
+          // ruling. Judge-focused amber visual + phase copy, before navigating to the scorecard.
+          <SessionFinale
+            phase={phase === 'ruling' ? 'ruling' : 'awaiting'}
+            track={activeSpeaker === 'judge' ? activeTrack : null}
+            audioReady={!audioBlocked}
+          />
+        ) : (
           <>
-            <p className="text-sm text-muted-foreground">
-              You're connected — argue aloud and listen for objections. The written transcript view
-              arrives with the next update.
-            </p>
-            {objections.map((line) => (
-              <TranscriptLine key={line.id} line={line} />
-            ))}
-          </>
-        )}
+            {/* Live-audio visual (additive) — equalizer for the active speaker + presence dots. The
+                text speaker badge above remains the real attribution; this is aria-hidden. In
+                connecting/fallback it shows a neutral idle shimmer rather than looking broken. */}
+            <SparringVisualizer
+              track={activeTrack}
+              activeSpeaker={activeSpeaker}
+              levels={audioLevels}
+              enabled={mode === 'live'}
+              audioReady={!audioBlocked}
+            />
 
-        {mode === 'fallback' && (
-          <>
-            <p className="text-xs text-muted-foreground">
-              Demo mode — the live agent isn't running, replaying a sample session.
-            </p>
-            {lines.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Loading sample session…</p>
-            ) : (
-              lines.map((line) => <TranscriptLine key={line.id} line={line} />)
+            {mode === 'connecting' && (
+              <p className="text-sm text-muted-foreground">Connecting to the courtroom…</p>
+            )}
+
+            {mode === 'live' && (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  You're connected — argue aloud and listen for objections. The written transcript
+                  view arrives with the next update.
+                </p>
+                {objections.map((line) => (
+                  <TranscriptLine key={line.id} line={line} />
+                ))}
+              </>
+            )}
+
+            {mode === 'fallback' && (
+              <>
+                <p className="text-xs text-muted-foreground">
+                  Demo mode — the live agent isn't running, replaying a sample session.
+                </p>
+                {lines.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Loading sample session…</p>
+                ) : (
+                  lines.map((line) => <TranscriptLine key={line.id} line={line} />)
+                )}
+              </>
             )}
           </>
         )}
@@ -178,11 +206,6 @@ export function SparringRoom() {
 
       {mode !== 'connecting' && (
         <div className="flex items-center justify-end gap-3">
-          {ending && (
-            <p className="text-sm text-muted-foreground">
-              The judge is delivering the ruling…
-            </p>
-          )}
           <Button onClick={handleEnd} disabled={ending}>
             {ending ? 'Wrapping up…' : 'End session & view scorecard'}
           </Button>

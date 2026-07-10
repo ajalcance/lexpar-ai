@@ -50,6 +50,20 @@ export function staticBars(barCount = BAR_COUNT): number[] {
   return new Array(barCount).fill(STATIC_LEVEL);
 }
 
+/** A slow, pronounced amber "deliberation" wave for the session-finale dead-air window (the judge
+ *  composing the ruling) — deliberately taller and slower than the ambient `idleBars` shimmer so it
+ *  reads as "the judge is working", not a quiet room. A traveling sine across the bars. */
+export const DELIBERATE_BASE = 0.22;
+export const DELIBERATE_SWING = 0.5;
+export function deliberatingBars(barCount = BAR_COUNT, timeMs = 0): number[] {
+  const t = timeMs / 900; // slower than idle (idle divides by 500)
+  const bars: number[] = [];
+  for (let i = 0; i < barCount; i += 1) {
+    bars.push(DELIBERATE_BASE + DELIBERATE_SWING * (0.5 + 0.5 * Math.sin(t - i * 0.7)));
+  }
+  return bars;
+}
+
 /** One asymmetric smoothing step toward `target` — fast rise, slow fall (VU-meter feel). */
 export const ATTACK = 0.6;
 export const DECAY = 0.12;

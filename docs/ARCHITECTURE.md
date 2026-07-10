@@ -206,6 +206,15 @@ the one thing still absent:
   coarse `participant.audioLevel` from `ActiveSpeakersChanged` (no extra analyser). No new npm
   dependency (Web Audio via `livekit-client`); reduced-motion drops to a static frame. Builds on the
   §6.5 active-speaker attribution.
+- **Session-end verdict finale (`SessionFinale`).** On "End session" the room stays connected while
+  the judge composes and speaks the closing ruling (the §6.5 handshake — the browser only navigates
+  once `end_complete` arrives, *after* the ruling has played). That window is no longer a dead spot:
+  `SparringRoom` renders a judge-focused finale — **AWAITING** (a slow amber "deliberation" wave
+  during `assess_session`'s dead air) → **RULING** (the same equalizer reacting to the Judge's live
+  track) — before the Scorecard. Frontend-only, driven by existing signals (`ending` +
+  `activeSpeaker==='judge'`/`judgeSpeaking`, with a `hasSpoken` latch); pure phase machine in
+  `lib/rulingPhase.ts`, reusing `useAudioVisualization` (`idleStyle:'deliberating'`). The Scorecard's
+  own not-ready polling is unchanged (a later, post-navigation backstop).
 - **Completed sessions render real data.** When the agent worker (or `session_end_harness.py`) posts
   `complete` + `scorecard`, the session goes `completed` and the persisted scorecard + transcript are
   written. `Scorecard.tsx` then renders the **real** heuristic score, strengths, weaknesses, and
