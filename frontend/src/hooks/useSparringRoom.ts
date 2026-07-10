@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ConnectionState, RoomEvent, Track } from 'livekit-client';
 import type { Participant, RemoteTrack, Room } from 'livekit-client';
+import { mapActiveSpeaker, type ActiveSpeaker } from '@/lib/activeSpeaker';
 import * as api from '@/lib/api';
 import { connectToRoom, disconnectFromRoom } from '@/lib/livekit';
 import {
@@ -27,7 +28,7 @@ import type { Transcript } from '@/lib/types';
 
 export type SparringMode = 'connecting' | 'live' | 'fallback';
 export type ConnStatus = 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'failed';
-export type ActiveSpeaker = 'you' | 'opposing_counsel' | null;
+export type { ActiveSpeaker } from '@/lib/activeSpeaker';
 
 /** How long to wait for the agent to join before falling back to the scripted mock. */
 const AGENT_JOIN_TIMEOUT_MS = 5000;
@@ -113,9 +114,9 @@ export function useSparringRoom(sessionId: string) {
 
     const updateSpeaker = (speakers: Participant[]) => {
       if (cancelled) return;
-      const remoteSpeaking = speakers.some((p) => !p.isLocal);
-      const localSpeaking = speakers.some((p) => p.isLocal);
-      setActiveSpeaker(remoteSpeaking ? 'opposing_counsel' : localSpeaking ? 'you' : null);
+      // Structural attribution: the Judge is a real participant (identity "judge"), so who is
+      // speaking comes straight from the participant identities — no synthetic events needed.
+      setActiveSpeaker(mapActiveSpeaker(speakers));
     };
 
     const promoteToLive = () => {

@@ -93,3 +93,9 @@ JUDGE_VOICE_ID = os.getenv("JUDGE_VOICE_ID", "onwK4e9ZLuTAKqWW03F9")
 # at session end, authenticating with the scoped agent service token (NOT a user login).
 AGENT_BACKEND_URL = os.getenv("AGENT_BACKEND_URL", "http://localhost:8000")
 AGENT_SERVICE_TOKEN = os.getenv("AGENT_SERVICE_TOKEN", "")
+
+# LiveKit connection — the agents SDK reads these from env itself; exposed here because the worker
+# ALSO mints the judge participant's token locally (judge_participant.py) and needs them directly.
+LIVEKIT_URL = os.getenv("LIVEKIT_URL", "ws://localhost:7880")
+LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY", "")
+LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET", "")

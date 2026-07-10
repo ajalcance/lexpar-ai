@@ -83,9 +83,15 @@ export function SparringRoom() {
           </Badge>
           {isConnected && (
             <Badge
-              variant={judgeSpeaking || activeSpeaker === 'opposing_counsel' ? 'destructive' : 'secondary'}
+              variant={
+                judgeSpeaking || activeSpeaker === 'judge' || activeSpeaker === 'opposing_counsel'
+                  ? 'destructive'
+                  : 'secondary'
+              }
             >
-              {judgeSpeaking
+              {/* activeSpeaker === 'judge' is structural (the judge participant's own audio);
+                  judgeSpeaking is the fallback-path synthetic label. */}
+              {judgeSpeaking || activeSpeaker === 'judge'
                 ? 'Judge speaking'
                 : activeSpeaker === 'opposing_counsel'
                   ? 'Opposing counsel speaking'

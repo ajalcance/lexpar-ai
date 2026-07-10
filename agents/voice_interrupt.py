@@ -56,12 +56,16 @@ async def handle_interim(
     the transcript (via `classifier.state`), so the judge can rule on it and the saved transcript
     shows it — otherwise a spoken objection would leave no trace in the record.
 
-    `judge_rule` (optional, injected: `async (Objection, str) -> None`) is the inline judge — it
-    rules on the objection and speaks the ruling right after Opposing Counsel's line (main.py wires
-    the real one). While it runs, the classifier is placed on `hold()` so no new objection can fire
-    over the judge; the hold is ALWAYS released (success, failure, or timeout is the caller's
-    concern — we release on any exit), and the classifier's time-floor cooldown still applies after
-    release, so re-arming requires BOTH the ruling to have finished AND the floor to have elapsed.
+    `judge_rule` (optional, injected: `async (Objection, str, wait_for_clear) -> None`) is the
+    inline judge — it rules on the objection and speaks the ruling right after Opposing Counsel's
+    line (main.py wires the real one). `wait_for_clear` is an awaitable the judge MUST await before
+    speaking: it resolves when the canned objection line has finished playing. The judge speaks on
+    its own participant/track with no shared speech queue, so without this gate a fast ruling would
+    talk OVER the objection line. While the judge runs, the classifier is placed on `hold()` so no
+    new objection can fire over the judge; the hold is ALWAYS released (success, failure, or
+    timeout is the caller's concern — we release on any exit), and the classifier's time-floor
+    cooldown still applies after release, so re-arming requires BOTH the ruling to have finished
+    AND the floor to have elapsed.
     """
     t_start = time.perf_counter()
     decision = await asyncio.to_thread(classifier.consider, transcript)
@@ -76,13 +80,17 @@ async def handle_interim(
         await session.interrupt()
         # Start the ruling NOW (concurrently) so quick_ruling generation OVERLAPS the canned line's
         # playback instead of running after it — otherwise the "Sustained" landed ~2-3s late (canned
-        # playback + generation), after the attorney had resumed. The ruling's own say() enqueues
-        # after the canned line (the SDK serializes the speech queue), so order is preserved.
+        # playback + generation), after the attorney had resumed. The judge speaks on its own
+        # participant (no shared queue), so ordering is enforced by the canned_done gate below.
+        canned_done = asyncio.Event()
         rule_task = None
         if judge_rule is not None:
             classifier.hold()
-            rule_task = asyncio.create_task(judge_rule(objection, transcript))
+            rule_task = asyncio.create_task(
+                judge_rule(objection, transcript, canned_done.wait)
+            )
         await session.say(objection_utterance(decision), allow_interruptions=True)
+        canned_done.set()  # objection line finished playing — the judge may now speak
         t_said = time.perf_counter()
         # Immediate-fire latency instrumentation (Issue 3): the gate/classify decision and the
         # interrupt+say dispatch. Combine with Deepgram's interim log timestamps + the measured TTS

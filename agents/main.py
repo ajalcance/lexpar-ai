@@ -43,6 +43,8 @@ import backend_client
 import config
 import judge
 import scorecard_builder
+from judge_participant import JudgeParticipant
+from judge_voice import JudgeVoice
 from objection_classifier import ObjectionClassifier
 from session_state import SessionState
 from streaming_verify import astream_verified_reply
@@ -188,20 +190,33 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             json.dumps(event).encode("utf-8"), reliable=True, topic="objection"
         )
 
+    # The Judge is a REAL second room participant (identity "judge", own connection + audio track,
+    # judge_participant.py): speaker attribution is correct by construction — the frontend sees the
+    # judge participant speaking, no synthetic label events. Judge audio also bypasses the OC
+    # session's speech queue, so session.interrupt()/VAD can never cut the judge off.
+    judge_participant = JudgeParticipant(
+        url=config.LIVEKIT_URL,
+        api_key=config.LIVEKIT_API_KEY,
+        api_secret=config.LIVEKIT_API_SECRET,
+        room_name=ctx.room.name,
+        tts=judge_tts,
+    )
+    judge_connected = await judge_participant.connect()
+
     async def _publish_judge_speaking(speaking: bool) -> None:
-        # The judge is voiced through the SAME agent participant as Opposing Counsel, so the
-        # frontend's active-speaker indicator (any remote audio → "Opposing Counsel") can't tell
-        # them apart. Bracket judge audio with this signal so the UI can label it "Judge speaking".
+        # FALLBACK-ONLY label signal: when the judge participant is unavailable and the judge is
+        # multiplexed onto the OC agent participant, the frontend can't attribute the audio — this
+        # brackets it so the UI can still show "Judge speaking".
         try:
             msg = json.dumps({"type": "judge_speaking", "speaking": speaking}).encode("utf-8")
             await ctx.room.local_participant.publish_data(msg, reliable=True, topic="objection")
         except Exception:
             pass
 
-    async def _judge_say(text: str) -> None:
-        # Speak as the Judge: synthesize on the judge's distinct voice and play it through the
-        # session's speech queue (queued behind any in-flight OC line, so ordering is natural).
-        # Not interruptible — you don't talk over the judge, and the line is 1-2s.
+    async def _judge_say_fallback(text: str) -> None:
+        # The previous working path (judge voice through the shared agent participant via the
+        # session speech queue) — kept verbatim so a judge-participant failure degrades to exactly
+        # the old behavior, never to a silent judge.
         async def frames():
             async for synthesized in judge_tts.synthesize(text):
                 yield synthesized.frame
@@ -213,13 +228,24 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         finally:
             await _publish_judge_speaking(False)
 
-    async def judge_rule(objection, fragment: str) -> None:
+    judge_voice = JudgeVoice(
+        primary=judge_participant.say if judge_connected else None,
+        fallback=_judge_say_fallback,
+    )
+
+    async def _judge_say(text: str) -> None:
+        await judge_voice.say(text)
+
+    async def judge_rule(objection, fragment: str, wait_for_clear) -> None:
         # Inline ruling (§6.5): fast-model call → apply to the ledger IMMEDIATELY → judge speaks
-        # "Sustained/Overruled — <reason>" right after OC's objection line. Fail-safe: on any
-        # error/timeout the judge stays SILENT and the objection stays PENDING — the end-of-session
-        # assessment rules it (never fabricate a penalty). The classifier is on hold() while this
-        # runs (voice_interrupt), so no new objection can fire over the judge; the timeout below
-        # bounds how long that hold can last if the model call hangs.
+        # "Sustained/Overruled — <reason>" right after OC's objection line. Generation runs
+        # concurrently with the canned line's playback, but the SPEAK is gated on `wait_for_clear`
+        # (the canned line finishing) — the judge has its own participant/track with no shared
+        # speech queue, so without the gate a fast ruling would talk over the objection line.
+        # Fail-safe: on any error/timeout the judge stays SILENT and the objection stays PENDING —
+        # the end-of-session assessment rules it (never fabricate a penalty). The classifier is on
+        # hold() while this runs (voice_interrupt), so no new objection can fire over the judge;
+        # the timeout below bounds how long that hold can last if the model call hangs.
         turn_flags["objected"] = True  # skip the redundant end-of-turn OC reply (Issue 1)
         try:
             ruling, reason = await asyncio.wait_for(
@@ -235,6 +261,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         spoken = f"{ruling.capitalize()}. {reason}" if reason else f"{ruling.capitalize()}."
         state.add_turn("judge", spoken)
         try:
+            await wait_for_clear()  # never speak over the canned objection line
             await _judge_say(spoken)
         except Exception:
             logger.exception("inline ruling could not be spoken (ledger already updated)")
@@ -329,6 +356,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     async def _on_shutdown() -> None:
         await _finalize_session(speak=False)  # last-resort backstop
+        await judge_participant.aclose()
 
     ctx.add_shutdown_callback(_on_shutdown)
 
