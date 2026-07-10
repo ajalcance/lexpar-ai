@@ -26,12 +26,15 @@ Single monorepo. One repo, one source of truth, no cross-repo version drift for 
 lexpar-ai/
 ├── frontend/                    React + TypeScript (Vite)
 │   ├── src/
-│   │   ├── components/          Shared UI (shadcn/ui + Tailwind)
+│   │   ├── components/          Shared UI + app shell (AppLayout, UserMenu, Breadcrumbs; shadcn/ui + Tailwind)
 │   │   ├── pages/
 │   │   │   ├── Login.tsx
-│   │   │   ├── Dashboard.tsx
+│   │   │   ├── Dashboard.tsx         Cases list
 │   │   │   ├── CaseUpload.tsx
-│   │   │   ├── SparringRoom.tsx     LiveKit room UI (live session)
+│   │   │   ├── CaseDetail.tsx        case hub — facts, start session, rehearsal history
+│   │   │   ├── Profile.tsx           read-only identity + role
+│   │   │   ├── Admin.tsx             Court administration (§13, admin only)
+│   │   │   ├── SparringRoom.tsx      LiveKit room UI (live session)
 │   │   │   └── Scorecard.tsx
 │   │   ├── hooks/
 │   │   ├── store/                auth.ts, session.ts (Zustand)
@@ -152,10 +155,21 @@ TanStack Query (server state), `@livekit/components-react` + `livekit-client` (r
 | Route | Purpose | Auth required |
 |---|---|---|
 | `/login` | Login form | no |
-| `/dashboard` | List of cases | yes |
-| `/case/new` | Upload case facts / documents | yes |
+| `/dashboard` | Cases list ("Cases" — the authenticated home) | yes |
+| `/case/new` | Create a case (title, facts, court) + attach pleading | yes |
+| `/case/:id` | Case detail — facts, start a session, rehearsal history | yes |
 | `/session/:id` | Live sparring room (LiveKit connection) | yes |
 | `/session/:id/scorecard` | Post-session results | yes |
+| `/profile` | Profile — read-only identity + role, sign out | yes |
+| `/admin` | Court administration (admin only, §13) | yes (admin) |
+
+**App shell & navigation.** All authenticated routes render inside a single shared layout
+(`components/AppLayout.tsx`): a topbar with the product name, a primary **Cases** nav item, a
+role-gated **Court administration** pill (only when `role === 'admin'`), and a **user menu**
+(`components/UserMenu.tsx` → Profile + Sign out). Interior pages (deeper than the Cases list) carry
+a consistent **breadcrumb strip** (`components/Breadcrumbs.tsx`, e.g. `Cases › {Case} › Scorecard`)
+instead of ad-hoc back buttons. Starting a session and viewing a case's past scorecards both live on
+the case-detail page, backed by `GET /api/cases/{id}/sessions`.
 
 ### Login form (placeholder auth)
 
@@ -209,6 +223,7 @@ the one thing still absent:
 | GET | `/api/cases/{id}` | Case detail | yes |
 | POST | `/api/cases/{id}/documents` | Upload a pleading PDF → ingest (§12) | yes |
 | GET | `/api/cases/{id}/documents` | Pleading ingestion status (§12) | yes |
+| GET | `/api/cases/{id}/sessions` | A case's sessions (rehearsal history), newest first | yes |
 | GET | `/api/courts` | Active court catalog (case-creation dropdown; §13) | yes |
 | POST | `/api/courts` | Create a court (§13) | **admin** |
 | POST | `/api/courts/{id}/rules` | Upload an official rule PDF → ingest (§13) | **admin** |

@@ -11,6 +11,7 @@
 
 import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Shield } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -101,9 +102,14 @@ export function Admin() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    // Left accent + eyebrow mark this as a distinct administrative section, not the attorney app.
+    <div className="flex flex-col gap-6 border-l-2 border-primary/40 pl-5">
       <div>
-        <h1 className="text-2xl font-semibold">Court administration</h1>
+        <div className="flex items-center gap-1.5 text-xs font-medium tracking-wide text-primary uppercase">
+          <Shield className="size-3.5" />
+          Administration
+        </div>
+        <h1 className="mt-1 text-2xl font-semibold">Court administration</h1>
         <p className="text-sm text-muted-foreground">
           Manage the forums and the official procedural rules that ground the AI.
         </p>

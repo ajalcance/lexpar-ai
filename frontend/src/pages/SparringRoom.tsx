@@ -17,6 +17,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Mic, MicOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Breadcrumbs } from '@/components/Breadcrumbs';
 import { TranscriptLine } from '@/components/TranscriptLine';
 import { useSparringRoom, type ConnStatus } from '@/hooks/useSparringRoom';
 import { useSparringSession } from '@/hooks/useSparringSession';
@@ -70,6 +71,9 @@ export function SparringRoom() {
 
   return (
     <div className="flex flex-col gap-6">
+      <Breadcrumbs
+        items={[{ label: 'Cases', to: '/dashboard' }, { label: 'Sparring session' }]}
+      />
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Sparring session</h1>

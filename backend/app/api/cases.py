@@ -24,8 +24,14 @@ from app.config import get_settings
 from app.db import SessionLocal, get_db
 from app.models.user import User
 from app.schemas.case import CaseCreate, CaseDocumentOut, CaseOut
+from app.schemas.session import SessionOut
 from app.security import get_current_user
-from app.services import case_knowledge_service, case_service, storage_service
+from app.services import (
+    case_knowledge_service,
+    case_service,
+    session_service,
+    storage_service,
+)
 
 router = APIRouter(prefix="/api/cases", tags=["cases"])
 
@@ -70,6 +76,18 @@ def get_case(
     db: DbSession = Depends(get_db),
 ) -> CaseOut:
     return case_service.get_case(db, current_user, case_id)
+
+
+@router.get("/{case_id}/sessions", response_model=list[SessionOut])
+def list_case_sessions(
+    case_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: DbSession = Depends(get_db),
+) -> list[SessionOut]:
+    """A case's rehearsal history — its sessions, newest first. 404 if the case isn't the
+    attorney's (ownership check), so past scorecards are reachable from the case detail view."""
+    case_service.get_case(db, current_user, case_id)  # 404/ownership check
+    return session_service.list_sessions_for_case(db, current_user, case_id)
 
 
 @router.post(

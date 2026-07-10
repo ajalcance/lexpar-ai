@@ -23,6 +23,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Breadcrumbs } from '@/components/Breadcrumbs';
 import { PleadingUpload } from '@/components/PleadingUpload';
 import * as api from '@/lib/api';
 
@@ -58,24 +59,31 @@ export function CaseUpload() {
 
   if (createdCaseId) {
     return (
-      <Card className="mx-auto max-w-2xl">
-        <CardHeader>
-          <CardTitle>Case created — attach the pleading</CardTitle>
-          <CardDescription>
-            Upload the full complaint/pleading so Opposing Counsel and the Judge reason from the
-            real filing. You can also skip and do this later.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-6">
-          <PleadingUpload caseId={createdCaseId} />
-          <Button onClick={() => navigate('/dashboard')}>Done — go to dashboard</Button>
-        </CardContent>
-      </Card>
+      <div className="mx-auto max-w-2xl">
+        <Breadcrumbs
+          items={[{ label: 'Cases', to: '/dashboard' }, { label: 'New case' }]}
+        />
+        <Card>
+          <CardHeader>
+            <CardTitle>Case created — attach the pleading</CardTitle>
+            <CardDescription>
+              Upload the full complaint/pleading so Opposing Counsel and the Judge reason from the
+              real filing. You can also skip and do this later.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-6">
+            <PleadingUpload caseId={createdCaseId} />
+            <Button onClick={() => navigate(`/case/${createdCaseId}`)}>Done</Button>
+          </CardContent>
+        </Card>
+      </div>
     );
   }
 
   return (
-    <Card className="mx-auto max-w-2xl">
+    <div className="mx-auto max-w-2xl">
+      <Breadcrumbs items={[{ label: 'Cases', to: '/dashboard' }, { label: 'New case' }]} />
+      <Card>
       <CardHeader>
         <CardTitle>New case</CardTitle>
         <CardDescription>
@@ -153,6 +161,7 @@ export function CaseUpload() {
           </div>
         </form>
       </CardContent>
-    </Card>
+      </Card>
+    </div>
   );
 }

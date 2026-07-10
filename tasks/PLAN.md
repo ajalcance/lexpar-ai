@@ -2114,3 +2114,58 @@ after the live pass.
   already reflects case summary, ledgers, pleading excerpts, procedural rules, and proceeding
   type; no change needed.
 - Suites re-run to confirm no-op: **backend 68, agents 154, frontend 30 — all green, unchanged.**
+
+---
+
+### UI/UX & navigation redesign (app shell, breadcrumbs, naming, Profile, case history) — status: done
+
+Whole-app navigation/IA pass — the app had grown page-by-page with no coherent shell. Run in
+three gated phases (audit → design proposal → implementation), each reviewed before the next.
+
+**Phase 1 (audit, no code):** walked every route. Key correction to the premise — a persistent
+shell (`AppLayout`) already existed on every authed page (topbar: logo, muted "Admin" link, inert
+email, log out), so this was "enrich the shell + add in-page nav," not "build nav from scratch."
+Real defects found: no explicit primary nav (logo doubled as home), no breadcrumbs anywhere despite
+real depth, three differently-worded back buttons, label drift (`/dashboard` vs "Your cases" vs
+"Back to cases"; topbar "Admin" vs page "Court administration"), inert/incomplete user identity (no
+Profile, role never legible), admin area visually indistinguishable, and completed sessions/
+scorecards unreachable once left.
+
+**Phase 2 (design, reviewed):** enhanced single **topbar** (no sidebar — only ~2 attorney
+destinations + 1 admin); shared **breadcrumb strip** on interior pages; naming pass; **Profile**
+scoped to read-only identity + role badge + sign-out (deliberately NO change-password/edit — nothing
+to wire them to under stub auth); admin area marked with an eyebrow/accent + a distinct pill.
+Finding #6 (past scorecards unreachable) was confirmed to need a **new backend endpoint** (verified:
+no route returns a case's sessions) and flagged for explicit approval rather than silently built.
+
+**Decisions (resolved with user):** (1) design approved as written; (2) build
+`GET /api/cases/{id}/sessions` + the Case-detail IA level; (3) leave the default-proceeding
+preference out (no real persistence for it); (4) keep "Start sparring" as brand voice.
+
+**Result:** Done, all offline suites green after each change. **Backend (one approved addition):**
+`session_service.list_sessions_for_case` + owner-scoped `GET /api/cases/{id}/sessions`
+(reuses `SessionOut`; 404 on a non-owned/unknown case). **Frontend shell:** `AppLayout` rebuilt —
+explicit **Cases** nav item (active-state), role-gated **Court administration** pill (gating
+unchanged), and a **user menu** (`UserMenu.tsx`, no dropdown primitive installed → a plain
+accessible disclosure) → Profile + Sign out, replacing the inert email. **Breadcrumbs:** one shared
+`Breadcrumbs.tsx` on every interior page (`Cases › New case`, `Cases › {Case}`,
+`Cases › {Case} › Scorecard`, `Cases › Sparring session`), replacing the ad-hoc back buttons; the
+Scorecard chain fetches session→case via plain GETs (no room connect), degrading to
+`Cases › Scorecard`. **Naming:** topbar → "Court administration"; new "Cases"; CaseUpload step-2
+"Done" (now lands on the case-detail page). **Profile** (`/profile`): identity (name/email/firm when
+present) + Attorney/Administrator badge + Sign out. **Admin:** "ADMINISTRATION" eyebrow + Shield +
+left accent, distinct topbar pill; role-gating + backend 403 untouched. **Case-detail level**
+(`/case/:id`, `CaseDetail.tsx`): facts, the relocated **Start sparring** control, and **rehearsal
+history** (each past session → its scorecard/resume) — fixes the unreachable-scorecard gap;
+`Dashboard` became a pure Cases list whose cards link into detail. **Tests:** backend **72** (+4:
+list returns/empty/auth/404); frontend **35** (Dashboard.test rewritten to card→detail; new
+CaseDetail.test ×3 for the relocated session-creation flow + history link; new Profile.test ×2);
+agents **154** unchanged (no agent code touched); type-check + lint clean (only the two pre-existing
+generated-`ui/` fast-refresh advisories). **Note:** Base UI `Button render={<Link>}` yields a
+`button`-role anchor, so link-destination assertions query by text + `closest('a')`. **Docs:**
+ARCHITECTURE §4 (new `/case/:id` `/profile` `/admin` rows + app-shell/breadcrumbs paragraph), §5
+(sessions-list route), §2 tree (CaseDetail/Profile/Admin pages + shell components). **§13 checked,
+no change needed** — the admin surface was only re-labeled/re-styled; court selector, grounding
+indicator, and admin bootstrap are functionally identical. **No live LiveKit / no SparringRoom
+preview** (standing constraint) — verified via the offline suites + type-check + lint, as in Phases
+4–6.

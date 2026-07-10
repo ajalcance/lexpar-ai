@@ -382,6 +382,12 @@ export async function getSession(id: string): Promise<Session> {
   return toSession(await request<SessionJson>(`/api/sessions/${id}`));
 }
 
+/** A case's rehearsal history — its sessions, newest first (GET /api/cases/{id}/sessions). */
+export async function getCaseSessions(caseId: string): Promise<Session[]> {
+  const data = await request<SessionJson[]>(`/api/cases/${caseId}/sessions`);
+  return data.map(toSession);
+}
+
 /** The session's real persisted transcript (attorney / opposing counsel / judge lines). */
 export async function getSessionTranscript(id: string): Promise<Transcript[]> {
   const data = await request<SessionDetailJson>(`/api/sessions/${id}`);

@@ -80,3 +80,56 @@ def test_scorecard_gated_on_completed_session(client, db_session, auth_headers):
     ready = client.get(f"/api/sessions/{session.id}/scorecard", headers=auth_headers)
     assert ready.status_code == 200
     assert ready.json()["overall_score"] == 80.0
+
+
+# --- GET /api/cases/{case_id}/sessions (rehearsal history, §UI-redesign) -------------------------
+
+
+def _create_case_via_api(client, auth_headers, title="History Case"):
+    resp = client.post(
+        "/api/cases", headers=auth_headers, json={"title": title, "case_facts": "F"}
+    )
+    assert resp.status_code == 201
+    return resp.json()["id"]
+
+
+def _start_session_via_api(client, auth_headers, case_id, proceeding_type="oral_argument"):
+    resp = client.post(
+        "/api/sessions",
+        headers=auth_headers,
+        json={"case_id": case_id, "proceeding_type": proceeding_type},
+    )
+    assert resp.status_code == 201
+    return resp.json()["id"]
+
+
+def test_list_case_sessions_returns_the_cases_sessions(client, auth_headers):
+    case_id = _create_case_via_api(client, auth_headers)
+    first = _start_session_via_api(client, auth_headers, case_id)
+    second = _start_session_via_api(client, auth_headers, case_id, "cross_examination")
+
+    resp = client.get(f"/api/cases/{case_id}/sessions", headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert {s["id"] for s in body} == {first, second}
+    # Every returned session belongs to this case.
+    assert all(s["case_id"] == case_id for s in body)
+
+
+def test_list_case_sessions_empty_when_none_started(client, auth_headers):
+    case_id = _create_case_via_api(client, auth_headers)
+    resp = client.get(f"/api/cases/{case_id}/sessions", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_list_case_sessions_requires_auth(client, auth_headers):
+    case_id = _create_case_via_api(client, auth_headers)
+    assert client.get(f"/api/cases/{case_id}/sessions").status_code == 401
+
+
+def test_list_case_sessions_unknown_case_404(client, auth_headers):
+    import uuid as _uuid
+
+    resp = client.get(f"/api/cases/{_uuid.uuid4()}/sessions", headers=auth_headers)
+    assert resp.status_code == 404

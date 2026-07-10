@@ -50,6 +50,21 @@ def create_session(
     return session
 
 
+def list_sessions_for_case(db: DbSession, user: User, case_id: uuid.UUID) -> list[Session]:
+    """All of the attorney's sessions for one case, newest first — the case's rehearsal history.
+    Scoped by user_id AND case_id (least privilege) and excluding soft-deleted rows."""
+    stmt = (
+        select(Session)
+        .where(
+            Session.case_id == case_id,
+            Session.user_id == user.id,
+            Session.deleted_at.is_(None),
+        )
+        .order_by(Session.started_at.desc())
+    )
+    return list(db.scalars(stmt))
+
+
 def get_session(db: DbSession, user: User, session_id: uuid.UUID) -> Session:
     stmt = select(Session).where(
         Session.id == session_id,

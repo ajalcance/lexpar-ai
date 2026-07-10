@@ -8,10 +8,9 @@
  *   render only, never log.
  */
 
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import {
   Card,
   CardContent,
@@ -19,6 +18,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import { Breadcrumbs, type Crumb } from '@/components/Breadcrumbs';
 import { TranscriptLine } from '@/components/TranscriptLine';
 import * as api from '@/lib/api';
 import { ApiError } from '@/lib/api';
@@ -58,6 +58,29 @@ export function Scorecard() {
   });
   const allFlaggedCitations = (provenance ?? []).flatMap((record) => record.citationFlags);
 
+  // Breadcrumb chain back to this session's case (Cases › {Case} › Scorecard), so a completed
+  // rehearsal is reachable through the case detail — not just via a flat "back to cases". The
+  // session→case lookups are plain GETs (no live-room connect); they degrade to Cases › Scorecard.
+  const { data: session } = useQuery({
+    queryKey: ['session', sessionId],
+    queryFn: () => api.getSession(sessionId),
+    enabled: !!sessionId,
+    retry: false,
+  });
+  const { data: legalCase } = useQuery({
+    queryKey: ['case', session?.caseId],
+    queryFn: () => api.getCase(session!.caseId),
+    enabled: !!session?.caseId,
+    retry: false,
+  });
+  const crumbs: Crumb[] = [
+    { label: 'Cases', to: '/dashboard' },
+    ...(session?.caseId
+      ? [{ label: legalCase?.title ?? 'Case', to: `/case/${session.caseId}` }]
+      : []),
+    { label: 'Scorecard' },
+  ];
+
   if (isLoading) {
     return (
       <p className="text-sm text-muted-foreground">
@@ -72,12 +95,8 @@ export function Scorecard() {
   if (isError && notYetAvailable) {
     return (
       <div className="flex flex-col gap-6">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold">Scorecard</h1>
-          <Button variant="outline" nativeButton={false} render={<Link to="/dashboard" />}>
-            Back to cases
-          </Button>
-        </div>
+        <Breadcrumbs items={crumbs} />
+        <h1 className="text-2xl font-semibold">Scorecard</h1>
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">Scorecard not ready</CardTitle>
@@ -98,12 +117,8 @@ export function Scorecard() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Scorecard</h1>
-        <Button variant="outline" nativeButton={false} render={<Link to="/dashboard" />}>
-          Back to cases
-        </Button>
-      </div>
+      <Breadcrumbs items={crumbs} />
+      <h1 className="text-2xl font-semibold">Scorecard</h1>
 
       <Card>
         <CardHeader>
