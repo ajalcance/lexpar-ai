@@ -1,6 +1,7 @@
 """
 File: agents/judge.py
-Purpose: The Judge agent. Loads its persona prompt from prompts/judge.md, assembles the session
+Purpose: The Judge agent. Loads its persona + sub-task prompts through the registry (prompts.render
+    — judge, judge_ruling_instruction, judge_assessment, judge_quick_ruling), assembles the session
     context (case facts + established facts + objection ledger) from SessionState, and generates
     judicial output. Three API-calling entry points, all structured JSON so the text comes back
     clean: generate_ruling (a single spoken ruling, used mid-session/harness); quick_ruling (the
@@ -9,7 +10,7 @@ Purpose: The Judge agent. Loads its persona prompt from prompts/judge.md, assemb
     the attorney established, and gives a closing ruling, all in one call so the scorecard reflects
     what actually happened). Message assembly + parsing are pure; only the *_ruling / quick_ruling /
     assess_session calls hit the API.
-Depends on: json; agents/llm_router.py, agents/session_state.py, prompts/judge.md
+Depends on: json; agents/prompts.py (prompt registry), agents/llm_router.py, agents/session_state.py
 Related: agents/opposing_counsel.py, agents/main.py, agents/scorecard_builder.py,
     backend/app/models/scorecard.py, docs/ARCHITECTURE.md §6 / §6.5 / §7
 Security notes: Feeds session content (work product) to the model as prompt context — never log it;
@@ -21,55 +22,23 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import citation_check
 import court_knowledge
+import prompts
 from llm_router import build_endpoint, chat, judge_config, objection_config
 from session_state import Objection, SessionState
 
 logger = logging.getLogger("lexpar.agents.judge")
 
-_PROMPT_PATH = Path(__file__).parent / "prompts" / "judge.md"
-
-_RULING_INSTRUCTION = 'Respond ONLY with JSON: {"ruling": "<what you say aloud from the bench>"}.'
-
 _VALID_RULINGS = ("sustained", "overruled")
 _FALLBACK_CLOSING = "The court has considered the arguments. That concludes this session."
-
-_ASSESSMENT_INSTRUCTION = (
-    "Review the full session below. Then, as the presiding judge:\n"
-    "1. For EACH objection still marked [pending] in the SESSION RECORD, in the order listed, rule "
-    "'sustained' or 'overruled' based on what the transcript shows. Objections already marked "
-    "[sustained] or [overruled] were ruled from the bench DURING the session — do NOT re-rule "
-    "them; treat those rulings as final.\n"
-    "2. List 2-5 key facts the attorney genuinely established on the record (supported by the "
-    "transcript and not undercut by a sustained objection). Omit if none.\n"
-    "3. Give a one- to two-sentence closing ruling from the bench that reflects the session as a "
-    "whole, including a brief acknowledgment of the objections already ruled during the session.\n"
-    'Respond ONLY with JSON: {"rulings": ["sustained"|"overruled", ...], "established_facts": '
-    '["<fact>", ...], "closing_ruling": "<what you say aloud>"}. The rulings array must have '
-    "exactly one entry per [pending] objection, in the same order (empty array if none are "
-    "pending)."
-)
-
-_QUICK_RULING_SYSTEM = (
-    "You are the presiding judge in a courtroom rehearsal. Opposing Counsel just objected to the "
-    "attorney's in-progress statement. Rule IMMEDIATELY, as from the bench: sustained or "
-    "overruled, with one short reason (a few words, spoken aloud). Respond ONLY with JSON "
-    '{"ruling": "sustained"|"overruled", "reason": "<a few words>"}.'
-)
 
 _SPEAKER_LABELS = {
     "attorney": "ATTORNEY",
     "opposing_counsel": "OPPOSING COUNSEL",
     "judge": "JUDGE",
 }
-
-
-def load_prompt() -> str:
-    """Read the Judge persona prompt."""
-    return _PROMPT_PATH.read_text(encoding="utf-8")
 
 
 def _grounded_context(state: SessionState, excerpts: str, rules: str) -> str:
@@ -92,10 +61,10 @@ def build_messages(
     user = (
         f'The attorney just argued:\n"{attorney_turn}"\n\n'
         "As the presiding judge, rule on any pending objection or give brief guidance if "
-        f"warranted, in a sentence or two. {_RULING_INSTRUCTION}"
+        f'warranted, in a sentence or two. {prompts.render("judge_ruling_instruction")}'
     )
     return [
-        {"role": "system", "content": load_prompt()},
+        {"role": "system", "content": prompts.render("judge")},
         {"role": "system", "content": _grounded_context(state, excerpts, rules)},
         {"role": "user", "content": user},
     ]
@@ -157,9 +126,9 @@ def _build_assessment_messages(
         f"FULL TRANSCRIPT:\n{_render_transcript(state)}"
     )
     return [
-        {"role": "system", "content": load_prompt()},
+        {"role": "system", "content": prompts.render("judge")},
         {"role": "system", "content": context},
-        {"role": "user", "content": _ASSESSMENT_INSTRUCTION},
+        {"role": "user", "content": prompts.render("judge_assessment")},
     ]
 
 
@@ -203,7 +172,7 @@ def _build_quick_ruling_messages(
         f"OBJECTION: {objection.grounds} (raised by {objection.raised_by})"
     )
     return [
-        {"role": "system", "content": _QUICK_RULING_SYSTEM},
+        {"role": "system", "content": prompts.render("judge_quick_ruling")},
         {"role": "user", "content": user},
     ]
 

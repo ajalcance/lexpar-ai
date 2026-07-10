@@ -38,6 +38,7 @@ import threading
 import time
 from dataclasses import dataclass
 
+import prompts
 from llm_router import build_endpoint, chat, objection_config
 from session_state import SessionState
 
@@ -247,22 +248,6 @@ def _immediate_objection_type(grounds: list[str]) -> str:
     return grounds[0]
 
 
-def _system_prompt(eligible: tuple[str, ...]) -> str:
-    """The tier-3 system prompt, with the valid-type list NARROWED to the grounds eligible for
-    the session's proceeding type (§13) — the model is never even offered an ineligible type."""
-    return (
-        "You decide, in real time, whether Opposing Counsel should INTERRUPT the attorney's "
-        "in-progress statement with an objection. Follow the rule: object ONLY when the phrasing "
-        "genuinely invites one — NOT on every turn. Most fragments should not trigger an "
-        "objection. Use the SESSION RECORD to avoid objecting on grounds already ruled. Valid "
-        "objection types: "
-        + ", ".join(eligible)
-        + '. Respond ONLY with JSON {"fire": boolean, "objection_type": <one type or null>, '
-        '"reason": "<a few words>"}. Set fire=false and objection_type=null unless there is a '
-        "clear, well-founded objection."
-    )
-
-
 def _build_messages(
     fragment: str, state: SessionState, candidates: list[str], rules: str = ""
 ) -> list[dict[str, str]]:
@@ -281,7 +266,13 @@ def _build_messages(
         f'ATTORNEY (statement in progress): "{fragment}"'
     )
     return [
-        {"role": "system", "content": _system_prompt(eligible_grounds_for(state.proceeding_type))},
+        {
+            "role": "system",
+            "content": prompts.render(
+                "objection_classifier_system",
+                eligible=", ".join(eligible_grounds_for(state.proceeding_type)),
+            ),
+        },
         {"role": "user", "content": user},
     ]
 

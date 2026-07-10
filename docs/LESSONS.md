@@ -315,3 +315,24 @@ autoplay unlock, a separate concern; diagnose playback before blaming TTS. Corol
 gesture-unblock listeners UNCONDITIONALLY — `canPlaybackAudio` can read `true` before any track plays
 and flip `false` later when audio arrives, so gating the unblock on it at connect time skips it and
 strands the user with no banner and no recovery but the explicit button.
+
+### [Agents/prompts] A future prompt-customization layer must be structurally unable to reach a safety constraint
+**Wrong:** When moving prompts into files (so they're tunable without touching code) and designing
+toward an eventual user-customizable-prompt feature, the obvious shape is one editable prompt blob
+per persona. That would let a future customization layer edit or drop the no-fabrication /
+never-invent-case-law lines along with the tone — silently removing a correctness/compliance
+guarantee. Retrofitting a safety boundary onto an already-shipped customization feature is far
+harder than designing for it up front.
+**Right:** Separate an IMMUTABLE constraints region from the customizable style/persona content from
+day one, and shape the loader API so the boundary is *structural*, not a convention someone can
+forget: `prompts.render(name, **variables)` NEVER accepts constraint text as a parameter — a
+customization layer can only ever pass style/persona `variables`, so it has no surface to touch a
+constraint. Two backstops make it defense-in-depth: (1) the real grounding enforcement is CODE, not
+prompt (`citation_check.flag_ungrounded` + fail-safe defaults + the verbatim-only rules corpus),
+immune to any prompt whatsoever; (2) byte-identical golden tests freeze each prompt's exact text, so
+even a direct edit to a constraint line fails CI and shows up as a deliberate, reviewed change.
+Process corollary: do the structural migration (move, don't change) and any wording improvement as
+SEPARATE commits — mixing them hides a behavior change inside a "just moved it" diff. Deferred by
+design (documented, not done): collapsing the duplicated no-fabrication lines into one shared
+`_core_constraints.md` is the correct end state, but it changes prompt bytes, so it must be its own
+explicit, tested behavior change — never folded into the move.

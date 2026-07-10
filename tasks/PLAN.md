@@ -2309,3 +2309,35 @@ CONFIRMED** — the user ran a live session and can now hear Opposing Counsel + 
 ([Frontend/LiveKit] attach already-subscribed tracks — a subscribed-but-unattached track feeds the
 analyser/active-speaker so bars move + the badge shows "speaking" while playback is silent; sweep
 existing tracks after connect + register the autoplay unblock unconditionally).
+
+---
+
+### Prompt storage audit & restructure — Step 1 (structural migration, moved-not-changed) — status: done
+
+**Audit (Phase 1):** confirmed the suspicion — 2 personas followed the `.md` rule; 11 other
+prompt/instruction strings were inline Python across 4 files (opposing_counsel, judge,
+objection_classifier, verification + the backend pleading summarizer). `load_prompt()` was a pure
+file read, duplicated in two files, uncached.
+
+**Design (Phase 2, approved):** `.md` files + a code registry (NOT YAML); `string.Template` for the
+one templated prompt (JSON-brace-safe, unlike `str.format`); a separate backend twin loader (no
+shared import — independent deployables); safety boundary as a convention (constraint sections
+migrated byte-identical; `render()` never accepts constraint text as a parameter) with the shared
+`_core_constraints.md` reflow + prompt_version/provenance tie-in explicitly OUT of scope.
+
+**Step 1 Result:** Done — provably moved, not changed. **`agents/prompts.py`** registry
+(`render(name, **vars)`, process-lifetime cache, `warm_cache()` called at worker startup) + 8 new
+`prompts/*.md` (reply-style, 2 continuations, ruling-instruction, assessment, quick-ruling,
+classifier-system w/ `$eligible`, consistency-verifier) alongside the 2 unchanged personas.
+**`backend/app/prompts/prompt_loader.py`** twin + `pleading_summary.md`. Every call site
+(OC ×3 message builders, Judge ×3, classifier tier-3, verifier, backend summarizer) now renders
+from the registry; both duplicated `load_prompt()` copies + all inline constants removed. **The
+`.md` files were generated FROM the live constants (scratchpad script), so they are byte-for-byte the
+originals — verified before any call site changed.** **Load-bearing tests:** `agents/tests/
+test_prompts.py` (9) + `backend/tests/test_prompts.py` (2) assert each rendered prompt equals a
+frozen golden string (the exact pre-migration text) — a one-byte drift fails CI; plus registry↔dir
+sync, warm_cache, and JSON-braces-survive-templating. **Suites: agents 163 (+9), backend 74 (+2),
+ruff clean, main.py compiles;** frontend untouched (agents/backend only). **Docs:** DEV_GUIDELINES
+§10 (full convention + safety boundary) + §11; LESSONS ([Agents/prompts] customization must be
+structurally unable to reach a safety constraint). Committed on its own (structural-only). Step 2
+(prompt-improvement recommendations) is proposal-only, awaiting per-item approval.

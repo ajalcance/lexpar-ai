@@ -20,6 +20,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+import prompts
 from llm_router import build_endpoint, chat, verification_config
 from session_state import SessionState
 
@@ -97,21 +98,11 @@ def has_suspicious_citation(text: str) -> bool:
     return bool(find_suspicious_citations(text))
 
 
-_CONSISTENCY_SYSTEM = (
-    "You are a verification model in a courtroom rehearsal system. You check a DRAFT REPLY only "
-    "for factual consistency with the SESSION RECORD — not style, tone, or persuasiveness. Flag "
-    "any statement in the draft that contradicts the case facts, an established fact, or a "
-    "sustained objection ruling. Respond ONLY with JSON of the form "
-    '{"consistent": boolean, "contradictions": [string, ...]}. If nothing in the draft '
-    "contradicts the record, return consistent=true and an empty contradictions list."
-)
-
-
 def _build_consistency_messages(reply: str, state: SessionState) -> list[dict[str, str]]:
     """Build the (system, user) messages for the consistency verifier. Pure — no API call."""
     user = f"SESSION RECORD:\n{state.snapshot()}\n\nDRAFT REPLY:\n{reply}"
     return [
-        {"role": "system", "content": _CONSISTENCY_SYSTEM},
+        {"role": "system", "content": prompts.render("consistency_verifier")},
         {"role": "user", "content": user},
     ]
 

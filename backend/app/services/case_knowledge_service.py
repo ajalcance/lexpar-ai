@@ -22,18 +22,12 @@ from sqlalchemy.orm import Session as DbSession
 
 from app.models.case import Case
 from app.models.case_document import CaseChunk, CaseDocument
+from app.prompts import prompt_loader
 from app.services import document_service, embedding_service
 
 logger = logging.getLogger("lexpar.knowledge")
 
 DEFAULT_TOP_K = 5
-
-_SUMMARY_SYSTEM = (
-    "You are a litigation analyst. Read the pleading excerpt and produce a tight structured brief "
-    "the courtroom AI will keep in context. Cover, with short bullet lines: PARTIES; CLAIMS/CAUSES "
-    "OF ACTION; KEY DATES; KEY FACTS ALLEGED; DISPUTED FACTS; STIPULATIONS/ADMISSIONS (if any). "
-    "Be faithful to the text — do not invent. Plain text, no preamble."
-)
 
 
 def _default_summarizer(text: str) -> str:
@@ -49,7 +43,7 @@ def _default_summarizer(text: str) -> str:
     resp = client.chat.completions.create(
         model=settings.case_summary_model,
         messages=[
-            {"role": "system", "content": _SUMMARY_SYSTEM},
+            {"role": "system", "content": prompt_loader.render("pleading_summary")},
             {"role": "user", "content": f"PLEADING:\n{excerpt}"},
         ],
         temperature=0.2,

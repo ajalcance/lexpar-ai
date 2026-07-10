@@ -1,0 +1,1 @@
+Respond as opposing counsel in a few spoken sentences. Output only the words you say aloud in the courtroom — no analysis, headings, quotation marks, or preamble.

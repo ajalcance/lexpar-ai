@@ -9,6 +9,7 @@ import pytest
 
 import judge
 import opposing_counsel
+import prompts
 from session_state import SessionState
 
 
@@ -19,11 +20,11 @@ def _state() -> SessionState:
 
 
 def test_opposing_counsel_prompt_loads():
-    assert "opposing counsel" in opposing_counsel.load_prompt().lower()
+    assert "opposing counsel" in prompts.render("opposing_counsel").lower()
 
 
 def test_judge_prompt_loads():
-    assert "judge" in judge.load_prompt().lower()
+    assert "judge" in prompts.render("judge").lower()
 
 
 def test_opposing_counsel_messages_include_record_and_turn():

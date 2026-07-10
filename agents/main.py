@@ -45,6 +45,7 @@ import config
 import judge
 import llm_router
 import opposing_counsel
+import prompts
 import scorecard_builder
 from judge_participant import JudgeParticipant
 from judge_voice import JudgeVoice
@@ -127,6 +128,10 @@ class OpposingCounselAgent(Agent):
 
 async def entrypoint(ctx: agents.JobContext) -> None:
     await ctx.connect()
+
+    # Preload every prompt file once, up front, so no live-path LLM call does file I/O mid-session
+    # (prompts.py — the single prompt registry). Cheap; the reads are cached for the process.
+    prompts.warm_cache()
 
     session_id = _session_id_from_room(ctx.room)
 

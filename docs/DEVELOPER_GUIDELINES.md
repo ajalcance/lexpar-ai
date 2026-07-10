@@ -184,9 +184,28 @@ week has to be undone to build one later.
   of the interface, not optional polish.
 - **Match subagents to these module boundaries** (frontend / backend / agents / infra) — this
   guidelines doc is what keeps each subagent's output consistent with the others.
-- **Prompt text lives in its own files**, separate from orchestration logic (`prompts/`
-  directory) — this makes iterating on how the Opposing Counsel or Judge "sounds" a safe,
-  reviewable change that can't accidentally break the pipeline code around it.
+- **Prompt text lives in its own files, loaded through the prompt registry** — never inline in
+  Python. **Every** LLM prompt (personas AND sub-task system/instruction prompts: objection
+  classifier, quick ruling, session assessment, consistency verifier, pleading summarizer) is one
+  `.md` file, loaded via `agents/prompts.py` (`prompts.render(name, **vars)`) in the worker, or its
+  twin `backend/app/prompts/prompt_loader.py` in the backend. The two are **separate loaders, no
+  shared import** — the packages deploy independently. Rules:
+  - **One `.md` per prompt**; the registry reads once and caches for the process lifetime (immutable
+    during a run; a deploy restarts and re-reads). The worker calls `prompts.warm_cache()` at startup
+    so no live-path call does file I/O mid-session.
+  - **Templating is `string.Template` (`$name`), never `str.format`** — several prompts contain
+    literal JSON braces (`{"ruling": …}`) that `str.format` would choke on; `$`-placeholders leave
+    `{}` untouched. Escape a literal `$` as `$$`. Static prompts are returned verbatim (no
+    substitution).
+  - **Byte-identity is enforced by golden tests** (`agents/tests/test_prompts.py`,
+    `backend/tests/test_prompts.py`) — any prompt file that drifts by a byte fails CI. A *deliberate*
+    wording change is made by updating the golden alongside it (that's the review signal that model
+    behavior is intended to change).
+  - **Safety boundary (immutable constraints):** the no-fabrication / never-invent-case-law
+    constraint sections are each prompt file's immutable region. `render()` **never** accepts
+    constraint text as a parameter — a future user-customization layer may substitute only
+    style/persona `**variables`, so it structurally cannot reach a constraint. The real enforcement
+    stays code-side (`citation_check` + fail-safe defaults), independent of any prompt. (See LESSONS.)
 
 ---
 
@@ -208,7 +227,8 @@ week has to be undone to build one later.
 
 ### Agents (LiveKit)
 - One file per persona (`opposing_counsel.py`, `judge.py`).
-- Prompts in `agents/prompts/`, not inlined in logic files.
+- Prompts in `agents/prompts/*.md`, loaded via the `prompts.py` registry (`prompts.render`) —
+  never inlined in logic files (see §10 for the full convention + safety boundary).
 - `objection_classifier.py` stays isolated and independently testable — it's the module most
   likely to need rapid iteration as you tune interruption behavior.
 

@@ -1,0 +1,1 @@
+Respond ONLY with JSON: {"ruling": "<what you say aloud from the bench>"}.

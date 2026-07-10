@@ -1,7 +1,8 @@
 """
 File: agents/opposing_counsel.py
-Purpose: The Opposing Counsel agent. Loads its persona prompt from prompts/opposing_counsel.md,
-    assembles the session context (case facts + established facts + objection rulings) from
+Purpose: The Opposing Counsel agent. Loads its persona + sub-task prompts through the registry
+    (prompts.render — opposing_counsel, oc_reply_style, oc_continuation*), assembles the session
+    context (case facts + established facts + objection rulings) from
     SessionState, and generates the next spoken reply via the reasoning model (Fireworks today,
     self-hosted vLLM later — routed by llm_router). Two transports over the same messages:
     generate_reply (blocking, full completion) and stream_reply (yields text deltas for the
@@ -9,7 +10,7 @@ Purpose: The Opposing Counsel agent. Loads its persona prompt from prompts/oppos
     are the mid-stream repair path: when a sentence fails verification, they prompt the model to
     continue from the already-spoken (verified) prefix without repeating the rejected claim.
     Message assembly is pure; only generate_reply/stream_reply/stream_continuation call the API.
-Depends on: agents/llm_router.py, agents/session_state.py, prompts/opposing_counsel.md
+Depends on: agents/prompts.py (prompt registry), agents/llm_router.py, agents/session_state.py
 Related: agents/verification.py (verifies the draft), agents/streaming_verify.py (the per-sentence
     pipeline), agents/main.py (voice pipeline), docs/ARCHITECTURE.md §6 / §6.5
 Security notes: Feeds case facts + live transcript (work product) to the model as prompt context —
@@ -20,24 +21,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterator
-from pathlib import Path
 
+import prompts
 from llm_router import build_endpoint, chat, chat_stream, opposing_counsel_config
 from session_state import SessionState
 
 logger = logging.getLogger("lexpar.agents.oc")
-
-_PROMPT_PATH = Path(__file__).parent / "prompts" / "opposing_counsel.md"
-
-_REPLY_STYLE = (
-    "Respond as opposing counsel in a few spoken sentences. Output only the words you say "
-    "aloud in the courtroom — no analysis, headings, quotation marks, or preamble."
-)
-
-
-def load_prompt() -> str:
-    """Read the Opposing Counsel persona prompt."""
-    return _PROMPT_PATH.read_text(encoding="utf-8")
 
 
 def build_messages(
@@ -52,9 +41,9 @@ def build_messages(
         context += f"\n\n{excerpts}"
     if rules:
         context += f"\n\n{rules}"
-    user = f'The attorney just argued:\n"{attorney_turn}"\n\n{_REPLY_STYLE}'
+    user = f'The attorney just argued:\n"{attorney_turn}"\n\n{prompts.render("oc_reply_style")}'
     return [
-        {"role": "system", "content": load_prompt()},
+        {"role": "system", "content": prompts.render("opposing_counsel")},
         {"role": "system", "content": context},
         {"role": "user", "content": user},
     ]
@@ -70,20 +59,17 @@ def build_continuation_messages(
     """
     context = f"SESSION RECORD (what is on the record so far):\n{state.snapshot()}"
     if spoken_prefix:
-        situation = (
-            f'You are mid-reply and have already said aloud: "{spoken_prefix}"\n'
-            f"Your next sentence was rejected by verification: {failure_reason}\n"
-            "Continue the reply from where you left off. Do not repeat what you have spoken, "
-            "and do not restate the rejected claim."
+        situation = prompts.render(
+            "oc_continuation", spoken_prefix=spoken_prefix, failure_reason=failure_reason
         )
     else:
-        situation = (
-            f"Your draft reply was rejected by verification: {failure_reason}\n"
-            "Respond again, avoiding the rejected claim."
-        )
-    user = f'The attorney just argued:\n"{attorney_turn}"\n\n{situation}\n\n{_REPLY_STYLE}'
+        situation = prompts.render("oc_continuation_restart", failure_reason=failure_reason)
+    user = (
+        f'The attorney just argued:\n"{attorney_turn}"\n\n{situation}\n\n'
+        f'{prompts.render("oc_reply_style")}'
+    )
     return [
-        {"role": "system", "content": load_prompt()},
+        {"role": "system", "content": prompts.render("opposing_counsel")},
         {"role": "system", "content": context},
         {"role": "user", "content": user},
     ]
