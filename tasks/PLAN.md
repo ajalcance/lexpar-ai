@@ -1443,3 +1443,102 @@ updated for injected clocks), **frontend 16** (ruling parse/map ×4), ruff + typ
 (`JUDGE_VOICE_ID`); LESSONS (STT finals not prefix-stable); `.env.example`. **⚠️ Needs a live room:**
 the audio sequencing (attorney cut → OC line → judge ruling in a different voice), the
 non-interruptibility feel, cooldown vs. real pacing, and ruling-event rendering.
+
+---
+
+### Elaboration ordering + residual double-fire + immediate-path latency — status: building
+
+**Issue 1 — OC's full elaboration plays AFTER the judge ruling (traced, not guessed).**
+Two *independent* Opposing-Counsel utterances exist for one objectionable turn, plus the ruling:
+- **Canned objection** — `handle_interim`, fired on an **interim** (mid-speech): `interrupt()` +
+  `say("Objection — leading.")`, enqueued immediately at the fire.
+- **Judge ruling** — `judge_rule` (also in `handle_interim`): `quick_ruling` (~1–2 s LLM) then
+  `_judge_say("Sustained…")`, enqueued ~1–2 s after the fire.
+- **Full elaboration** — `OpposingCounselAgent.llm_node`, fired on **turn-end** (turn detector),
+  streams `generate_reply` (~1.5 s to first sentence, and turn-end is *after* the fire), enqueued
+  last. So through the single TTS output queue the order becomes canned → ruling → elaboration, and
+  the elaboration ("Objection, leading the witness…") re-objects *after* the judge already ruled.
+Root cause: the end-of-turn full reply is **redundant** on a turn where an objection already fired
+and was ruled — it re-objects and races the ruling.
+**Recommendation: DROP the end-of-turn elaboration on turns where an objection fired** (not:
+serialize elaboration-before-ruling). Why: (a) courtroom realism — OC objects → judge rules →
+attorney continues; OC does not then deliver a full argument; (b) removes the duplication; (c)
+eliminates the race entirely (nothing to reorder); (d) the full reply still fires on turns with
+**no** objection (normal cross-examination), so OC still engages substantively when appropriate. The
+"elaboration before ruling" alternative is worse — a full persuasive argument no longer fits once the
+judge rules instantly, and serializing it would *delay* the ruling.
+**Plan:** a per-turn `objected` flag (shared dict): set on fire (in `judge_rule`), checked+reset at
+the top of `llm_node` — if set, `llm_node` returns without generating (stays silent, like the
+existing no-verified-sentences path). Offline test via the harness/a fake: fire → flag set →
+llm_node yields nothing; no fire → llm_node generates normally.
+
+**Issue 2 — "hearsay" fired twice: investigated, most likely NOT an agent double-fire on current code.**
+Evidence: if the agent fired twice, `SessionState.transcript` would hold **two** OC objection turns
+→ the persisted **scorecard transcript shows one** hearsay barge-in, while the **live view shows
+two**. That asymmetry points away from the agent. Analysis of the current classifier: normalized
+debounce + 5 s cooldown + hold suppress same-utterance and within-5 s re-fires — including the
+plausible agent-side variant (two hearsay triggers, "told me" then "said", split across a Deepgram
+segment boundary at `endpointing_ms=25`): the second segment is a non-continuation but lands inside
+the cooldown → suppressed. Ranked causes: **(1)** two *genuinely distinct* hearsay statements > 5 s
+apart → **correct**, not a bug; **(2)** the session ran on **pre-fix** code; **(3)** frontend has
+**no dedup** — a redelivered data packet or a double-registered `DataReceived` listener double-renders
+one event (the mapper mints a random React key each call, so a duplicate can't be de-duplicated).
+**Plan:** (a) add an explicit agent regression test for the segment-split-within-cooldown hearsay
+case (locks in that cooldown covers it); (b) add **frontend dedup** — carry a stable event id
+(the agent's `timestamp` + type) and ignore an event whose id was already appended (defensive
+against redelivery/double-listener regardless of root cause); (c) confirm the worker is on the
+merged fix.
+
+**Issue 3 — immediate-fire latency: MEASURED (not estimated).**
+- Gate decision (`candidate_grounds` + `high_confidence_grounds`): **23 µs** — effectively zero.
+- ElevenLabs `/stream` time-to-first-audio-byte (canned "Objection — leading."): **0.11–0.30 s,
+  median ~0.14 s** (3 real calls).
+- Deepgram STT config: `interim_results=True`, `no_delay=True`, `endpointing_ms=25` (already the
+  most aggressive setting for fast interims/finals).
+**Key finding:** the immediate objection fires on an **interim (mid-speech)**, so Deepgram
+**endpointing is NOT in this path** — tuning endpointing sensitivity will *not* speed the canned
+objection (it only affects turn-end finals). The measurable pieces (gate ≈0, TTS ~0.14 s) are fast;
+the immediate path is not the slow part. The 2–3 s the user felt earlier is the **elaboration**
+(`generate_reply`), which Issue 1's fix removes on objected turns. The two pieces not measurable
+offline — Deepgram **interim delivery latency** and **WebRTC playout buffering** — need a live
+capture.
+**Plan:** add lightweight timestamp instrumentation to the immediate-fire path (interim-received →
+gate decision → `say()` called → first audio frame if exposed) behind a debug log, capture from ONE
+live session, and report the true end-to-end number. Do **not** change `endpointing_ms` for the
+immediate path (wrong lever). Separately flag: `endpointing_ms=25` is very aggressive and could
+end the attorney's *turn* prematurely (a distinct end-of-turn-reply concern, not the immediate path)
+— worth a look if turns feel cut off, but out of scope here.
+
+**Decisions (resolved):** (1) drop the elaboration on objected turns; (2) agent segment-split
+regression test **+** frontend dedup — the worker was **confirmed on the exact PR #4 head during the
+double-hearsay test**, so this is genuinely a frontend duplicate-render (not stale code, not an agent
+double-fire), making dedup the real fix, not just defensive; (3) add timestamp instrumentation to the
+immediate-fire path, do NOT touch `endpointing_ms`.
+
+**Build:**
+- **Issue 1:** shared `turn_flags = {"objected": False}` in `entrypoint`; `judge_rule` sets it True
+  on fire; `OpposingCounselAgent.llm_node` checks+resets at the top → returns without generating
+  when set (stays silent, like the no-verified-sentences path). Non-objected turns reply normally.
+- **Issue 2:** agent test — two hearsay triggers ("told me" then "said") split across a segment
+  boundary, second inside the cooldown → exactly one fire. Frontend — the agent stamps a `timestamp`
+  on the ruling event too; the hook keeps a per-session `seen` set keyed on `type:timestamp` and
+  ignores a repeat, so a redelivered packet / double-registered listener can't double-render.
+- **Issue 3:** `handle_interim` logs (INFO) the gate-decision time and interrupt+say-dispatch time on
+  a fire; capture the interim→audio breakdown from one live run (first-audio-frame needs deeper TTS
+  hooks — flagged).
+
+**Result:** Done. **Issue 1:** `turn_flags["objected"]` set on fire (`judge_rule`), checked/reset at
+the top of `llm_node` → the full end-of-turn reply is skipped on objected turns (object → rule →
+continue); normal turns reply as before. **Issue 2:** agent regression test
+`test_two_hearsay_triggers_across_segment_boundary_fire_once` (two triggers, second inside the
+cooldown → one fire) + frontend dedup — ruling events now carry a `timestamp`, the hook keeps a
+per-session `seen` set keyed `type:timestamp` and drops repeats, so a redelivered packet / double
+listener can't double-render (the confirmed real cause: worker was on the PR #4 head, so it's a
+frontend duplicate, not agent/stale). **Issue 3:** measured — gate **23 µs**, ElevenLabs `/stream`
+TTFB **~0.14 s** (0.11–0.30 s); endpointing (`=25 ms`) is NOT in the immediate path (fires on
+interims) so it was left untouched; `voice_interrupt` now logs `decide` + `interrupt+say` times per
+fire for a live end-to-end capture. **Tests: agents 111 offline + 9 live; frontend 16; ruff +
+type-check clean.** **Docs:** ARCHITECTURE §6.5 (object→rule→continue, latency, dedup). **⚠️ Needs a
+live room:** the reordered audio (no elaboration after the ruling), that the double-hearsay is gone,
+and the true immediate-path breakdown (Deepgram interim latency + WebRTC playout, not measurable
+offline) from the new instrumentation logs.

@@ -54,6 +54,7 @@ export function objectionEventToLine(event: ObjectionEvent, sessionId: string): 
 export interface RulingEvent {
   ruling: 'sustained' | 'overruled';
   reason: string;
+  timestamp: number;
 }
 
 /** Parse a data-channel payload; returns null for anything that isn't a well-formed ruling event. */
@@ -66,6 +67,7 @@ export function parseRulingData(text: string): RulingEvent | null {
     return {
       ruling: data.ruling,
       reason: typeof data.reason === 'string' ? data.reason : '',
+      timestamp: typeof data.timestamp === 'number' ? data.timestamp : Date.now(),
     };
   } catch {
     return null;
@@ -77,11 +79,11 @@ export function rulingEventToLine(event: RulingEvent, sessionId: string): Transc
   const label = event.ruling.charAt(0).toUpperCase() + event.ruling.slice(1);
   const content = event.reason ? `${label}. ${event.reason}` : `${label}.`;
   return {
-    id: `ruling-${Date.now()}-${crypto.randomUUID()}`,
+    id: `ruling-${event.timestamp}-${crypto.randomUUID()}`,
     sessionId,
     speaker: 'judge',
     content,
     wasInterruption: false,
-    spokenAt: new Date().toISOString(),
+    spokenAt: new Date(event.timestamp).toISOString(),
   };
 }

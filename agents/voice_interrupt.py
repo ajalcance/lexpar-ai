@@ -14,9 +14,12 @@ Security notes: Operates on live transcript fragments (work product) in memory o
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 
 from objection_classifier import Decision, ObjectionClassifier
+
+logger = logging.getLogger("lexpar.agents.voice")
 
 
 def objection_utterance(decision: Decision) -> str:
@@ -60,7 +63,9 @@ async def handle_interim(
     concern — we release on any exit), and the classifier's time-floor cooldown still applies after
     release, so re-arming requires BOTH the ruling to have finished AND the floor to have elapsed.
     """
+    t_start = time.perf_counter()
     decision = await asyncio.to_thread(classifier.consider, transcript)
+    t_decided = time.perf_counter()
     if decision.fire:
         objection = classifier.state.record_objection(
             grounds=decision.objection_type or "objection", raised_by="opposing_counsel"
@@ -70,6 +75,19 @@ async def handle_interim(
         )
         await session.interrupt()
         await session.say(objection_utterance(decision), allow_interruptions=True)
+        t_said = time.perf_counter()
+        # Immediate-fire latency instrumentation (Issue 3): the gate/classify decision and the
+        # interrupt+say dispatch. Combine with Deepgram's interim log timestamps + the measured TTS
+        # time-to-first-byte for the full "attorney speech → objection audio" breakdown. (Actual
+        # first-audio-frame needs deeper TTS hooks; not exposed here.)
+        logger.info(
+            "objection dispatch [%s/%s]: decide=%.3fs interrupt+say=%.3fs total=%.3fs",
+            decision.objection_type,
+            decision.outcome,
+            t_decided - t_start,
+            t_said - t_decided,
+            t_said - t_start,
+        )
         if publish is not None:
             await publish(decision)
         if judge_rule is not None:

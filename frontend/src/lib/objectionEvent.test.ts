@@ -51,8 +51,10 @@ describe('objectionEventToLine', () => {
 
 describe('parseRulingData', () => {
   it('parses a well-formed ruling event', () => {
-    const event = parseRulingData('{"type": "ruling", "ruling": "sustained", "reason": "hearsay"}');
-    expect(event).toEqual({ ruling: 'sustained', reason: 'hearsay' });
+    const event = parseRulingData(
+      '{"type": "ruling", "ruling": "sustained", "reason": "hearsay", "timestamp": 1710}',
+    );
+    expect(event).toEqual({ ruling: 'sustained', reason: 'hearsay', timestamp: 1710 });
   });
 
   it('rejects unknown ruling values and other event types', () => {
@@ -64,7 +66,10 @@ describe('parseRulingData', () => {
 
 describe('rulingEventToLine', () => {
   it('maps to a judge Transcript line with the reason', () => {
-    const line = rulingEventToLine({ ruling: 'overruled', reason: 'goes to weight' }, 'sess-1');
+    const line = rulingEventToLine(
+      { ruling: 'overruled', reason: 'goes to weight', timestamp: 1710 },
+      'sess-1',
+    );
     expect(line.speaker).toBe('judge');
     expect(line.wasInterruption).toBe(false);
     expect(line.content).toBe('Overruled. goes to weight');
@@ -72,7 +77,7 @@ describe('rulingEventToLine', () => {
   });
 
   it('omits the reason when empty', () => {
-    const line = rulingEventToLine({ ruling: 'sustained', reason: '' }, 's');
+    const line = rulingEventToLine({ ruling: 'sustained', reason: '', timestamp: 1710 }, 's');
     expect(line.content).toBe('Sustained.');
   });
 });

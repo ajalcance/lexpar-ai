@@ -70,6 +70,14 @@ export function useSparringRoom(sessionId: string) {
     if (!sessionId) {
       return;
     }
+    // Dedup keys for data-channel events (objection/ruling), reset per session. markSeen returns
+    // true the first time a key is seen (render it) and false thereafter (drop the duplicate).
+    const seen = new Set<string>();
+    const markSeen = (key: string): boolean => {
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    };
     let cancelled = false;
     let settled = false;
     let connectTimer: ReturnType<typeof setTimeout> | undefined;
@@ -150,13 +158,19 @@ export function useSparringRoom(sessionId: string) {
           // Gap 3: an objection event from the agent → render it via the existing TranscriptLine.
           const event = parseObjectionData(text);
           if (event) {
-            setObjections((prev) => [...prev, objectionEventToLine(event, sessionId)]);
+            // Dedup on the agent's stable timestamp: a redelivered packet or a double-registered
+            // listener must not double-render one objection (the live double-hearsay bug).
+            if (markSeen(`objection:${event.timestamp}`)) {
+              setObjections((prev) => [...prev, objectionEventToLine(event, sessionId)]);
+            }
             return;
           }
           // Inline judge ruling ("Sustained/Overruled — <reason>") → render as a judge line.
           const ruling = parseRulingData(text);
           if (ruling) {
-            setObjections((prev) => [...prev, rulingEventToLine(ruling, sessionId)]);
+            if (markSeen(`ruling:${ruling.timestamp}`)) {
+              setObjections((prev) => [...prev, rulingEventToLine(ruling, sessionId)]);
+            }
             return;
           }
           // Control channel: the agent finished delivering the judge's ruling + wrote the scorecard.
