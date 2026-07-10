@@ -16,7 +16,12 @@ import { ConnectionState, RoomEvent, Track } from 'livekit-client';
 import type { Participant, RemoteTrack, Room } from 'livekit-client';
 import * as api from '@/lib/api';
 import { connectToRoom, disconnectFromRoom } from '@/lib/livekit';
-import { objectionEventToLine, parseObjectionData } from '@/lib/objectionEvent';
+import {
+  objectionEventToLine,
+  parseObjectionData,
+  parseRulingData,
+  rulingEventToLine,
+} from '@/lib/objectionEvent';
 import type { Transcript } from '@/lib/types';
 
 export type SparringMode = 'connecting' | 'live' | 'fallback';
@@ -146,6 +151,12 @@ export function useSparringRoom(sessionId: string) {
           const event = parseObjectionData(text);
           if (event) {
             setObjections((prev) => [...prev, objectionEventToLine(event, sessionId)]);
+            return;
+          }
+          // Inline judge ruling ("Sustained/Overruled — <reason>") → render as a judge line.
+          const ruling = parseRulingData(text);
+          if (ruling) {
+            setObjections((prev) => [...prev, rulingEventToLine(ruling, sessionId)]);
             return;
           }
           // Control channel: the agent finished delivering the judge's ruling + wrote the scorecard.

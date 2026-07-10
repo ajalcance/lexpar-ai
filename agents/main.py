@@ -127,6 +127,15 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         api_key=config.ELEVENLABS_API_KEY,
     )
 
+    # The Judge speaks with a DISTINCT voice (like a real courtroom — tellable apart by ear). One
+    # AgentSession has one TTS, so judge lines are synthesized on this second instance and played
+    # through session.say(audio=...) rather than the session's own (Opposing Counsel) voice.
+    judge_tts = elevenlabs.TTS(
+        model=config.ELEVENLABS_MODEL,
+        voice_id=config.JUDGE_VOICE_ID,
+        api_key=config.ELEVENLABS_API_KEY,
+    )
+
     session = AgentSession(
         # Silero VAD needs no API key. STT/TTS keys are passed EXPLICITLY from our own config
         # (config.py) rather than relying on each plugin's implicit env-var lookup — ElevenLabs
@@ -165,13 +174,57 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             json.dumps(event).encode("utf-8"), reliable=True, topic="objection"
         )
 
+    async def _judge_say(text: str) -> None:
+        # Speak as the Judge: synthesize on the judge's distinct voice and play it through the
+        # session's speech queue (queued behind any in-flight OC line, so ordering is natural).
+        # Not interruptible — you don't talk over the judge, and the line is 1-2s.
+        async def frames():
+            async for synthesized in judge_tts.synthesize(text):
+                yield synthesized.frame
+
+        handle = session.say(text, audio=frames(), allow_interruptions=False)
+        await handle
+
+    async def judge_rule(objection, fragment: str) -> None:
+        # Inline ruling (§6.5): fast-model call → apply to the ledger IMMEDIATELY → judge speaks
+        # "Sustained/Overruled — <reason>" right after OC's objection line. Fail-safe: on any
+        # error/timeout the judge stays SILENT and the objection stays PENDING — the end-of-session
+        # assessment rules it (never fabricate a penalty). The classifier is on hold() while this
+        # runs (voice_interrupt), so no new objection can fire over the judge; the timeout below
+        # bounds how long that hold can last if the model call hangs.
+        try:
+            ruling, reason = await asyncio.wait_for(
+                asyncio.to_thread(judge.quick_ruling, state, objection, fragment), timeout=10.0
+            )
+        except Exception:
+            logger.warning("inline ruling unavailable — objection stays pending")
+            return
+        try:
+            state.rule_on_objection(objection, ruling)
+        except ValueError:
+            return  # already resolved (e.g. session finalized concurrently) — don't speak stale
+        spoken = f"{ruling.capitalize()}. {reason}" if reason else f"{ruling.capitalize()}."
+        state.add_turn("judge", spoken)
+        try:
+            await _judge_say(spoken)
+        except Exception:
+            logger.exception("inline ruling could not be spoken (ledger already updated)")
+        try:
+            event = {"type": "ruling", "ruling": ruling, "reason": reason}
+            await ctx.room.local_participant.publish_data(
+                json.dumps(event).encode("utf-8"), reliable=True, topic="objection"
+            )
+        except Exception:
+            pass
+
     @session.on("user_input_transcribed")
     def _on_user_transcript(event) -> None:
         # Every interim/final fragment feeds the objection classifier; a fire barges in via the
-        # tested voice_interrupt glue (the classifier debounces so a growing fragment won't refire).
-        # The attorney's *turn* is recorded separately in the agent's on_user_turn_completed hook
-        # (one coherent turn), so we do NOT add per-fragment turns here.
-        coro = handle_interim(session, classifier, event.transcript, publish_objection)
+        # tested voice_interrupt glue (debounce + cooldown ensure one objection per utterance,
+        # and the ruling hold keeps OC from objecting over the judge). The attorney's *turn* is
+        # recorded separately in the agent's on_user_turn_completed hook (one coherent turn),
+        # so we do NOT add per-fragment turns here.
+        coro = handle_interim(session, classifier, event.transcript, publish_objection, judge_rule)
         asyncio.create_task(coro)
 
     finalized = {"done": False}
@@ -201,7 +254,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         state.add_turn("judge", ruling)
         if speak:
             try:
-                await session.say(ruling, allow_interruptions=False)  # judge delivers it aloud
+                await _judge_say(ruling)  # the judge delivers it aloud, in the judge's voice
             except Exception:
                 logger.exception("judge closing ruling could not be spoken")
         payload = scorecard_builder.build_session_end_payload(state, ruling)

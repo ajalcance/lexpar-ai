@@ -38,7 +38,9 @@ def build_objection_event(decision: Decision) -> dict:
     }
 
 
-async def handle_interim(session, classifier: ObjectionClassifier, transcript: str, publish=None):
+async def handle_interim(
+    session, classifier: ObjectionClassifier, transcript: str, publish=None, judge_rule=None
+):
     """
     Feed one transcript fragment to the classifier; on a fire decision, barge in — interrupt the
     session and speak the objection immediately, and (if `publish` is provided) emit the structured
@@ -48,12 +50,19 @@ async def handle_interim(session, classifier: ObjectionClassifier, transcript: s
     Returns the decision.
 
     On a fire it also records the objection into the session ledger and appends a barge-in turn to
-    the transcript (via `classifier.state`), so the end-of-session judge can rule on it and the
-    saved transcript shows it — otherwise a spoken objection would leave no trace in the record.
+    the transcript (via `classifier.state`), so the judge can rule on it and the saved transcript
+    shows it — otherwise a spoken objection would leave no trace in the record.
+
+    `judge_rule` (optional, injected: `async (Objection, str) -> None`) is the inline judge — it
+    rules on the objection and speaks the ruling right after Opposing Counsel's line (main.py wires
+    the real one). While it runs, the classifier is placed on `hold()` so no new objection can fire
+    over the judge; the hold is ALWAYS released (success, failure, or timeout is the caller's
+    concern — we release on any exit), and the classifier's time-floor cooldown still applies after
+    release, so re-arming requires BOTH the ruling to have finished AND the floor to have elapsed.
     """
     decision = await asyncio.to_thread(classifier.consider, transcript)
     if decision.fire:
-        classifier.state.record_objection(
+        objection = classifier.state.record_objection(
             grounds=decision.objection_type or "objection", raised_by="opposing_counsel"
         )
         classifier.state.add_turn(
@@ -63,4 +72,10 @@ async def handle_interim(session, classifier: ObjectionClassifier, transcript: s
         await session.say(objection_utterance(decision), allow_interruptions=True)
         if publish is not None:
             await publish(decision)
+        if judge_rule is not None:
+            classifier.hold()
+            try:
+                await judge_rule(objection, transcript)
+            finally:
+                classifier.release_hold()
     return decision

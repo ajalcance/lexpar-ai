@@ -108,3 +108,58 @@ def test_handle_interim_records_generic_objection_when_type_missing():
     asyncio.run(handle_interim(session, classifier, "some fragment", None))
     assert state.objections[0].grounds == "objection"  # falls back when type is None
     assert session.said == ["Objection."]
+
+
+# --- Inline judge ruling (judge_rule injectable) ----------------------------------------------
+
+class FakeJudge:
+    """Records judge_rule calls; optionally raises to exercise the hold-release guarantee."""
+
+    def __init__(self, raises: bool = False):
+        self.calls: list[tuple] = []
+        self.raises = raises
+
+    async def __call__(self, objection, fragment):
+        self.calls.append((objection, fragment))
+        if self.raises:
+            raise RuntimeError("ruling model down")
+
+
+def test_judge_rule_called_with_recorded_objection_on_fire():
+    session = FakeSession()
+    state = SessionState()
+    judge = FakeJudge()
+    classifier = ObjectionClassifier(
+        state, decider=lambda f, s: Decision(True, "hearsay", "x", outcome="fire")
+    )
+    asyncio.run(handle_interim(session, classifier, "He told me it was red.", None, judge))
+    assert len(judge.calls) == 1
+    objection, fragment = judge.calls[0]
+    assert objection is state.objections[0]  # the exact ledger entry, so rule_on_objection works
+    assert fragment == "He told me it was red."
+    assert not classifier._held  # hold released after the ruling completed
+
+
+def test_judge_rule_not_called_on_no_fire():
+    session = FakeSession()
+    judge = FakeJudge()
+    classifier = ObjectionClassifier(
+        SessionState(), decider=lambda f, s: Decision(False, None, "no")
+    )
+    asyncio.run(handle_interim(session, classifier, "The invoice is dated April 2.", None, judge))
+    assert judge.calls == []
+    assert not classifier._held
+
+
+def test_hold_released_even_when_judge_rule_raises():
+    session = FakeSession()
+    state = SessionState()
+    judge = FakeJudge(raises=True)
+    classifier = ObjectionClassifier(
+        state, decider=lambda f, s: Decision(True, "leading", "x", outcome="fire")
+    )
+    try:
+        asyncio.run(handle_interim(session, classifier, "Isn't it true?", None, judge))
+    except RuntimeError:
+        pass  # main.py's judge_rule catches internally; the glue must still release the hold
+    assert not classifier._held  # a failed ruling must never leave the classifier locked

@@ -36,6 +36,18 @@ def test_generate_ruling_returns_text():
     assert ruling.strip()
 
 
+def test_quick_ruling_returns_valid_ruling_and_reason():
+    # The inline judge: fast model, must return a usable (ruling, reason) on a clear hearsay case.
+    state = _demo_state()
+    state.add_turn("attorney", "My client told me his supervisor said the report wouldn't matter.")
+    objection = state.record_objection("hearsay", "opposing_counsel")
+    ruling, reason = judge.quick_ruling(
+        state, objection, "My client told me his supervisor said the report wouldn't matter."
+    )
+    assert ruling in ("sustained", "overruled")
+    assert isinstance(reason, str)
+
+
 def test_assess_session_rules_and_returns_well_formed_shape():
     # Two pending objections + a transcript → the judge returns exactly one ruling per objection
     # (sustained/overruled), a facts list, and a non-empty closing ruling.
