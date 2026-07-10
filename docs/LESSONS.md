@@ -242,6 +242,48 @@ makes the judge non-interruptible by construction (`session.interrupt()` can't t
 participant's track), which here is a feature — but audit every interruption/ordering assumption
 when relocating audio.
 
+### [Agents/RAG] Gate every retrieval on a truthy `session_id` so offline paths are inert by construction
+**Wrong:** Wiring court-rules/pleading retrieval into the agents by having each caller decide when to
+skip it, or guarding it with a config flag, would mean the whole offline test/harness suite had to
+monkeypatch the network everywhere — and a missed patch would make a "unit" test hit the backend, or
+fail confusingly, depending on environment.
+**Right:** Make the *data* carry the switch: `SessionState.session_id` defaults to `""`, and every
+retrieval entry point (`case_knowledge.retrieve_*`, `court_knowledge.retrieve_*` / `dual_retrieval`,
+the classifier's tier-3 fetch) returns empty immediately on a falsy `session_id`. The live worker
+seeds a real id at room join; every harness/test constructs `SessionState` without one, so retrieval
+is skipped with **zero monkeypatching** and the suite stays hermetic. General rule: when a capability
+must be live in production but absent in tests, prefer a value on the shared state object that makes
+the off-path the natural default, over per-caller conditionals or global flags — the fail-open path
+then holds by construction, not by every caller remembering to check.
+
+### [Agents/grounding] Do NOT LLM-summarize corpus text that must stay verbatim (no-fabrication)
+**Wrong:** The pleading pipeline (§12) runs a structured-summary LLM pass at ingest and keeps that
+digest in every prompt — so the obvious move was to mirror it for the court-rules corpus and keep a
+"rules summary" in context too.
+**Right:** Rule text is law: a model-written summary is **paraphrase**, and injecting paraphrased law
+into prompts is exactly what the §13 no-fabrication constraint forbids. The rules pipeline therefore
+has **no summary pass at all** — only chunked *verbatim* official text is stored and retrieved, and
+the citation check compares against that verbatim text. General rule: a summarization step that is
+fine for one corpus (facts you may restate) can be a correctness/compliance violation for another
+(text whose exact wording is the point). Decide per corpus whether paraphrase is acceptable before
+copying a pipeline.
+
+### [Backend/auth] First-user-becomes-admin: promote with ONE atomic conditional UPDATE, not check-then-set
+**Wrong:** Bootstrapping the first admin as `if not db.query(User).filter(role=='admin').count(): user.role='admin'`
+is a check-then-act race: two first-logins can both see "no admin yet" and both promote (and under
+real concurrency the ORM read and the write are separate statements with a gap between them).
+**Right:** Do it as a single statement whose WHERE clause *is* the guard:
+`UPDATE users SET role='admin' WHERE id=:id AND NOT EXISTS (SELECT 1 FROM users WHERE role='admin' AND deleted_at IS NULL)`.
+Per-statement atomicity holds on SQLite and Postgres, so there's no ORM-level window. Reason about
+and **document the residual race** rather than pretending it's gone: under Postgres READ COMMITTED,
+two truly simultaneous first-logins-ever on an admin-less deployment could each evaluate the
+NOT-EXISTS before either commits and both be promoted — here that's **benign** (two founding admins
+of an empty install), and impossible under today's single-tenant stub auth, so a pg advisory lock /
+SERIALIZABLE upgrade is documented but deliberately not taken. Exclude soft-deleted admins from the
+guard or a deployment whose only admin was soft-deleted is permanently locked out of bootstrap.
+General rule: for "first one wins" promotions, push the guard into the write's WHERE clause, then
+still state the residual race and why its worst case is acceptable.
+
 ### [Backend/auth] passlib 1.7.4 is broken with bcrypt >= 5.0 — use bcrypt directly
 **Wrong:** Reached for `passlib[bcrypt]` (the usual choice) for password hashing. passlib 1.7.4's
 import-time backend self-test hashes a >72-byte probe string; bcrypt 5.0 now raises

@@ -2083,3 +2083,34 @@ log in (first login on an admin-less deployment auto-promotes, stub AND producti
 once an active admin exists (atomic guard, tested in isolation), a soft-deleted-only-admin
 deployment can recover (tested), and the seed script survives purely as documented optional
 automation tooling with its role-granting ability removed.
+
+---
+
+### Documentation catch-up (pulled forward from Phase 8) — status: done
+
+Docs-only pass run ahead of the deferred live test (safe regardless of live-test state). **NOT the
+full Phase 8** — the golden-set eval + any live-informed doc updates remain for Phase 8 proper
+after the live pass.
+
+- **ARCHITECTURE.md §13 added** (Court & Procedural Rules Grounding): the four new tables +
+  the three added columns as DDL; sensitivity note (rule text is public law, not `# SENSITIVE`);
+  dual-corpus retrieval design + the retrieval-inert-by-`session_id` property; **why dynamic
+  retrieval was chosen over a static objection→rule mapping table** (authored paraphrase layer
+  forbidden by no-fabrication; brittle across forums; can't surface the specific passage);
+  proceeding-type gating; the turn-scoped citation-grounding/flagging mechanism incl. the known
+  benign-flag source; admin bootstrap + pure-UI operator workflow; implemented-vs-pending.
+- **Drifted sections updated:** §5 route table (all §13 routes + the §12 routes PR #8 never added
+  to it — register/documents/knowledge — plus the admin/agent auth-mechanism note); §2 repo tree
+  (courts.py, services/, court_knowledge.py, citation_check.py, scripts/); §8 schema (role /
+  court_id / proceeding_type columns + a pointer that §12/§13 tables live in their own sections +
+  the migration list 0001-0004).
+- **LESSONS.md +3 entries** (genuinely non-obvious, not routine): (1) gate retrieval on a truthy
+  `session_id` so offline paths are inert by construction — no monkeypatching; (2) do NOT
+  LLM-summarize corpus text that must stay verbatim (rules ≠ pleading — paraphrase would violate
+  no-fabrication, hence no rules summary pass); (3) first-user-becomes-admin via one atomic
+  conditional UPDATE, with the residual READ-COMMITTED race documented as benign + the
+  soft-deleted-admin exclusion.
+- **Persona prompts VERIFIED current** (opposing_counsel.md / judge.md) — Phase 4's rewrite
+  already reflects case summary, ledgers, pleading excerpts, procedural rules, and proceeding
+  type; no change needed.
+- Suites re-run to confirm no-op: **backend 68, agents 154, frontend 30 — all green, unchanged.**

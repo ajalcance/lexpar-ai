@@ -44,12 +44,15 @@ lexpar-ai/
 │   ├── app/
 │   │   ├── main.py
 │   │   ├── api/
-│   │   │   ├── auth.py           login stub, token issuance
-│   │   │   ├── cases.py          case upload / list / detail
+│   │   │   ├── auth.py           login/register, token issuance, admin bootstrap
+│   │   │   ├── cases.py          case CRUD + pleading upload/ingest (§12)
+│   │   │   ├── courts.py         court catalog + rule-corpus upload (§13, admin-gated)
 │   │   │   ├── sessions.py       session lifecycle, transcript retrieval
-│   │   │   ├── scorecards.py
+│   │   │   ├── scorecards.py     scorecard + ruling-provenance read (§13)
+│   │   │   ├── internal.py       agent-token routes (context/knowledge/court-rules/provenance)
 │   │   │   └── livekit_token.py  issues LiveKit room access tokens
-│   │   ├── models/               SQLAlchemy models
+│   │   ├── models/               SQLAlchemy models (incl. §12/§13: court, court_rule, ruling_provenance)
+│   │   ├── services/             business logic (case/court knowledge, embeddings, storage, auth)
 │   │   ├── db.py
 │   │   └── config.py             reads .env
 │   ├── requirements.txt
@@ -60,9 +63,14 @@ lexpar-ai/
 │   ├── opposing_counsel.py       agent persona + prompt
 │   ├── judge.py                  agent persona + prompt
 │   ├── objection_classifier.py   watches live partial transcript, fires interrupts
+│   ├── case_knowledge.py         pleading retrieval (§12); court_knowledge.py = rules retrieval (§13)
+│   ├── citation_check.py         turn-scoped citation grounding check (§13)
 │   ├── llm_router.py             switches Fireworks <-> self-hosted vLLM per agent
 │   ├── requirements.txt
 │   └── Dockerfile
+│
+├── scripts/
+│   └── seed_court.py             OPTIONAL headless court/rules seeding (§13; NOT the operator path)
 │
 ├── infra/
 │   ├── docker-compose.yml        local dev: postgres, minio (local S3), livekit server
@@ -193,29 +201,43 @@ the one thing still absent:
 
 | Method | Path | Description | Auth |
 |---|---|---|---|
+| POST | `/api/auth/register` | Self-service signup (production auth only; §12) | no |
 | POST | `/api/auth/login` | Validates credentials (stub: `admin`/`admin`), issues JWT | no |
-| GET | `/api/auth/me` | Returns current user from token | yes |
-| POST | `/api/cases` | Upload case facts + documents | yes |
+| GET | `/api/auth/me` | Returns current user from token (incl. `role`) | yes |
+| POST | `/api/cases` | Create a case (optional `court_id`, §13) | yes |
 | GET | `/api/cases` | List attorney's cases | yes |
 | GET | `/api/cases/{id}` | Case detail | yes |
-| POST | `/api/sessions` | Start a new sparring session for a case | yes |
+| POST | `/api/cases/{id}/documents` | Upload a pleading PDF → ingest (§12) | yes |
+| GET | `/api/cases/{id}/documents` | Pleading ingestion status (§12) | yes |
+| GET | `/api/courts` | Active court catalog (case-creation dropdown; §13) | yes |
+| POST | `/api/courts` | Create a court (§13) | **admin** |
+| POST | `/api/courts/{id}/rules` | Upload an official rule PDF → ingest (§13) | **admin** |
+| GET | `/api/courts/{id}/rules` | Rule-document ingestion status (§13) | **admin** |
+| POST | `/api/sessions` | Start a session — **`proceeding_type` required** (§13) | yes |
 | GET | `/api/sessions/{id}` | Session status + transcript | yes |
 | GET | `/api/sessions/{id}/scorecard` | Scorecard after session ends | yes |
+| GET | `/api/sessions/{id}/provenance` | Ruling-provenance audit trail for the owner (§13) | yes |
 | GET | `/api/livekit/token` | Issues a LiveKit room access token for the frontend | yes |
-| GET | `/api/sessions/{id}/context` | (internal) Case facts the worker loads at room join | agent token |
+| GET | `/api/sessions/{id}/context` | (internal) Case facts + `case_summary` + `court_id` + `proceeding_type` at room join | agent token |
+| GET | `/api/sessions/{id}/knowledge` | (internal) Pleading retrieval — summary + top passages + chunk ids (§12) | agent token |
+| GET | `/api/sessions/{id}/court-rules` | (internal) Court-rules retrieval — passages + chunk ids (§13) | agent token |
 | POST | `/api/sessions/{id}/complete` | (internal) Mark session completed | agent token |
 | POST | `/api/sessions/{id}/scorecard` | (internal) Write scorecard + full transcript batch at session end | agent token |
+| POST | `/api/sessions/{id}/provenance` | (internal) Write one ruling's provenance row (§13) | agent token |
 
 FastAPI does not touch real-time audio at all — that's entirely the LiveKit Agents worker's job.
 FastAPI's role is auth, case management, and persisting the results the agents worker produces.
 
-**Internal (agent) routes vs. user routes.** The three `agent token` routes above — the worker reads
-the case context at room join and writes the results at session end — are authenticated with a
-**scoped service credential** (`X-Agent-Token` header, `AGENT_SERVICE_TOKEN`), a *separate mechanism*
-from user JWT login (`app/security_agent.py`, not `app/security.py`). Least privilege
-(DEV_GUIDELINES §7): the agent token grants only these routes and nothing user-facing; a user JWT
-does not grant them. The scorecard write **batches the whole transcript in one call** (no per-turn
-round-trips inside the live voice loop).
+**Internal (agent) routes vs. user routes.** The `agent token` routes above — the worker reads the
+case context + knowledge at room join / per turn and writes the results at session end — are
+authenticated with a **scoped service credential** (`X-Agent-Token` header, `AGENT_SERVICE_TOKEN`), a
+*separate mechanism* from user JWT login (`app/security_agent.py`, not `app/security.py`). Least
+privilege (DEV_GUIDELINES §7): the agent token grants only these routes and nothing user-facing; a
+user JWT does not grant them. The scorecard write **batches the whole transcript in one call** (no
+per-turn round-trips inside the live voice loop). Note `/sessions/{id}/provenance` exists as **both**
+an agent-token POST (the worker writes it) and a user GET (the owning attorney reads it) — same path,
+distinct method + auth mechanism. The **admin** routes (§13) use a third check, `require_admin` (a
+user JWT whose `role == 'admin'`), distinct from both the agent token and an ordinary user JWT.
 
 ---
 
@@ -480,6 +502,7 @@ CREATE TABLE users (
     full_name TEXT,
     password_hash TEXT,             -- NULL while AUTH_MODE=stub
     firm_name TEXT,
+    role TEXT NOT NULL DEFAULT 'attorney',  -- 'attorney' | 'admin' (§13; first-login bootstrap)
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -488,6 +511,8 @@ CREATE TABLE cases (
     user_id UUID REFERENCES users(id),
     title TEXT NOT NULL,
     case_facts TEXT,
+    case_summary TEXT,               -- LLM-extracted pleading digest (§12), always in agent context
+    court_id UUID REFERENCES courts(id),  -- §13 forum grounding (nullable at DB; required by new UI)
     storage_path TEXT,               -- object storage key for uploaded file
     created_at TIMESTAMPTZ DEFAULT now()
 );
@@ -497,6 +522,7 @@ CREATE TABLE sessions (
     case_id UUID REFERENCES cases(id),
     user_id UUID REFERENCES users(id),
     status TEXT DEFAULT 'in_progress',   -- in_progress | completed | abandoned
+    proceeding_type TEXT NOT NULL DEFAULT 'oral_argument',  -- §13: gates eligible objection grounds
     llm_backend_used TEXT,               -- 'fireworks' | 'self_hosted'
     started_at TIMESTAMPTZ DEFAULT now(),
     ended_at TIMESTAMPTZ
@@ -521,6 +547,13 @@ CREATE TABLE scorecards (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 ```
+
+**Tables defined in their own sections** (kept there to keep this canonical block readable):
+`case_documents` / `case_chunks` (pleading RAG) — see **§12**; `courts` / `court_rule_documents`
+/ `court_rule_chunks` (rules corpus) and `ruling_provenance` (citation audit trail) — see **§13**.
+Migrations: `0001_initial`, `0002_case_knowledge_and_auth` (§12), `0003_court_grounding` (§13
+tables + the `role` / `court_id` / `proceeding_type` columns above, with backfills), and
+`0004_ruling_provenance` (§13).
 
 ## Object storage layout
 
@@ -810,3 +843,163 @@ gate for real work product (§11): a real pleading is real attorney data.
 - OCR for scanned/image pleadings (ingest currently marks them `failed` with a clear message).
 - pgvector when case volume justifies ANN over brute-force cosine.
 - Rate-limit uploads; virus/scan the file; per-firm tenancy on real auth.
+
+---
+
+## 13. Court & Procedural Rules Grounding
+
+**Why this exists.** An audit traced exactly what Opposing Counsel, the Judge, and the objection
+classifier knew at runtime and found **zero engineered grounding in procedural law** — all grounding
+was case-specific (the uploaded pleading). Any procedural competence was incidental to the base
+LLMs' pretraining, not designed. §13 closes that: a per-forum corpus of the **actual official rules**
+grounds objections and rulings, objection grounds are gated by the **proceeding type**, and every
+ruling carries a **citation-provenance audit trail** so its output can be defended, not just trusted.
+
+**Hard constraint threaded through the whole build.** The system never generates, paraphrases, or
+invents rule text — anywhere (no seed data, test fixtures, comments, or "example" strings). Only
+**verbatim operator-supplied official documents** enter the corpus. Consequence: unlike the pleading
+pipeline (§12), the rules pipeline has **no LLM summary pass** — a model-written digest of the rules
+would inject paraphrased law into prompts, exactly what the constraint forbids. Only chunked verbatim
+text is stored and retrieved.
+
+### Schema
+
+```sql
+CREATE TABLE courts (                     -- a forum whose rules ground a case
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    jurisdiction_description TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT true,   -- retire from the catalog without deleting
+    created_at TIMESTAMPTZ DEFAULT now(),
+    deleted_at TIMESTAMPTZ                       -- soft delete (DEV_GUIDELINES §8)
+);
+
+CREATE TABLE court_rule_documents (       -- one uploaded OFFICIAL instrument (operator-supplied)
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    court_id UUID REFERENCES courts(id) NOT NULL,
+    title TEXT NOT NULL,
+    source_citation TEXT,                   -- e.g. "Republic Act No. 11232" (operator-stated)
+    source_reference TEXT,                  -- where the operator got the official copy (URL/citation)
+    storage_path TEXT NOT NULL,
+    ingestion_status TEXT NOT NULL DEFAULT 'pending',   -- pending | ready | failed
+    error TEXT,
+    chunk_count INTEGER NOT NULL DEFAULT 0,
+    uploaded_by_user_id UUID REFERENCES users(id),      -- NULL for headless seed ingests
+    created_at TIMESTAMPTZ DEFAULT now(),
+    deleted_at TIMESTAMPTZ
+);
+
+CREATE TABLE court_rule_chunks (          -- verbatim chunk + embedding (portable JSON)
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    court_rule_document_id UUID REFERENCES court_rule_documents(id) NOT NULL,
+    court_id UUID REFERENCES courts(id) NOT NULL,   -- denormalized: query by court without a join
+    chunk_index INTEGER NOT NULL,
+    chunk_text TEXT NOT NULL,               -- VERBATIM official text, never paraphrased
+    embedding JSON NOT NULL,                -- same portable pattern as case_chunks (§12)
+    section_reference TEXT,                 -- "Section 23" etc. — extracted ONLY when confident, else NULL
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE ruling_provenance (          -- the citation audit trail, one row per AI ruling
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID REFERENCES sessions(id) NOT NULL,
+    ruling_type TEXT NOT NULL,              -- 'objection_ruling' | 'final_ruling'
+    chunk_ids_used JSON NOT NULL,           -- ["case:<uuid>", "court:<uuid>", ...] actually shown
+    citation_flags JSON NOT NULL,           -- citation LABELS the model asserted but wasn't shown
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+Plus three columns on existing tables (§8): `users.role`, `cases.court_id`,
+`sessions.proceeding_type`. **Sensitivity:** rule text is **public official law**, deliberately NOT
+tagged `# SENSITIVE` (that marker is for privileged work product like `transcripts.content`); the
+provenance rows hold **chunk ids and citation labels only** — no ruling text, no work product.
+
+### Dual-corpus retrieval
+
+Every reasoning turn can draw on **two separate corpora**, each scoped and retrieved independently:
+
+- **Pleading (§12)** — case-specific facts, scoped by `case_id`.
+- **Court rules (§13)** — generally-applicable law, scoped by `court_id` (the session's case names
+  the forum; `court_id` + `proceeding_type` flow into `SessionState` at room join via the context
+  route).
+
+The agent side fetches both **in parallel** (`court_knowledge.dual_retrieval` → a `Retrieval`
+dataclass) and assembles them as **two clearly-separated prompt blocks** — `RELEVANT PLEADING
+EXCERPTS:` and `RELEVANT PROCEDURAL RULES:` — never merged, so the model can tell case-specific fact
+from generally-applicable rule. Rule passages are prefixed with their section heading (`[Section 23]
+…`) when one was confidently extracted. Wired into: Opposing Counsel's `stream_reply`, the Judge's
+`generate_ruling` / `quick_ruling` / `assess_session` (this also **fixed an audit-found bug** — the
+Judge previously did no pleading retrieval at all), and the classifier's tier-3 LLM call. Latency:
+the live-path callers (inline ruling, classifier) use a **tighter retrieval timeout** than the
+reply/assessment paths. Everything is **fail-open** — a retrieval failure yields an empty block, the
+summary (§12) still grounds the reasoning, and the live loop never blocks.
+
+**Retrieval-inert by construction for offline paths.** Every retrieval call is keyed on
+`state.session_id` being truthy. Offline harnesses and unit tests construct `SessionState` with the
+default empty `session_id`, so retrieval is skipped entirely with **no monkeypatching** — the whole
+existing test suite stays hermetic without touching the network. (See LESSONS.)
+
+**Why dynamic retrieval, not a static objection→rule mapping table.** A hand-maintained
+"objection type → governing rule" lookup was rejected: (1) it would encode a **paraphrased/authored**
+association between a ground and a rule — the no-fabrication constraint forbids exactly that
+authored layer; (2) it's brittle across forums (the same objection maps to different provisions in
+different rule sets) and would need re-authoring per court, whereas embedding retrieval works over
+**whatever official corpus the operator ingested**; (3) it can't surface the *specific* passage the
+model should cite for *this* statement — retrieval ranks the actual text by relevance to the live
+fragment. Dynamic retrieval keeps the system's only source of rule knowledge the verbatim corpus.
+
+### Proceeding-type-aware objections
+
+`PROCEEDING_ELIGIBLE_GROUNDS` (a code constant, not a table) maps each proceeding type to the
+objection grounds that are procedurally coherent in it. The witness-testimony grounds
+(`leading`/`hearsay`/`speculation`/`argumentative`) are **ineligible in oral argument / motion
+hearing** (no witness to lead or to hear secondhand); `leading` is eligible **only on direct
+examination** (leading is permitted on cross). This is filtered at **every tier** of the classifier —
+an ineligible ground dies at the regex gate, a tier-2 immediate-fire pattern for an ineligible ground
+can't fire, the tier-3 prompt only *offers* eligible types, and a post-parse guard suppresses a fire
+whose type is ineligible anyway. This fixed the audit-flagged mismatch where a trailing "?" fired
+`leading` on argument-shaped speech. Unknown/empty proceeding type → **all grounds** (fail-open).
+
+### Citation grounding & flagging (turn-scoped)
+
+After OC or the Judge produces output, `citation_check.extract_citations` pulls citation-shaped
+tokens (`Section`/`Sec.`/`Rule`/`R.A. No.`/`Republic Act No.`/`A.M. No.`/`§`), canonicalizes across
+surface variants (`Section 12` == `SEC. 12` == `§12`; `R.A. No. 11232` == `RA 11232`), and
+**`flag_ungrounded` compares them against the exact chunk text included in THAT turn's prompt** — the
+`Retrieval.shown_text`, never the corpus at large. The distinction is deliberate and load-bearing: a
+citation that is real and present *somewhere* in the court's rules but **was not retrieved for this
+turn still flags** — the point is catching what the model asserted *without having seen it*, not what
+is true in the abstract. Flags are **logged and persisted, never rewritten** out of the spoken
+output (flag-first, so the real flag rate can be measured before considering auto-correction). Each
+inline ruling and the final ruling writes a `ruling_provenance` row (`chunk_ids_used` +
+`citation_flags`); the frontend surfaces it on the scorecard (grounded vs. "Unverified citation").
+
+*Known benign-flag source (by design):* the check compares against retrieved **chunks only**, not the
+model-written case summary, the attorney-typed `case_facts`, or attorney speech — so a citation the
+model echoes from those shown-but-not-verbatim-corpus inputs still flags. This is intentional (a
+citation traceable only to a paraphrase or a party's assertion is arguably correctly flagged as
+ungrounded-in-source); if live data shows a high benign rate, widening `shown_text` is a one-line
+change.
+
+### Admin bootstrap (UI-native) & operator workflow
+
+Managing the corpus is **admin-gated** (`require_admin`: a user JWT with `role == 'admin'`, distinct
+from the agent token and an ordinary user). Admin access requires **no script**: the **first user to
+authenticate** on a deployment with no active admin is promoted automatically
+(`auth_service.ensure_admin_bootstrap`, one atomic conditional UPDATE — see LESSONS for the
+race-safety reasoning). So the entire setup is a **pure browser workflow**: log in → `/admin` →
+create the Court → upload the official rule PDFs → they ingest → new cases select that court.
+`scripts/seed_court.py` remains **only** as optional CI/headless automation (it grants no roles and
+fails loudly rather than ever synthesizing rule text) — never part of the normal operator path.
+
+### Implemented vs. pending
+
+- **Implemented + offline-tested:** schema/migrations, ingestion + retrieval (both corpora),
+  proceeding-type gating, the citation check + provenance persistence, admin bootstrap, and the
+  frontend (court selector, grounding indicator, admin UI). Backend + agents + frontend suites green.
+- **Pending a live pass:** end-to-end behavior in a real room — actual retrieval quality, real flag
+  rates, and the grounding indicator against a live session — deferred as a deliberate standalone
+  step (it also exercises the judge-participant + no-audio work). A golden-set legal-reasoning eval
+  (precision/recall of "does competent opposing counsel object here") is planned **after** that live
+  pass, so its design is informed by observed flag/grounding behavior rather than guessed.
