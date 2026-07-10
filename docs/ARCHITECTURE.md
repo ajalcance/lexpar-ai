@@ -364,9 +364,19 @@ When an objection fires and Opposing Counsel's line is spoken, the Judge immedia
   cross-examination). Tracked by a per-turn `objected` flag set on fire, checked/reset in `llm_node`.
 - **Latency:** the canned objection is on the immediate path (gate ≈ 23 µs, ElevenLabs `/stream`
   first-audio-byte ~0.14 s measured); it fires on an **interim**, so Deepgram endpointing is not in
-  this path. `voice_interrupt` logs the gate-decision + interrupt/say-dispatch times per fire.
+  this path. `voice_interrupt` logs the gate-decision + interrupt/say-dispatch times per fire. The
+  ruling's `quick_ruling` generation is started **concurrently** with the canned line's playback
+  (not serialized after it), so the "Sustained/Overruled" lands ≈ max(canned, ~1.3 s) after the
+  objection rather than the sum — its `say` still enqueues after the canned line (queue order).
 - **Duplicate render guard:** objection/ruling events carry a stable `timestamp`; the frontend
-  dedups on `type:timestamp`, so a redelivered data packet can't double-render one objection.
+  dedups on `type:timestamp` using a set held in a **ref** (shared across effect re-runs), so a
+  redelivered packet or a double-registered listener can't double-render one objection or ruling.
+- **Speaker attribution:** the Judge is voiced through the *same* agent participant as Opposing
+  Counsel, so the active-speaker indicator can't tell them apart from audio alone. `_judge_say`
+  brackets judge audio with a `{"type":"judge_speaking"}` boundary event; the frontend shows
+  "Judge speaking" for it (the audio itself is already the distinct judge voice). Covers inline
+  rulings and the closing ruling. *(A separate judge participant would remove this multiplexing
+  entirely — noted as a larger follow-up.)*
 
 ### End-of-session judge assessment (spoken ruling + scorecard)
 

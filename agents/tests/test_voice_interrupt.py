@@ -151,6 +151,24 @@ def test_judge_rule_not_called_on_no_fire():
     assert not classifier._held
 
 
+def test_canned_objection_dispatched_before_ruling_runs():
+    # Ordering guarantee behind the concurrency fix: the ruling task runs while/after the canned
+    # line is dispatched (so quick_ruling overlaps its playback), and the canned line is always
+    # spoken first — the ruling's say enqueues after it.
+    session = FakeSession()
+    state = SessionState()
+    said_when_judge_ran: dict = {}
+
+    async def judge(objection, fragment):
+        said_when_judge_ran["said"] = list(session.said)
+
+    classifier = ObjectionClassifier(
+        state, decider=lambda f, s: Decision(True, "leading", "x", outcome="fire")
+    )
+    asyncio.run(handle_interim(session, classifier, "Isn't it true you lied?", None, judge))
+    assert said_when_judge_ran["said"] == ["Objection — leading."]
+
+
 def test_hold_released_even_when_judge_rule_raises():
     session = FakeSession()
     state = SessionState()

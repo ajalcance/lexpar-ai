@@ -74,6 +74,20 @@ export function parseRulingData(text: string): RulingEvent | null {
   }
 }
 
+/** Parse a "judge_speaking" boundary event → true/false, or null if it isn't one. The judge shares
+ *  the Opposing-Counsel agent participant, so this is how the UI knows to label audio as the Judge. */
+export function parseJudgeSpeaking(text: string): boolean | null {
+  try {
+    const data = JSON.parse(text);
+    if (data?.type !== 'judge_speaking' || typeof data.speaking !== 'boolean') {
+      return null;
+    }
+    return data.speaking;
+  } catch {
+    return null;
+  }
+}
+
 /** Map an inline ruling onto a Transcript so TranscriptLine renders it as a judge line. */
 export function rulingEventToLine(event: RulingEvent, sessionId: string): Transcript {
   const label = event.ruling.charAt(0).toUpperCase() + event.ruling.slice(1);

@@ -1542,3 +1542,60 @@ type-check clean.** **Docs:** ARCHITECTURE §6.5 (object→rule→continue, late
 live room:** the reordered audio (no elaboration after the ruling), that the double-hearsay is gone,
 and the true immediate-path breakdown (Deepgram interim latency + WebRTC playout, not measurable
 offline) from the new instrumentation logs.
+
+---
+
+### Live objection→ruling audit: ruling latency, double-ruling, judge mislabel — status: done
+
+Independent trace of three live symptoms across `main.py`, `judge.py`, `voice_interrupt.py`,
+`session_state.py`, `useSparringRoom.ts`, `SparringRoom.tsx`, `TranscriptLine.tsx`. They are **not**
+one root; two share an architectural cause (the Judge is multiplexed onto the single Opposing-Counsel
+`AgentSession`), one is separate.
+
+**Symptom 1 — the "Sustained" arrives too late (root: serialized generation).** `handle_interim`
+does `await session.interrupt()` → `await session.say(canned)` → `await judge_rule(...)`. Awaiting the
+canned `session.say` blocks until its **playback finishes**; only then does `judge_rule` start
+`quick_ruling` (~1.3 s LLM). So the ruling audio lands ≈ canned-playback (~1 s) **+** quick_ruling
+(~1.3 s) ≈ 2–3 s after the objection, by which time the attorney has resumed. **Fix:** start
+`judge_rule` as a **concurrent task** before awaiting the canned line, so `quick_ruling` overlaps the
+canned playback; the ruling's own `session.say` still enqueues *after* the canned (SDK serializes the
+speech queue), so order is preserved but the gap drops to ≈ max(canned, quick_ruling) ≈ 1.3 s. The
+~1.3 s model floor remains — live-confirm whether it's tight enough.
+
+**Symptom 2 — two "Sustained" for one objection (root: NOT a double ledger-rule; a frontend dup).**
+Traced the "ruled twice by two paths" hypothesis and it does **not** happen: inline `judge_rule`
+calls `state.rule_on_objection` (→ resolved); end-of-session `assess_session` only rules
+`state.pending_objections()`, which excludes resolved ones, and its prompt says already-ruled
+objections are final; the inline↔finalize race is handled — whichever loses hits
+`rule_on_objection`'s "already ruled" `ValueError`, which both call sites catch. So the ledger is
+ruled exactly once and neither path double-publishes. The doubled *display* is a frontend
+render-dup — the **ruling-event equivalent of the earlier double-hearsay**, and **PR #5's
+ruling-`timestamp` dedup is exactly its fix** (before PR #5 ruling events had no timestamp →
+`parseRulingData` fell back to `Date.now()` → two deliveries got different keys → no dedup). So the
+observed double was almost certainly pre-PR#5 and is already addressed on current `main`. **Fix
+(hardening + regression):** hoist the dedup `seen` set to a `useRef` so it's shared across effect
+re-runs (robust even if two `DataReceived` listeners ever coexist), and add a `session_state`
+regression test that an already-ruled objection is excluded from `pending_objections()` and cannot be
+re-ruled. **Live-confirm** it no longer recurs on current main.
+
+**Symptom 3 — closing ruling labeled "Opposing Counsel" (root: one agent participant; label only).**
+The Judge is voiced through the same `AgentSession` as Opposing Counsel (`_judge_say` → `session.say`
+on `judge_tts`/`JUDGE_VOICE_ID`). The **audio is correct** (judge voice — verified). But the
+active-speaker badge (`SparringRoom.tsx`) is driven by `ActiveSpeakersChanged`, and `updateSpeaker`
+maps *any* remote (agent) audio to `opposing_counsel` — so every judge line (inline rulings AND the
+closing ruling) shows "Opposing counsel speaking." It's a **label-only** bug. The frontend can't tell
+judge from OC from audio (one participant), so it needs a signal. **Fix:** `_judge_say` publishes
+`{type:"judge_speaking", speaking:true|false}` around the judge's audio; the hook tracks
+`judgeSpeaking`; the badge shows "Judge speaking" when set. Covers inline + closing.
+
+**Shared thread:** Symptoms 1 and 3 both fall out of the Judge sharing the single OC `AgentSession`
+(serialized speech queue; single participant identity). A truly separate judge participant would
+dissolve both — noted as a larger follow-up; the targeted fixes above are lower-risk for now.
+
+**Tests:** voice_interrupt — ruling generation starts concurrently with the canned line, order
+preserved, hold released on success/raise (extend existing); session_state — resolved objection not
+re-ruled / excluded from pending; frontend — `parse`/dedup of `judge_speaking` ignored as a line;
+existing ruling/objection dedup intact. **⚠️ Needs a live room:** whether ~1.3 s ruling gap is tight
+enough, that the double no longer appears, and the "Judge speaking" label during real audio.
+
+**Result:** Done. **S1 (latency):** `handle_interim` starts `judge_rule` as a concurrent task before awaiting the canned line, so `quick_ruling` overlaps its playback; gap ≈ max(canned, ~1.3 s) instead of the sum. **S2 (double):** confirmed NOT a double ledger-rule (verified + regression test `test_inline_ruled_objection_is_not_re_ruled_at_session_end`); it was the ruling-event analog of the double-hearsay, already fixed by PR #5's ruling-`timestamp` dedup — hardened further by hoisting the frontend `seen` set to a shared ref. **S3 (label):** the audio was already the judge voice; only the active-speaker badge was wrong (one agent participant). `_judge_say` now publishes `{type:"judge_speaking"}` boundaries; the hook tracks it and the badge shows "Judge speaking" (inline + closing). **Tests: agents 113 offline + 9 live (+ canned-before-ruling ordering, inline-not-re-ruled); frontend 19 (+ parseJudgeSpeaking); ruff + type-check clean.** **Docs:** ARCHITECTURE §6.5 (concurrency, dedup ref, judge-speaking), LESSONS (say() blocks on playback; attribute multiplexed personas with a signal). **⚠️ Needs a live room:** whether the ~1.3 s ruling gap is tight enough, that the double is gone, and the "Judge speaking" label during real audio.

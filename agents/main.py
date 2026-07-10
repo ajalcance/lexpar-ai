@@ -188,6 +188,16 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             json.dumps(event).encode("utf-8"), reliable=True, topic="objection"
         )
 
+    async def _publish_judge_speaking(speaking: bool) -> None:
+        # The judge is voiced through the SAME agent participant as Opposing Counsel, so the
+        # frontend's active-speaker indicator (any remote audio → "Opposing Counsel") can't tell
+        # them apart. Bracket judge audio with this signal so the UI can label it "Judge speaking".
+        try:
+            msg = json.dumps({"type": "judge_speaking", "speaking": speaking}).encode("utf-8")
+            await ctx.room.local_participant.publish_data(msg, reliable=True, topic="objection")
+        except Exception:
+            pass
+
     async def _judge_say(text: str) -> None:
         # Speak as the Judge: synthesize on the judge's distinct voice and play it through the
         # session's speech queue (queued behind any in-flight OC line, so ordering is natural).
@@ -196,8 +206,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             async for synthesized in judge_tts.synthesize(text):
                 yield synthesized.frame
 
-        handle = session.say(text, audio=frames(), allow_interruptions=False)
-        await handle
+        await _publish_judge_speaking(True)
+        try:
+            handle = session.say(text, audio=frames(), allow_interruptions=False)
+            await handle
+        finally:
+            await _publish_judge_speaking(False)
 
     async def judge_rule(objection, fragment: str) -> None:
         # Inline ruling (§6.5): fast-model call → apply to the ledger IMMEDIATELY → judge speaks

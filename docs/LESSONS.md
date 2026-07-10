@@ -205,3 +205,25 @@ injectable clock for tests) catches what normalization can't (digit rewrites), a
 "don't object over the judge" guard — re-arming additionally gated on the inline ruling completing
 (`hold()`/`release_hold()`), not just the timer. General rule: anything keyed on interim STT text
 must survive the final's rewrite; test with a revised-final case, not just growing fragments.
+
+### [Agents/LiveKit] `await session.say(...)` blocks until PLAYBACK finishes — parallelize the next work
+**Wrong:** Sequenced `await session.say(canned_objection)` → then generate the judge's ruling
+(`quick_ruling`, ~1.3 s LLM) → then speak it. Awaiting `say()` waits for the audio to finish
+*playing*, not just to be enqueued, so ruling generation didn't even start until the objection had
+finished playing — the "Sustained" landed ~2-3 s late (canned playback **+** generation), after the
+attorney had already resumed.
+**Right:** Kick off the next generation **concurrently** (`asyncio.create_task`) before awaiting the
+current `say()`, so the LLM call overlaps the audio playback; the next `say()` still enqueues after
+the current one (the AgentSession speech queue preserves call order), so ordering holds while the gap
+drops to ≈ max(playback, generation). General rule: after any `await session.say(...)`, assume you've
+already spent the whole line's duration — start slow follow-up work before it, not after.
+
+### [Frontend/LiveKit] One agent participant can voice multiple personas — attribute with a signal, not the mic
+**Wrong:** Labeled the active speaker from `ActiveSpeakersChanged` alone (any remote audio →
+"Opposing Counsel"). The Judge is voiced through the *same* `AgentSession`/participant (just a
+different TTS voice), so every judge line showed "Opposing counsel speaking" — a label bug even
+though the audio was the correct judge voice.
+**Right:** When one participant speaks as multiple personas, the client can't attribute from audio —
+publish an explicit boundary signal (`{"type":"judge_speaking", speaking:true/false}` around the
+judge's audio) and drive the label from that. (A separate participant per persona would avoid the
+multiplexing, at more infra cost.)

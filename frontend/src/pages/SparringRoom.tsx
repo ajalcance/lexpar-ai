@@ -44,6 +44,7 @@ export function SparringRoom() {
     mode,
     connectionState,
     activeSpeaker,
+    judgeSpeaking,
     isMuted,
     micBlocked,
     audioBlocked,
@@ -81,8 +82,14 @@ export function SparringRoom() {
             {CONNECTION_LABEL[connectionState]}
           </Badge>
           {isConnected && (
-            <Badge variant={activeSpeaker === 'opposing_counsel' ? 'destructive' : 'secondary'}>
-              {activeSpeaker === 'opposing_counsel' ? 'Opposing counsel speaking' : 'Listening'}
+            <Badge
+              variant={judgeSpeaking || activeSpeaker === 'opposing_counsel' ? 'destructive' : 'secondary'}
+            >
+              {judgeSpeaking
+                ? 'Judge speaking'
+                : activeSpeaker === 'opposing_counsel'
+                  ? 'Opposing counsel speaking'
+                  : 'Listening'}
             </Badge>
           )}
           <Button
