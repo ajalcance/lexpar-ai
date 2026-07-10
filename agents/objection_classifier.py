@@ -41,10 +41,10 @@ from dataclasses import dataclass
 from llm_router import build_endpoint, chat, objection_config
 from session_state import SessionState
 
-# Objection taxonomy the classifier may return (ARCHITECTURE §13). The regex gate detects
-# leading/hearsay/speculation/argumentative heuristically; `assumes_facts`,
-# `mischaracterizes_record`, and `calls_for_legal_conclusion` are LLM-judged (context-dependent,
-# not reliably regex-detectable); `relevance` likewise (what is relevant depends on the issues).
+# Objection taxonomy the classifier may return (ARCHITECTURE §13). The recall gate detects
+# leading/hearsay/speculation/argumentative/calls_for_legal_conclusion heuristically;
+# `assumes_facts`, `mischaracterizes_record`, and `relevance` are LLM-judged only —
+# context-dependent (against the record / the issues), no reliable surface form.
 OBJECTION_TYPES = (
     "leading",
     "hearsay",
@@ -115,6 +115,13 @@ PROCEEDING_ELIGIBLE_GROUNDS: dict[str, tuple[str, ...]] = {
     ),
 }
 
+
+def eligible_grounds_for(proceeding_type: str) -> tuple[str, ...]:
+    """The objection grounds eligible in this proceeding type (§13). Unknown or empty proceeding
+    type → ALL grounds (fail-open to pre-§13 behavior: offline harnesses and pre-migration
+    sessions carry no proceeding type and must not lose objections to the gate)."""
+    return PROCEEDING_ELIGIBLE_GROUNDS.get(proceeding_type, OBJECTION_TYPES)
+
 # Recall-biased phrasing gates. Broad on purpose — the LLM is the judgment layer.
 _GATE_PATTERNS: dict[str, list[str]] = {
     "leading": [
@@ -143,6 +150,20 @@ _GATE_PATTERNS: dict[str, list[str]] = {
         r"\b(?:obviously|clearly|undeniably)\b",
         r"everyone knows",
         r"any reasonable person",
+    ],
+    # §13 new grounds — regex-detectability judgment: `calls_for_legal_conclusion` has recognizable
+    # surface phrasing (urging the court to adopt a conclusion / "as a matter of law" framing), so
+    # it gets recall-gate patterns; `relevance` and `mischaracterizes_record` are inherently
+    # comparative (against the issues / against the record) with no reliable surface form, so they
+    # stay LLM-only — the same split the original taxonomy made for `assumes_facts`. NONE of the
+    # new grounds joins the tier-2 immediate-fire set: e.g. "as a matter of law" is normal,
+    # proper phrasing in argument, so firing on it without judgment would be wrong — argument-shaped
+    # objections are inherently judgment calls, which also means every fire in oral_argument /
+    # motion_hearing is LLM-judged (tier-2 holds only leading/hearsay, ineligible there).
+    "calls_for_legal_conclusion": [
+        r"\bas a matter of law\b",
+        r"\bthe court (?:should|must) (?:find|hold|rule|conclude|declare)\b",
+        r"\b(?:that|this|which) (?:constitutes|amounts to)\b",
     ],
 }
 _COMPILED = {g: [re.compile(p, re.IGNORECASE) for p in pats] for g, pats in _GATE_PATTERNS.items()}
@@ -226,25 +247,32 @@ def _immediate_objection_type(grounds: list[str]) -> str:
     return grounds[0]
 
 
-_SYSTEM = (
-    "You decide, in real time, whether Opposing Counsel should INTERRUPT the attorney's "
-    "in-progress statement with an objection. Follow the rule: object ONLY when the phrasing "
-    "genuinely invites one — NOT on every turn. Most fragments should not trigger an objection. "
-    "Use the SESSION RECORD to avoid objecting on grounds already ruled. Valid objection types: "
-    + ", ".join(OBJECTION_TYPES)
-    + '. Respond ONLY with JSON {"fire": boolean, "objection_type": <one type or null>, '
-    '"reason": "<a few words>"}. Set fire=false and objection_type=null unless there is a clear, '
-    "well-founded objection."
-)
+def _system_prompt(eligible: tuple[str, ...]) -> str:
+    """The tier-3 system prompt, with the valid-type list NARROWED to the grounds eligible for
+    the session's proceeding type (§13) — the model is never even offered an ineligible type."""
+    return (
+        "You decide, in real time, whether Opposing Counsel should INTERRUPT the attorney's "
+        "in-progress statement with an objection. Follow the rule: object ONLY when the phrasing "
+        "genuinely invites one — NOT on every turn. Most fragments should not trigger an "
+        "objection. Use the SESSION RECORD to avoid objecting on grounds already ruled. Valid "
+        "objection types: "
+        + ", ".join(eligible)
+        + '. Respond ONLY with JSON {"fire": boolean, "objection_type": <one type or null>, '
+        '"reason": "<a few words>"}. Set fire=false and objection_type=null unless there is a '
+        "clear, well-founded objection."
+    )
 
 
 def _build_messages(
     fragment: str, state: SessionState, candidates: list[str], rules: str = ""
 ) -> list[dict[str, str]]:
     """Assemble the minimal classifier messages (+ the §13 procedural-rules block when retrieval
-    produced one). Pure — no API call."""
+    produced one; + the proceeding type so the model judges in the right procedural frame).
+    Pure — no API call."""
     hint = ", ".join(candidates) if candidates else "none"
     context = f"SESSION RECORD:\n{state.snapshot()}"
+    if state.proceeding_type:
+        context += f"\n\nPROCEEDING TYPE: {state.proceeding_type}"
     if rules:
         context += f"\n\n{rules}"
     user = (
@@ -253,7 +281,7 @@ def _build_messages(
         f'ATTORNEY (statement in progress): "{fragment}"'
     )
     return [
-        {"role": "system", "content": _SYSTEM},
+        {"role": "system", "content": _system_prompt(eligible_grounds_for(state.proceeding_type))},
         {"role": "user", "content": user},
     ]
 
@@ -280,10 +308,20 @@ def classify_fragment(fragment: str, state: SessionState) -> Decision:
     candidate → the fast model makes the call. Fails closed — any error/timeout/unparseable output
     returns NO interruption.
     """
-    candidates = candidate_grounds(fragment)
+    # §13 proceeding-type gating: an ineligible ground is filtered at EVERY tier — it never
+    # reaches the LLM, and a tier-2 pattern for an ineligible ground (e.g. leading's trailing-"?"
+    # in oral argument, the audit-flagged mismatch) can no longer fire at all.
+    eligible = eligible_grounds_for(state.proceeding_type)
+    raw_candidates = candidate_grounds(fragment)
+    candidates = [g for g in raw_candidates if g in eligible]
     if not candidates:
-        return Decision(False, None, "no objection-inviting phrasing", outcome=GATE_REJECTED)
-    high = high_confidence_grounds(fragment)
+        reason = (
+            f"grounds ineligible for {state.proceeding_type}"
+            if raw_candidates
+            else "no objection-inviting phrasing"
+        )
+        return Decision(False, None, reason, outcome=GATE_REJECTED)
+    high = [g for g in high_confidence_grounds(fragment) if g in eligible]
     if high:
         ground = _immediate_objection_type(high)
         return Decision(
@@ -317,7 +355,18 @@ def classify_fragment(fragment: str, state: SessionState) -> Decision:
             max_tokens=512,
             response_format={"type": "json_object"},
         )
-        return _parse_decision(content)
+        decision = _parse_decision(content)
+        # Belt-and-braces: the prompt only OFFERS eligible types, but if the model fires with one
+        # anyway (or invents a type), a procedurally incoherent objection must never be spoken.
+        if decision.fire and decision.objection_type not in eligible:
+            return Decision(
+                False,
+                None,
+                f"model returned ineligible ground {decision.objection_type!r} "
+                f"for {state.proceeding_type or 'unknown proceeding'}",
+                outcome=LLM_NO_FIRE,
+            )
+        return decision
     except Exception:
         return Decision(
             False, None, "classifier unavailable — no interruption", outcome=FAIL_CLOSED

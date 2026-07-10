@@ -30,14 +30,19 @@ ALLOWED_TRANSITIONS: dict[str, set[str]] = {
 }
 
 
-def create_session(db: DbSession, user: User, case: Case) -> Session:
-    """Start a new in-progress session for a case, recording the active LLM backend."""
+def create_session(
+    db: DbSession, user: User, case: Case, proceeding_type: str | None = None
+) -> Session:
+    """Start a new in-progress session for a case, recording the active LLM backend and the
+    proceeding type being rehearsed (§13 — the API requires it; None falls back to the model
+    default for internal/legacy callers)."""
     settings = get_settings()
     session = Session(
         case_id=case.id,
         user_id=user.id,
         status="in_progress",
         llm_backend_used=settings.opposing_counsel_llm_provider,
+        **({"proceeding_type": proceeding_type} if proceeding_type else {}),
     )
     db.add(session)
     db.commit()

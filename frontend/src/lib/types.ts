@@ -2,8 +2,9 @@
  * File: src/lib/types.ts
  * Purpose: Shared TypeScript types for the frontend, using the canonical project
  *   vocabulary (user / case / session / transcript / scorecard) so terms never drift
- *   between the API layer, stores, and pages.
- * Depends on: nothing (pure type declarations)
+ *   between the API layer, stores, and pages. Also the proceeding-type display labels
+ *   (the one value export — kept here so the taxonomy and its labels stay together).
+ * Depends on: nothing (type declarations + one label map)
  * Related: backend/app/models/* (the DB shapes these mirror at the API boundary),
  *   docs/ARCHITECTURE.md §8 (schema), docs/DEVELOPER_GUIDELINES.md §4 (vocabulary)
  */
@@ -16,6 +17,22 @@ export type SessionStatus = 'in_progress' | 'completed' | 'abandoned';
 
 /** Which LLM backend served a session's Opposing Counsel. */
 export type LlmBackend = 'fireworks' | 'self_hosted';
+
+/** Which kind of proceeding a session rehearses (§13) — drives eligible objection grounds.
+ *  Mirrors backend PROCEEDING_TYPES (app/models/session.py). */
+export type ProceedingType =
+  | 'oral_argument'
+  | 'direct_examination'
+  | 'cross_examination'
+  | 'motion_hearing';
+
+/** Display labels for the proceeding-type selector. */
+export const PROCEEDING_TYPE_LABELS: Record<ProceedingType, string> = {
+  oral_argument: 'Oral argument',
+  direct_examination: 'Direct examination',
+  cross_examination: 'Cross-examination',
+  motion_hearing: 'Motion hearing',
+};
 
 /** An authenticated attorney. Mirrors the `users` table (minus secrets). */
 export interface User {
@@ -38,6 +55,7 @@ export interface Session {
   id: string;
   caseId: string;
   status: SessionStatus;
+  proceedingType: ProceedingType;
   llmBackendUsed: LlmBackend | null;
   startedAt: string;
   endedAt: string | null;

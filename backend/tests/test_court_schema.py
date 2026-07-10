@@ -70,14 +70,29 @@ def test_stub_user_gets_attorney_role(client, auth_headers):
     assert me["role"] == "attorney"  # no user silently becomes admin
 
 
-def test_new_session_defaults_to_oral_argument(client, auth_headers):
+def test_session_creation_requires_valid_proceeding_type(client, auth_headers):
+    # §13 Phase 4: proceeding_type is REQUIRED at creation and validated against the taxonomy.
     case = client.post(
         "/api/cases", headers=auth_headers, json={"title": "C", "case_facts": "f"}
     ).json()
-    session = client.post(
+    missing = client.post(
         "/api/sessions", headers=auth_headers, json={"case_id": case["id"]}
-    ).json()
-    assert session["proceeding_type"] == "oral_argument"
+    )
+    assert missing.status_code == 422
+    invalid = client.post(
+        "/api/sessions",
+        headers=auth_headers,
+        json={"case_id": case["id"], "proceeding_type": "bench_trial"},
+    )
+    assert invalid.status_code == 422
+    for proceeding_type in PROCEEDING_TYPES:
+        created = client.post(
+            "/api/sessions",
+            headers=auth_headers,
+            json={"case_id": case["id"], "proceeding_type": proceeding_type},
+        )
+        assert created.status_code == 201
+        assert created.json()["proceeding_type"] == proceeding_type
 
 
 def test_case_create_accepts_valid_court(client, auth_headers, db_session):

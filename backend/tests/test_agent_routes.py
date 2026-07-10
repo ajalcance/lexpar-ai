@@ -27,7 +27,9 @@ def _new_session(client, auth_headers) -> str:
         "/api/cases", headers=auth_headers, json={"title": "Rivera v. Coastal", "case_facts": "F"}
     ).json()
     session = client.post(
-        "/api/sessions", headers=auth_headers, json={"case_id": case["id"]}
+        "/api/sessions",
+        headers=auth_headers,
+        json={"case_id": case["id"], "proceeding_type": "oral_argument"},
     ).json()
     return session["id"]
 
@@ -118,7 +120,9 @@ def test_context_route_returns_case_facts_for_agent(client, auth_headers, db_ses
     ).json()
     assert case["court_id"] == str(court.id)
     session = client.post(
-        "/api/sessions", headers=auth_headers, json={"case_id": case["id"]}
+        "/api/sessions",
+        headers=auth_headers,
+        json={"case_id": case["id"], "proceeding_type": "oral_argument"},
     ).json()
 
     resp = client.get(f"/api/sessions/{session['id']}/context", headers=AGENT)

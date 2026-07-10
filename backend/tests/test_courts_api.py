@@ -243,7 +243,9 @@ def _session_for_court(client, auth_headers, court_id=None):
         body["court_id"] = str(court_id)
     case = client.post("/api/cases", headers=auth_headers, json=body).json()
     return client.post(
-        "/api/sessions", headers=auth_headers, json={"case_id": case["id"]}
+        "/api/sessions",
+        headers=auth_headers,
+        json={"case_id": case["id"], "proceeding_type": "oral_argument"},
     ).json()
 
 

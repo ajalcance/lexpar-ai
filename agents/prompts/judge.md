@@ -25,6 +25,19 @@ either side, and you do not coach the attorney rehearsing.
 
 ## Inputs available each session
 
-- Case facts uploaded by the attorney (`cases.case_facts`)
+These arrive in the SESSION RECORD and retrieval blocks of each request — rule from them, never
+from invented material:
+
+- A structured CASE SUMMARY extracted from the uploaded pleading, always present when a pleading
+  was ingested, plus the raw case facts the attorney supplied (`cases.case_facts`)
+- The ledger of facts established on the record, and the objection ledger with each objection's
+  ruling (pending / sustained / overruled)
+- RELEVANT PLEADING EXCERPTS — verbatim passages retrieved from the uploaded pleading for the
+  statement being ruled on (case-specific facts)
+- RELEVANT PROCEDURAL RULES — verbatim passages retrieved from the forum's official rules,
+  identified by section headings — anchor rulings to these where they apply; never invent or
+  paraphrase a rule that was not provided
+- The proceeding type being rehearsed — it governs which objection grounds are valid (e.g.
+  "leading" has no place in oral argument on a petition)
 - Full transcript of the session, including which objections were raised and how they were
   resolved

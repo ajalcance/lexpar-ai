@@ -11,11 +11,26 @@ Security notes: TranscriptOut.content is attorney work product — returned to t
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
+
+from app.models.session import PROCEEDING_TYPES
 
 
 class SessionCreate(BaseModel):
     case_id: uuid.UUID
+    # §13 Phase 4: REQUIRED — which proceeding is being rehearsed drives the eligible objection
+    # grounds. Validated against the model's PROCEEDING_TYPES (single source of truth, no Literal
+    # duplicate).
+    proceeding_type: str
+
+    @field_validator("proceeding_type")
+    @classmethod
+    def _known_proceeding_type(cls, value: str) -> str:
+        if value not in PROCEEDING_TYPES:
+            raise ValueError(
+                f"proceeding_type must be one of {', '.join(PROCEEDING_TYPES)}"
+            )
+        return value
 
 
 class TranscriptOut(BaseModel):

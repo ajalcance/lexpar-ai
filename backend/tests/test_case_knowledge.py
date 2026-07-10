@@ -138,7 +138,9 @@ def test_internal_knowledge_route_requires_agent_token(client, auth_headers):
         "/api/cases", headers=auth_headers, json={"title": "C", "case_facts": "f"}
     ).json()
     session = client.post(
-        "/api/sessions", headers=auth_headers, json={"case_id": case["id"]}
+        "/api/sessions",
+        headers=auth_headers,
+        json={"case_id": case["id"], "proceeding_type": "oral_argument"},
     ).json()
     url = f"/api/sessions/{session['id']}/knowledge?q=test"
     assert client.get(url).status_code == 401  # no token

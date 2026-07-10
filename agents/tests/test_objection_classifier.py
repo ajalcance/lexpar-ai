@@ -314,7 +314,11 @@ def test_outcomes_are_categorized(monkeypatch):
         == oc.FIRE_IMMEDIATE
     )
     # LLM fire / no-fire / fail-closed, all on the ambiguous candidate that reaches the model.
-    monkeypatch.setattr(oc, "chat", lambda *a, **k: '{"fire": true, "objection_type": "spec"}')
+    # (The fired type must be a REAL taxonomy ground — an unknown/ineligible type is now
+    # suppressed by the §13 eligibility guard, tested separately in test_court_knowledge.py.)
+    monkeypatch.setattr(
+        oc, "chat", lambda *a, **k: '{"fire": true, "objection_type": "speculation"}'
+    )
     assert classify_fragment(AMBIGUOUS, SessionState()).outcome == oc.FIRE
     monkeypatch.setattr(oc, "chat", lambda *a, **k: '{"fire": false, "objection_type": null}')
     assert classify_fragment(AMBIGUOUS, SessionState()).outcome == oc.LLM_NO_FIRE
@@ -387,3 +391,85 @@ def test_leading_eligible_only_on_direct_examination():
     assert "leading" in oc.PROCEEDING_ELIGIBLE_GROUNDS["direct_examination"]
     # Leading questions are generally permitted on cross — not an eligible ground there.
     assert "leading" not in oc.PROCEEDING_ELIGIBLE_GROUNDS["cross_examination"]
+
+
+# --- §13 Phase 4: proceeding-type gating at every tier ---------------------------------------
+
+def _oral_argument_state() -> SessionState:
+    return SessionState(case_facts="F", proceeding_type="oral_argument")
+
+
+def test_gate_filters_ineligible_grounds_before_any_tier(monkeypatch):
+    # The audit-flagged mismatch: a trailing "?" gates `leading`, which is procedurally
+    # incoherent in oral argument — it must die at the gate, reaching neither tier 2 nor the LLM.
+    def boom(*args, **kwargs):
+        raise AssertionError("LLM must not be called for an ineligible-only candidate")
+
+    monkeypatch.setattr(oc, "chat", boom)
+    decision = classify_fragment("Where was the witness that night?", _oral_argument_state())
+    assert decision.outcome == oc.GATE_REJECTED
+    assert not decision.fire
+    assert "ineligible" in decision.reason
+
+
+def test_high_confidence_leading_cannot_fire_in_oral_argument(monkeypatch):
+    # Tier-2's strongest leading pattern: immediate fire on direct, filtered in argument.
+    fragment = "Isn't it true you were there?"
+    assert (
+        classify_fragment(
+            fragment, SessionState(proceeding_type="direct_examination")
+        ).outcome
+        == oc.FIRE_IMMEDIATE
+    )
+    monkeypatch.setattr(oc, "chat", boom_llm := (lambda *a, **k: '{"fire": false}'))
+    del boom_llm
+    decision = classify_fragment(fragment, _oral_argument_state())
+    assert decision.outcome == oc.GATE_REJECTED  # leading was its only candidate ground
+
+
+def test_eligible_candidates_still_reach_llm_in_oral_argument(monkeypatch):
+    captured: dict = {}
+
+    def fake_chat(endpoint, messages, **kwargs):
+        captured["messages"] = messages
+        return '{"fire": true, "objection_type": "calls_for_legal_conclusion", "reason": "r"}'
+
+    monkeypatch.setattr(oc, "chat", fake_chat)
+    decision = classify_fragment(
+        "As a matter of law, this amounts to bad faith.", _oral_argument_state()
+    )
+    assert decision.fire and decision.objection_type == "calls_for_legal_conclusion"
+    system = captured["messages"][0]["content"]
+    # the valid-type list offered to the model is NARROWED to the eligible grounds
+    assert "calls_for_legal_conclusion" in system
+    assert "leading" not in system and "hearsay" not in system
+    # and the proceeding type is stated in the user content
+    assert "PROCEEDING TYPE: oral_argument" in captured["messages"][1]["content"]
+
+
+def test_llm_fire_with_ineligible_type_is_suppressed(monkeypatch):
+    # Belt-and-braces: even if the model ignores the narrowed list, an ineligible/unknown type
+    # never fires.
+    monkeypatch.setattr(
+        oc, "chat", lambda *a, **k: '{"fire": true, "objection_type": "hearsay", "reason": "r"}'
+    )
+    decision = classify_fragment(
+        "As a matter of law, this amounts to bad faith.", _oral_argument_state()
+    )
+    assert not decision.fire
+    assert decision.outcome == oc.LLM_NO_FIRE
+    assert "ineligible" in decision.reason
+
+
+def test_unknown_or_empty_proceeding_type_fails_open_to_all_grounds():
+    assert oc.eligible_grounds_for("") == oc.OBJECTION_TYPES
+    assert oc.eligible_grounds_for("bench_trial") == oc.OBJECTION_TYPES
+    assert oc.eligible_grounds_for("oral_argument") == oc.PROCEEDING_ELIGIBLE_GROUNDS[
+        "oral_argument"
+    ]
+
+
+def test_legal_conclusion_gate_patterns_are_candidates_not_immediate():
+    fragment = "The court should find that the transfer was void."
+    assert "calls_for_legal_conclusion" in candidate_grounds(fragment)
+    assert high_confidence_grounds(fragment) == []  # judgment call — never fires without the LLM

@@ -1,11 +1,13 @@
 /**
  * File: src/pages/Dashboard.tsx
- * Purpose: Lists the attorney's cases and lets them start a new sparring session or create a
- *   new case. All data flows through lib/api.ts via TanStack Query.
- * Depends on: react-router-dom, @tanstack/react-query, lib/api.ts, components/ui/*
+ * Purpose: Lists the attorney's cases and lets them start a new sparring session (choosing the
+ *   proceeding type being rehearsed, §13) or create a new case. All data flows through lib/api.ts
+ *   via TanStack Query.
+ * Depends on: react-router-dom, @tanstack/react-query, lib/api.ts, lib/types.ts, components/ui/*
  * Related: backend/app/api/cases.py, pages/CaseUpload.tsx, pages/SparringRoom.tsx
  */
 
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
@@ -18,7 +20,11 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import { Label } from '@/components/ui/label';
 import * as api from '@/lib/api';
+import { PROCEEDING_TYPE_LABELS, type ProceedingType } from '@/lib/types';
+
+const DEFAULT_PROCEEDING: ProceedingType = 'oral_argument';
 
 export function Dashboard() {
   const navigate = useNavigate();
@@ -27,8 +33,14 @@ export function Dashboard() {
     queryFn: api.getCases,
   });
 
+  // Per-case proceeding-type choice (§13, required at session creation). Cases without an
+  // explicit choice start as oral argument.
+  const [proceedingByCase, setProceedingByCase] = useState<Record<string, ProceedingType>>({});
+  const proceedingFor = (caseId: string) => proceedingByCase[caseId] ?? DEFAULT_PROCEEDING;
+
   const startSession = useMutation({
-    mutationFn: (caseId: string) => api.createSession(caseId),
+    mutationFn: ({ caseId, proceedingType }: { caseId: string; proceedingType: ProceedingType }) =>
+      api.createSession(caseId, proceedingType),
     onSuccess: (session) => navigate(`/session/${session.id}`),
   });
 
@@ -66,9 +78,34 @@ export function Dashboard() {
                 {legalCase.caseFacts}
               </p>
             </CardContent>
-            <CardFooter>
+            <CardFooter className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor={`proceeding-${legalCase.id}`}>Proceeding</Label>
+                <select
+                  id={`proceeding-${legalCase.id}`}
+                  className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                  value={proceedingFor(legalCase.id)}
+                  onChange={(event) =>
+                    setProceedingByCase((prev) => ({
+                      ...prev,
+                      [legalCase.id]: event.target.value as ProceedingType,
+                    }))
+                  }
+                >
+                  {Object.entries(PROCEEDING_TYPE_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <Button
-                onClick={() => startSession.mutate(legalCase.id)}
+                onClick={() =>
+                  startSession.mutate({
+                    caseId: legalCase.id,
+                    proceedingType: proceedingFor(legalCase.id),
+                  })
+                }
                 disabled={startSession.isPending}
               >
                 Start sparring

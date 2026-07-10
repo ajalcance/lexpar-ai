@@ -13,7 +13,15 @@
 
 import { mockTranscript } from '@/lib/mockData';
 import { useAuthStore } from '@/store/auth';
-import type { Case, LiveKitAccess, Scorecard, Session, Transcript, User } from '@/lib/types';
+import type {
+  Case,
+  LiveKitAccess,
+  ProceedingType,
+  Scorecard,
+  Session,
+  Transcript,
+  User,
+} from '@/lib/types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 
@@ -99,6 +107,7 @@ interface SessionJson {
   id: string;
   case_id: string;
   status: Session['status'];
+  proceeding_type: Session['proceedingType'];
   llm_backend_used: Session['llmBackendUsed'];
   started_at: string;
   ended_at: string | null;
@@ -141,6 +150,7 @@ const toSession = (j: SessionJson): Session => ({
   id: j.id,
   caseId: j.case_id,
   status: j.status,
+  proceedingType: j.proceeding_type,
   llmBackendUsed: j.llm_backend_used,
   startedAt: j.started_at,
   endedAt: j.ended_at,
@@ -235,10 +245,15 @@ export async function listPleadings(caseId: string): Promise<PleadingStatus[]> {
   return data.map(toPleading);
 }
 
-export async function createSession(caseId: string): Promise<Session> {
+/** Start a session. `proceedingType` is required (§13) — it drives which objection grounds the
+ *  AI opposing counsel may raise. */
+export async function createSession(
+  caseId: string,
+  proceedingType: ProceedingType,
+): Promise<Session> {
   const data = await request<SessionJson>('/api/sessions', {
     method: 'POST',
-    body: { case_id: caseId },
+    body: { case_id: caseId, proceeding_type: proceedingType },
   });
   return toSession(data);
 }

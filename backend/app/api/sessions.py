@@ -28,7 +28,7 @@ def create_session(
     db: DbSession = Depends(get_db),
 ) -> SessionOut:
     case = case_service.get_case(db, current_user, payload.case_id)
-    return session_service.create_session(db, current_user, case)
+    return session_service.create_session(db, current_user, case, payload.proceeding_type)
 
 
 @router.get("/{session_id}", response_model=SessionDetailOut)

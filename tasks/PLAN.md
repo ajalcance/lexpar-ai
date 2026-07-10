@@ -1777,7 +1777,7 @@ and nothing non-obvious surfaced. **Untouched as instructed:** judge-participant
 
 ---
 
-### Court & Procedural Rules Grounding + Enterprise Hardening — status: Phases 1-3 done, Phases 4-8 not started
+### Court & Procedural Rules Grounding + Enterprise Hardening — status: Phases 1-4 done, Phases 5-8 not started
 
 **Why:** the grounding audit (2026-07-10) established the agents have ZERO engineered procedural
 grounding — no rules corpus, no jurisdiction prompt; all grounding is the uploaded pleading.
@@ -1935,3 +1935,36 @@ classifier tier-3-only retrieval + offline-skip + debounce-with-grounding), ruff
 compiles.** **No-fabrication check passed** (diff greped; fixture "rules" are labeled
 placeholders). ⚠️ Live-room confirmation of the grounded paths remains the user's deliberate
 standalone step.
+
+**Phase 4 Result:** Done, tested, committed — suite run after every meaningful change; no live
+LiveKit session; no browser preview either (a Dashboard→SparringRoom preview would head into the
+LiveKit connect path — verification bar for this phase was the offline suites per instruction).
+**Classifier gating (agents):** `eligible_grounds_for(proceeding_type)` (unknown/empty → ALL
+grounds, fail-open to pre-§13 behavior); `classify_fragment` filters tier-1 candidates AND tier-2
+high-confidence matches through it BEFORE any LLM call — an ineligible-only candidate dies at the
+gate with reason "grounds ineligible for <type>" (the audit-flagged trailing-"?"-fires-leading-in-
+oral-argument mismatch is now structurally impossible, tested); the tier-3 system prompt's
+valid-type list is NARROWED to eligible grounds and the user content states `PROCEEDING TYPE:`;
+belt-and-braces post-parse guard suppresses a fire whose type is ineligible/unknown (one
+pre-existing fixture used invented type "spec" and was corrected to "speculation" — the guard now
+rightly refuses unknown types). New recall patterns for `calls_for_legal_conclusion` ("as a matter
+of law", "the court should/must find…", "constitutes/amounts to"); `relevance` +
+`mischaracterizes_record` stay LLM-only (comparative, no surface form — documented in-file); NO
+new ground joins tier-2 (argument-shaped objections are judgment calls → every oral_argument/
+motion_hearing fire is LLM-judged, documented). **Persona prompts:** opposing_counsel.md +
+judge.md "Inputs available" sections rewritten to the REAL runtime inputs (case summary, raw
+facts, both ledgers, RELEVANT PLEADING EXCERPTS, RELEVANT PROCEDURAL RULES w/ cite-by-section +
+never-invent language, proceeding_type, transcript); OC's objection behavior line now
+proceeding-aware. **Backend:** `SessionCreate.proceeding_type` REQUIRED, field_validator against
+`PROCEEDING_TYPES` (single source, no Literal duplicate) → 422 missing/invalid;
+`session_service.create_session` takes it (None → model default for internal callers); 5 test
+call sites updated; the Phase-1 "defaults to oral_argument" API test rewritten to the new
+contract (422/422/201×4-echo). **Frontend:** `ProceedingType` union + `PROCEEDING_TYPE_LABELS`
+(types.ts); `api.createSession(caseId, proceedingType)` + `Session.proceedingType` mapping;
+Dashboard gained a per-case labeled Proceeding `<select>` (Tailwind-styled native element;
+default oral_argument) feeding the mutation. New `Dashboard.test.tsx` (default + selected value
+both assert the createSession payload). **Tests: agents 145 (was 139; +6 gating incl.
+LLM-never-called-for-ineligible and narrowed-prompt assertions), backend 61 (net stable; required-
+field contract test), frontend 25 Vitest (was 23; +2 Dashboard) + type-check + lint clean — the
+existing session-creation flow's coverage passes with the required field.** **No-fabrication
+check passed.** ⚠️ Live-room confirmation still the user's deliberate standalone step.
