@@ -2272,3 +2272,39 @@ ARCHITECTURE §4 wiring status (one `SessionFinale` bullet); the end-of-session 
 unchanged (already in §6.5), so no §6.5 edit. **⚠️ Needs the live pass:** the amber deliberation wave
 during real `assess_session` latency, the hand-off to audio-reactive bars when the judge speaks, no
 copy flicker across inter-sentence pauses (the latch's purpose), and the timing into the Scorecard.
+
+---
+
+### No-audio bug: attach already-subscribed tracks + robust autoplay unblock — status: done
+
+**Symptom (user report):** in a live session, Opposing Counsel + Judge were inaudible, yet the
+"speaking" badge and the equalizer bars reacted — and NO "enable audio" banner appeared. Reviewed
+the TTS path first (agent side): explicit `ELEVENLABS_API_KEY`, `StreamAdapter` over HTTP `/stream`,
+premade voices, judge `AudioSource` — all correct per LESSONS; and the badge/bars prove audio frames
+reach the browser, so synthesis is fine. **Root cause is frontend playback, not TTS.**
+
+**Bug A (the culprit):** `useSparringRoom` only attached audio via the `RoomEvent.TrackSubscribed`
+handler, which is registered AFTER `await connectToRoom()`. Tracks already published when the browser
+connects (Opposing Counsel — the agent is in the room first) are auto-subscribed DURING `connect()`
+and fire `TrackSubscribed` before the listener exists → never attached to an `<audio>` element →
+silent. The analyser reads the subscribed track's `mediaStreamTrack` directly (independent of that
+element), so bars move + the active-speaker badge shows while the user hears nothing — exactly the
+reported signature. **Fix:** `attachExistingTracks(room)` sweeps `room.remoteParticipants` right
+after the listener is registered and attaches any already-subscribed audio track; `attachAudio`
+gained a dedup guard (a track arriving via both the sweep and the event must not create two elements
+→ doubled audio).
+
+**Bug B (why no banner + hardening):** the gesture-unblock listeners were only registered when
+`canPlaybackAudio` was already false at connect — but it reads `true` before any track plays and can
+flip false later when audio arrives, so the proactive unblock was skipped and no banner surfaced
+(matches "no banner"). **Fix:** register the pointerdown/keydown unblock UNCONDITIONALLY; they
+self-remove once playback succeeds and are torn down on unmount (no leak). The explicit "Enable
+audio" button remains as the visible fallback.
+
+**Result:** Done. Frontend-only (`useSparringRoom.ts`); no backend/agent changes. **Tests: frontend
+64 unchanged; type-check + lint clean.** No new Vitest — `useSparringRoom`'s connection lifecycle has
+no unit test in this codebase (needs a live `Room`, not meaningfully mockable). **⚠️ Needs the live
+pass to confirm:** that Opposing Counsel + the Judge are now actually audible — the real proof can
+only come from a live session (same constraint as all prior voice work). No LESSONS entry yet — will
+add one ("register TrackSubscribed before connect OR sweep existing tracks after") once the live pass
+confirms this was the fix.

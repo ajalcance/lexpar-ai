@@ -108,6 +108,8 @@ export function useSparringRoom(sessionId: string) {
     let agentTimer: ReturnType<typeof setTimeout> | undefined;
     const audioEls: HTMLMediaElement[] = [];
     const attachedTracks: RemoteTrack[] = [];
+    // Removes the autoplay-unblock gesture listeners (set in start(), torn down on unmount).
+    let removeUnblockListeners: (() => void) | undefined;
 
     // Pre-connect fallback: token failed, connect rejected, or the connect stalled.
     const fallBack = () => {
@@ -121,11 +123,30 @@ export function useSparringRoom(sessionId: string) {
       if (track.kind !== Track.Kind.Audio) {
         return;
       }
+      // Dedup: a track can arrive both from the TrackSubscribed event AND the after-connect sweep
+      // (attachExistingTracks) — attaching twice would create two <audio> elements → doubled audio.
+      if (attachedTracks.includes(track)) {
+        return;
+      }
       const el = track.attach();
       el.style.display = 'none';
       document.body.appendChild(el);
       audioEls.push(el);
       attachedTracks.push(track); // kept so cleanup can detach() (not just remove the element)
+    };
+
+    // Attach any audio tracks that were ALREADY subscribed by the time we registered the
+    // TrackSubscribed handler. autoSubscribe delivers tracks published before we connected (the
+    // agent is usually in the room first) during room.connect(), firing TrackSubscribed BEFORE our
+    // listener exists — so without this sweep those tracks (e.g. Opposing Counsel) are subscribed
+    // but never attached to an <audio> element: the analyser/active-speaker still see them (bars
+    // move, badge shows "speaking") while the user hears nothing.
+    const attachExistingTracks = (room: Room) => {
+      room.remoteParticipants.forEach((participant) => {
+        participant.audioTrackPublications.forEach((publication) => {
+          if (publication.track) attachAudio(publication.track);
+        });
+      });
     };
 
     const updateSpeaker = (speakers: Participant[]) => {
@@ -234,6 +255,10 @@ export function useSparringRoom(sessionId: string) {
           }
         });
 
+        // Now that the TrackSubscribed handler is registered, attach anything already subscribed
+        // during connect() (Fix for the "bars move but no audio" bug — see attachExistingTracks).
+        attachExistingTracks(room);
+
         setConnectionState(mapConnectionState(room.state));
 
         // Publish the mic — this triggers the browser permission prompt.
@@ -254,22 +279,30 @@ export function useSparringRoom(sessionId: string) {
         }
         if (!cancelled) setAudioBlocked(!room.canPlaybackAudio);
 
-        // Autoplay safety net (the no-audio bug): if the browser blocked playback (we arrived here
-        // by navigation, not a click), unblock it on the FIRST user interaction anywhere on the
-        // page — the one-time listener removes itself and clears the "enable audio" prompt. The
-        // explicit button remains as a visible fallback.
-        if (!room.canPlaybackAudio) {
-          const unblock = () => {
-            room
-              .startAudio()
-              .then(() => {
-                if (!cancelled) setAudioBlocked(!room.canPlaybackAudio);
-              })
-              .catch(() => undefined);
-          };
-          window.addEventListener('pointerdown', unblock, { once: true });
-          window.addEventListener('keydown', unblock, { once: true });
-        }
+        // Autoplay safety net (the no-audio bug): if playback is blocked (we arrived by navigation,
+        // not a click), unblock it on the next user interaction anywhere on the page. Registered
+        // UNCONDITIONALLY — canPlaybackAudio can read true here (before any track is playing) and
+        // flip false later when audio actually arrives, so gating on it now would skip the listener
+        // and leave the user stuck. They persist until playback actually succeeds, then self-remove;
+        // the explicit "Enable audio" button remains as a visible fallback.
+        const unblock = () => {
+          roomRef.current
+            ?.startAudio()
+            .then(() => {
+              if (cancelled) return;
+              const canPlay = !!roomRef.current?.canPlaybackAudio;
+              setAudioBlocked(!canPlay);
+              if (canPlay) removeUnblockListeners?.();
+            })
+            .catch(() => undefined);
+        };
+        window.addEventListener('pointerdown', unblock);
+        window.addEventListener('keydown', unblock);
+        removeUnblockListeners = () => {
+          window.removeEventListener('pointerdown', unblock);
+          window.removeEventListener('keydown', unblock);
+          removeUnblockListeners = undefined;
+        };
 
         // Live now if the agent is already here; otherwise show the mock after the timeout while
         // staying connected (a later ParticipantConnected still promotes us to live).
@@ -298,6 +331,7 @@ export function useSparringRoom(sessionId: string) {
       clearTimeout(startTimer);
       clearTimeout(connectTimer);
       clearTimeout(agentTimer);
+      removeUnblockListeners?.(); // drop the window gesture listeners if they never fired
       // Release media first (detach the tracks, not just remove the elements), then drop our
       // listeners and disconnect so repeated sessions don't leak tracks or handlers.
       attachedTracks.forEach((track) => track.detach());
