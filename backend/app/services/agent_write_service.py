@@ -51,18 +51,43 @@ def get_session_knowledge(db: DbSession, session_id: uuid.UUID, query: str, k: i
 
 def get_court_rules(db: DbSession, session_id: uuid.UUID, query: str, k: int = 4):
     """Court-rules retrieval for a session (§13): the query-relevant VERBATIM rule passages of the
-    forum the session's case names. Empty when the case names no court or the court has no
-    ingested corpus — the agents fail open on an empty block."""
+    forum the session's case names, with the chunk ids that produced them (provenance). Empty when
+    the case names no court or the court has no ingested corpus — the agents fail open."""
     from app.schemas.agent import CourtRulesOut
     from app.services import court_knowledge_service
 
     session = session_service.get_session_by_id(db, session_id)
     case = db.get(Case, session.case_id)
     if case is None or case.court_id is None:
-        return CourtRulesOut(passages=[])
+        return CourtRulesOut(passages=[], chunk_ids=[])
+    refs = court_knowledge_service.retrieve_rule_refs(db, case.court_id, query, k)
     return CourtRulesOut(
-        passages=court_knowledge_service.retrieve_rule_passages(db, case.court_id, query, k)
+        passages=[text for _chunk_id, text in refs],
+        chunk_ids=[chunk_id for chunk_id, _text in refs],
     )
+
+
+def write_provenance(db: DbSession, session_id: uuid.UUID, data) -> uuid.UUID:
+    """Persist the §13 audit-trail row for one ruling. Validates the ruling type; the session must
+    exist (404 otherwise). Returns the new row's id (the ruling's audit identifier)."""
+    from app.models.ruling_provenance import RULING_TYPES, RulingProvenance
+
+    session = session_service.get_session_by_id(db, session_id)
+    if data.ruling_type not in RULING_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"ruling_type must be one of {', '.join(RULING_TYPES)}",
+        )
+    row = RulingProvenance(
+        session_id=session.id,
+        ruling_type=data.ruling_type,
+        chunk_ids_used=list(data.chunk_ids_used),
+        citation_flags=list(data.citation_flags),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row.id
 
 
 def complete_session(db: DbSession, session_id: uuid.UUID) -> Session:

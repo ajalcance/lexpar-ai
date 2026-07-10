@@ -18,11 +18,14 @@ Security notes: Feeds case facts + live transcript (work product) to the model a
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from pathlib import Path
 
 from llm_router import build_endpoint, chat, chat_stream, opposing_counsel_config
 from session_state import SessionState
+
+logger = logging.getLogger("lexpar.agents.oc")
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "opposing_counsel.md"
 
@@ -99,19 +102,38 @@ def stream_reply(
     """Stream Opposing Counsel's next reply as text deltas. Makes a live API call. If `session_id`
     is given, retrieves BOTH the pleading passages (§12) and the forum's procedural-rule passages
     (§13) relevant to this turn — fetched in parallel — and grounds the reply in them
-    (best-effort — retrieval failure just proceeds on the case summary)."""
+    (best-effort — retrieval failure just proceeds on the case summary). After the stream
+    completes, the full reply gets the §13 TURN-SCOPED citation check against exactly what this
+    turn's prompt carried — flags are LOGGED (labels only), never rewritten out of the reply;
+    ruling provenance rows are the Judge's paths, per the §13 design."""
     excerpts, rules = "", ""
+    retrieval = None
     if session_id:
         import court_knowledge
 
-        excerpts, rules = court_knowledge.dual_blocks(session_id, attorney_turn)
+        retrieval = court_knowledge.dual_retrieval(session_id, attorney_turn)
+        excerpts, rules = retrieval.blocks()
     endpoint = build_endpoint(opposing_counsel_config())
-    yield from chat_stream(
+    spoken: list[str] = []
+    for delta in chat_stream(
         endpoint,
         build_messages(state, attorney_turn, excerpts, rules),
         temperature=0.7,
         max_tokens=400,
-    )
+    ):
+        spoken.append(delta)
+        yield delta
+    if retrieval is not None:
+        import citation_check
+
+        flagged = citation_check.flag_ungrounded("".join(spoken), retrieval.shown_text)
+        if flagged:
+            logger.warning(
+                "ungrounded citation(s) in OC reply [session=%s path=oc_reply citations=%s "
+                "flagged=true]",
+                session_id,
+                flagged,
+            )
 
 
 def stream_continuation(

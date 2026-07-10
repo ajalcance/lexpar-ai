@@ -1777,7 +1777,7 @@ and nothing non-obvious surfaced. **Untouched as instructed:** judge-participant
 
 ---
 
-### Court & Procedural Rules Grounding + Enterprise Hardening — status: Phases 1-4 done, Phases 5-8 not started
+### Court & Procedural Rules Grounding + Enterprise Hardening — status: Phases 1-5 done, Phases 6-8 not started
 
 **Why:** the grounding audit (2026-07-10) established the agents have ZERO engineered procedural
 grounding — no rules corpus, no jurisdiction prompt; all grounding is the uploaded pleading.
@@ -1968,3 +1968,41 @@ LLM-never-called-for-ineligible and narrowed-prompt assertions), backend 61 (net
 field contract test), frontend 25 Vitest (was 23; +2 Dashboard) + type-check + lint clean — the
 existing session-creation flow's coverage passes with the required field.** **No-fabrication
 check passed.** ⚠️ Live-room confirmation still the user's deliberate standalone step.
+
+**Phase 5 Result:** Done, tested, committed — citation grounding + provenance audit trail; suite
+run after every meaningful change; no live LiveKit session (live pass deferred to after Phase 6
+per instruction, so it exercises this work too). **Citation check** — new `agents/citation_check.py`
+(pure): `extract_citations` (Section/Sec./Rule/R.A. No./Republic Act No./A.M. No./§ patterns),
+`canonical` (variant equivalence: "Section 12"=="SEC. 12"=="§12", "RA 11232"=="R.A. No. 11232"
+=="Republic Act No. 11232"), `flag_ungrounded(output, shown_text)`. **TURN-SCOPED by construction:**
+the comparison target is `Retrieval.shown_text` — exactly the two blocks assembled for THAT
+specific call (each ruling checks against its own retrieval, never the corpus); a real-but-
+unretrieved citation still flags (dedicated test). Flags are logged + persisted, never rewritten
+out of spoken output. **Chunk-id plumbing** — backend `retrieve_refs`/`retrieve_rule_refs`
+((chunk_id, text) pairs; old text-only fns delegate), `chunk_ids` parallel array on KnowledgeOut/
+CourtRulesOut; agents `retrieve_passage_refs`/`retrieve_court_refs`; `dual_retrieval` returns a
+`Retrieval` dataclass (blocks + shown_text + chunk_ids prefixed "case:"/"court:" so audit rows are
+self-describing); `dual_blocks` kept as a thin wrapper. **Judge** — `quick_ruling` now returns a
+`QuickRuling` dataclass (ruling, reason, chunk_ids, flagged_citations; reason checked against its
+own turn's shown text); `assess_session` dict gains `chunk_ids` + `flagged_citations` (closing
+ruling checked; failure path returns empty lists); `generate_ruling` flag-logs (harness path — no
+provenance row, it's not wired into the worker). **OC** — `stream_reply` accumulates the streamed
+reply and flag-LOGS after completion (log-only per spec; the provenance TABLE is for rulings);
+reply text never altered (tested). **Persistence** — `RulingProvenance` model
+(`ruling_provenance`: id, session_id FK idx, ruling_type objection_ruling|final_ruling,
+chunk_ids_used JSON, citation_flags JSON, created_at; citation LABELS only, no work product) +
+Alembic `0004_ruling_provenance`; agent-authed `POST /api/sessions/{id}/provenance` (422 unknown
+ruling_type, 404 unknown session, 401 matrix) via `agent_write_service.write_provenance`;
+`backend_client.write_provenance`; main.py persists per inline ruling (fire-and-forget task —
+provenance never delays the spoken ruling) and for the final ruling in `_finalize_session`
+(best-effort). **Known benign-flag sources (deliberate, per spec):** the check compares against
+retrieved CHUNKS only — not the (model-written) case summary, not attorney-typed case_facts, not
+attorney speech — so a citation echoed from those shown-but-not-verbatim-source inputs still
+flags; the flag-don't-rewrite design exists precisely to measure that rate before considering
+auto-correction. Old test fixtures updated: exact-body assertions gained `chunk_ids`; quick_ruling
+tuple-unpack test → dataclass; three Phase-3 judge tests moved to `dual_retrieval` with new
+flag/provenance assertions. **Tests: agents 154 (was 145; +7 citation_check, +2 OC flag-log, and
+strengthened judge/dual tests), backend 63 (was 61; +2 provenance/chunk-id routes), ruff clean,
+main.py compiles. No-fabrication check passed** (fixtures are labeled placeholders; citation
+labels only). ⚠️ Live confirmation (judge-participant + no-audio + citation/provenance) deferred
+to after Phase 6 per instruction.

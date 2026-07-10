@@ -128,17 +128,18 @@ def ingest_rule_document(
         logger.exception("ingestion failed for rule document %s", document.id)
 
 
-def retrieve_rule_passages(
+def retrieve_rule_refs(
     db: DbSession,
     court_id: uuid.UUID,
     query: str,
     k: int = DEFAULT_TOP_K,
     *,
     embedder=embedding_service.embed_text,
-) -> list[str]:
-    """Top-k rule passages for a court, cosine-ranked. Each passage is the VERBATIM chunk text,
-    prefixed with its section heading ("[Section 23] …") when one was extracted, so downstream
-    prompts and the Phase 5 citation cross-check can anchor citations to real headings."""
+) -> list[tuple[str, str]]:
+    """Top-k (chunk_id, passage) pairs for a court, cosine-ranked. Each passage is the VERBATIM
+    chunk text, prefixed with its section heading ("[Section 23] …") when one was extracted, so
+    downstream prompts and the §13 citation cross-check can anchor citations to real headings;
+    the chunk ids feed the provenance trail."""
     rows = db.scalars(
         select(CourtRuleChunk).where(CourtRuleChunk.court_id == court_id)
     ).all()
@@ -147,14 +148,32 @@ def retrieve_rule_passages(
     query_vec = embedder(query)
     candidates = [
         (
-            f"[{row.section_reference}] {row.chunk_text}"
-            if row.section_reference
-            else row.chunk_text,
+            (
+                str(row.id),
+                f"[{row.section_reference}] {row.chunk_text}"
+                if row.section_reference
+                else row.chunk_text,
+            ),
             row.embedding,
         )
         for row in rows
     ]
     return embedding_service.top_k(query_vec, candidates, k)
+
+
+def retrieve_rule_passages(
+    db: DbSession,
+    court_id: uuid.UUID,
+    query: str,
+    k: int = DEFAULT_TOP_K,
+    *,
+    embedder=embedding_service.embed_text,
+) -> list[str]:
+    """The passage texts only (see retrieve_rule_refs for the id-carrying variant)."""
+    return [
+        text
+        for _chunk_id, text in retrieve_rule_refs(db, court_id, query, k, embedder=embedder)
+    ]
 
 
 def documents_for_court(db: DbSession, court_id: uuid.UUID) -> list[CourtRuleDocument]:

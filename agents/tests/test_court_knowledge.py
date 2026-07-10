@@ -42,25 +42,36 @@ def test_retrieve_court_passages_short_circuits_and_fails_open(monkeypatch):
     assert court_knowledge.retrieve_court_passages("sess", "query") == []
 
 
-def test_dual_blocks_fetches_both_in_parallel(monkeypatch):
+def test_dual_retrieval_fetches_both_with_prefixed_provenance_ids(monkeypatch):
     monkeypatch.setattr(
         court_knowledge.case_knowledge,
-        "retrieve_passages",
-        lambda sid, q, k=4, timeout=8.0: ["Placeholder pleading passage."],
+        "retrieve_passage_refs",
+        lambda sid, q, k=4, timeout=8.0: (["Placeholder pleading passage."], ["c1"]),
     )
     monkeypatch.setattr(
         court_knowledge,
-        "retrieve_court_passages",
-        lambda sid, q, k=4, timeout=8.0: ["[Section 12] Placeholder rule text (not real)."],
+        "retrieve_court_refs",
+        lambda sid, q, k=4, timeout=8.0: (
+            ["[Section 12] Placeholder rule text (not real)."],
+            ["r1"],
+        ),
     )
-    excerpts, rules = court_knowledge.dual_blocks("sess", "query")
-    assert excerpts.startswith("RELEVANT PLEADING EXCERPTS:")
-    assert rules.startswith("RELEVANT PROCEDURAL RULES:")
+    retrieval = court_knowledge.dual_retrieval("sess", "query")
+    assert retrieval.excerpts_block.startswith("RELEVANT PLEADING EXCERPTS:")
+    assert retrieval.rules_block.startswith("RELEVANT PROCEDURAL RULES:")
+    # provenance ids are table-prefixed so the audit row is self-describing
+    assert retrieval.chunk_ids == ["case:c1", "court:r1"]
+    # shown_text is EXACTLY the two blocks — the §13 citation check's comparison target
+    assert "[Section 12]" in retrieval.shown_text
+    # blocks-only convenience preserves the old shape
+    assert court_knowledge.dual_blocks("sess", "query") == retrieval.blocks()
 
 
-def test_dual_blocks_short_circuits_without_session():
+def test_dual_retrieval_short_circuits_without_session():
     assert court_knowledge.dual_blocks("", "query") == ("", "")
     assert court_knowledge.dual_blocks("sess", "   ") == ("", "")
+    empty = court_knowledge.dual_retrieval("", "query")
+    assert empty.chunk_ids == [] and empty.shown_text == ""
 
 
 # --- SessionState plumbing fields ---------------------------------------------------------------
@@ -103,6 +114,14 @@ def test_judge_builders_include_both_blocks_when_present():
     assert "FULL TRANSCRIPT:" in assessment
 
 
+def _fake_retrieval() -> court_knowledge.Retrieval:
+    return court_knowledge.Retrieval(
+        excerpts_block=EXCERPTS_BLOCK,
+        rules_block=RULES_BLOCK,
+        chunk_ids=["case:c1", "court:r1"],
+    )
+
+
 def test_quick_ruling_retrieves_with_tight_timeout_and_grounds_prompt(monkeypatch):
     state = SessionState(case_facts="F", session_id="sess-1")
     objection = state.record_objection("relevance", "opposing_counsel")
@@ -110,24 +129,28 @@ def test_quick_ruling_retrieves_with_tight_timeout_and_grounds_prompt(monkeypatc
 
     def fake_dual(session_id, query, *, k=4, timeout=8.0):
         seen.update(session_id=session_id, query=query, timeout=timeout)
-        return EXCERPTS_BLOCK, RULES_BLOCK
+        return _fake_retrieval()
 
     captured: dict = {}
 
     def fake_chat(endpoint, messages, **kwargs):
         captured["messages"] = messages
-        return '{"ruling": "sustained", "reason": "placeholder"}'
+        # cites the SHOWN Section 12 (grounded) and an UNSHOWN Rule 99 (must flag, turn-scoped)
+        return '{"ruling": "sustained", "reason": "Section 12 controls; see Rule 99"}'
 
-    monkeypatch.setattr(judge.court_knowledge, "dual_blocks", fake_dual)
+    monkeypatch.setattr(judge.court_knowledge, "dual_retrieval", fake_dual)
     monkeypatch.setattr(judge, "chat", fake_chat)
 
-    ruling, reason = judge.quick_ruling(state, objection, "the fragment")
-    assert ruling == "sustained"
+    result = judge.quick_ruling(state, objection, "the fragment")
+    assert result.ruling == "sustained"
     assert seen["session_id"] == "sess-1"
     assert "relevance" in seen["query"] and "the fragment" in seen["query"]
     assert seen["timeout"] == court_knowledge.FAST_TIMEOUT  # live-path budget, not the default
     joined = "\n".join(m["content"] for m in captured["messages"])
     assert "RELEVANT PROCEDURAL RULES:" in joined
+    # §13 Phase 5: provenance carried through; only the unshown citation flags
+    assert result.chunk_ids == ["case:c1", "court:r1"]
+    assert result.flagged_citations == ["Rule 99"]
 
 
 def test_assess_session_grounds_on_pending_objections(monkeypatch):
@@ -138,29 +161,35 @@ def test_assess_session_grounds_on_pending_objections(monkeypatch):
 
     def fake_dual(session_id, query, *, k=4, timeout=8.0):
         seen.update(session_id=session_id, query=query)
-        return "", RULES_BLOCK
+        return _fake_retrieval()
 
     captured: dict = {}
 
     def fake_chat(endpoint, messages, **kwargs):
         captured["messages"] = messages
-        return '{"rulings": ["overruled"], "established_facts": [], "closing_ruling": "Done."}'
+        return (
+            '{"rulings": ["overruled"], "established_facts": [], '
+            '"closing_ruling": "Done, noting Rule 99."}'
+        )
 
-    monkeypatch.setattr(judge.court_knowledge, "dual_blocks", fake_dual)
+    monkeypatch.setattr(judge.court_knowledge, "dual_retrieval", fake_dual)
     monkeypatch.setattr(judge, "chat", fake_chat)
 
     result = judge.assess_session(state)
-    assert result["closing_ruling"] == "Done."
+    assert result["closing_ruling"] == "Done, noting Rule 99."
     assert "relevance" in seen["query"]  # targeted on the pending objection
     assert "Closing statement placeholder." in seen["query"]
     joined = "\n".join(m["content"] for m in captured["messages"])
     assert "RELEVANT PROCEDURAL RULES:" in joined
+    # §13 Phase 5: provenance + turn-scoped flag on the closing ruling (Rule 99 was not shown)
+    assert result["chunk_ids"] == ["case:c1", "court:r1"]
+    assert result["flagged_citations"] == ["Rule 99"]
 
 
 def test_generate_ruling_grounds_when_session_id_present(monkeypatch):
     state = SessionState(case_facts="F", session_id="sess-3")
     monkeypatch.setattr(
-        judge.court_knowledge, "dual_blocks", lambda sid, q, **kw: ("", RULES_BLOCK)
+        judge.court_knowledge, "dual_retrieval", lambda sid, q, **kw: _fake_retrieval()
     )
     captured: dict = {}
 
@@ -248,3 +277,44 @@ def test_classifier_wrapper_still_debounces_with_grounding(monkeypatch):
     assert first.fire
     grown = classifier.consider("I think he probably left early, before the meeting.")
     assert not grown.fire and grown.outcome == oc.DEBOUNCED
+
+
+# --- §13 Phase 5: OC reply citation flagging (log-only path) --------------------------------------
+
+def test_oc_stream_reply_logs_ungrounded_citation(monkeypatch, caplog):
+    import logging
+
+    import opposing_counsel as oc_mod
+
+    monkeypatch.setattr(
+        court_knowledge, "dual_retrieval", lambda sid, q, **kw: _fake_retrieval()
+    )
+    # the streamed reply cites shown Section 12 (fine) and unshown Rule 99 (flags)
+    monkeypatch.setattr(
+        oc_mod,
+        "chat_stream",
+        lambda *a, **k: iter(["Per Section 12, ", "and Rule 99, this fails."]),
+    )
+    with caplog.at_level(logging.WARNING, logger="lexpar.agents.oc"):
+        spoken = "".join(oc_mod.stream_reply(SessionState(case_facts="F"), "turn", "sess-9"))
+    assert "Rule 99" in spoken  # NEVER rewritten — flag, don't touch the spoken output
+    flagged_lines = [r.message for r in caplog.records if "flagged=true" in r.message]
+    assert len(flagged_lines) == 1
+    assert "Rule 99" in flagged_lines[0] and "Section 12" not in flagged_lines[0]
+    assert "path=oc_reply" in flagged_lines[0] and "sess-9" in flagged_lines[0]
+
+
+def test_oc_stream_reply_no_flags_no_log(monkeypatch, caplog):
+    import logging
+
+    import opposing_counsel as oc_mod
+
+    monkeypatch.setattr(
+        court_knowledge, "dual_retrieval", lambda sid, q, **kw: _fake_retrieval()
+    )
+    monkeypatch.setattr(
+        oc_mod, "chat_stream", lambda *a, **k: iter(["Grounded in Section 12 only."])
+    )
+    with caplog.at_level(logging.WARNING, logger="lexpar.agents.oc"):
+        "".join(oc_mod.stream_reply(SessionState(case_facts="F"), "turn", "sess-9"))
+    assert not [r for r in caplog.records if "flagged=true" in r.message]

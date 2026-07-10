@@ -148,4 +148,4 @@ def test_internal_knowledge_route_requires_agent_token(client, auth_headers):
     # agent token: works, returns the (empty, no-pleading) knowledge bundle
     ok = client.get(url, headers=AGENT)
     assert ok.status_code == 200
-    assert ok.json() == {"summary": "", "passages": []}
+    assert ok.json() == {"summary": "", "passages": [], "chunk_ids": []}

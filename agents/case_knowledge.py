@@ -25,14 +25,15 @@ logger = logging.getLogger("lexpar.agents.knowledge")
 _TIMEOUT = 8.0
 
 
-def retrieve_passages(
+def retrieve_passage_refs(
     session_id: str, query: str, k: int = 4, timeout: float = _TIMEOUT
-) -> list[str]:
-    """Top-k relevant pleading passages for `query`. Returns [] on any error/timeout (fail-open —
-    the case summary in the prompt still grounds the reply). `timeout` lets latency-sensitive
-    callers (§13 dual retrieval on live paths) use a tighter budget than the default."""
+) -> tuple[list[str], list[str]]:
+    """Top-k relevant pleading passages for `query`, plus the parallel chunk ids that produced
+    them (§13 provenance). Returns ([], []) on any error/timeout (fail-open — the case summary in
+    the prompt still grounds the reply). `timeout` lets latency-sensitive callers (§13 dual
+    retrieval on live paths) use a tighter budget than the default."""
     if not session_id or not query.strip():
-        return []
+        return [], []
     try:
         resp = httpx.get(
             f"{config.AGENT_BACKEND_URL}/api/sessions/{session_id}/knowledge",
@@ -41,10 +42,19 @@ def retrieve_passages(
             timeout=timeout,
         )
         resp.raise_for_status()
-        return list(resp.json().get("passages", []))
+        body = resp.json()
+        return list(body.get("passages", [])), list(body.get("chunk_ids", []))
     except Exception:
         logger.warning("case-knowledge retrieval unavailable — proceeding on the summary alone")
-        return []
+        return [], []
+
+
+def retrieve_passages(
+    session_id: str, query: str, k: int = 4, timeout: float = _TIMEOUT
+) -> list[str]:
+    """The passage texts only (see retrieve_passage_refs for the id-carrying variant)."""
+    passages, _chunk_ids = retrieve_passage_refs(session_id, query, k, timeout)
+    return passages
 
 
 def passages_block(passages: list[str]) -> str:

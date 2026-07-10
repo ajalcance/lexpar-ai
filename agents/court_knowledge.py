@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 
 import httpx
 
@@ -33,13 +34,14 @@ _TIMEOUT = 8.0
 FAST_TIMEOUT = 2.0
 
 
-def retrieve_court_passages(
+def retrieve_court_refs(
     session_id: str, query: str, k: int = 4, timeout: float = _TIMEOUT
-) -> list[str]:
-    """Top-k verbatim rule passages for the session's forum. Returns [] on any error/timeout or
-    when the case names no court (fail-open — the prompt simply carries no rules block)."""
+) -> tuple[list[str], list[str]]:
+    """Top-k verbatim rule passages for the session's forum, plus the parallel chunk ids (§13
+    provenance). Returns ([], []) on any error/timeout or when the case names no court
+    (fail-open — the prompt simply carries no rules block)."""
     if not session_id or not query.strip():
-        return []
+        return [], []
     try:
         resp = httpx.get(
             f"{config.AGENT_BACKEND_URL}/api/sessions/{session_id}/court-rules",
@@ -48,10 +50,19 @@ def retrieve_court_passages(
             timeout=timeout,
         )
         resp.raise_for_status()
-        return list(resp.json().get("passages", []))
+        body = resp.json()
+        return list(body.get("passages", [])), list(body.get("chunk_ids", []))
     except Exception:
         logger.warning("court-rules retrieval unavailable — proceeding without a rules block")
-        return []
+        return [], []
+
+
+def retrieve_court_passages(
+    session_id: str, query: str, k: int = 4, timeout: float = _TIMEOUT
+) -> list[str]:
+    """The passage texts only (see retrieve_court_refs for the id-carrying variant)."""
+    passages, _chunk_ids = retrieve_court_refs(session_id, query, k, timeout)
+    return passages
 
 
 def rules_block(passages: list[str]) -> str:
@@ -62,19 +73,50 @@ def rules_block(passages: list[str]) -> str:
     return f"RELEVANT PROCEDURAL RULES:\n{joined}"
 
 
+@dataclass
+class Retrieval:
+    """One turn's dual-corpus retrieval result: the two prompt blocks, the raw shown text the
+    §13 citation check compares against (EXACTLY what this turn's prompt carried — never the
+    corpus at large), and the chunk ids for the provenance trail ("case:"/"court:"-prefixed so
+    the audit row is self-describing across the two tables)."""
+
+    excerpts_block: str = ""
+    rules_block: str = ""
+    chunk_ids: list[str] = field(default_factory=list)
+
+    @property
+    def shown_text(self) -> str:
+        """The retrieved chunk text actually included in this turn's prompt."""
+        return f"{self.excerpts_block}\n{self.rules_block}".strip()
+
+    def blocks(self) -> tuple[str, str]:
+        return self.excerpts_block, self.rules_block
+
+
+def dual_retrieval(
+    session_id: str, query: str, *, k: int = 4, timeout: float = _TIMEOUT
+) -> Retrieval:
+    """Fetch pleading excerpts AND court rules for one query, in parallel (two independent
+    backend calls — serializing them would double the latency cost on the live paths). Returns a
+    Retrieval carrying the blocks + the provenance chunk ids; empty when nothing was retrieved."""
+    if not session_id or not query.strip():
+        return Retrieval()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        case_future = pool.submit(
+            case_knowledge.retrieve_passage_refs, session_id, query, k, timeout
+        )
+        court_future = pool.submit(retrieve_court_refs, session_id, query, k, timeout)
+        case_passages, case_ids = case_future.result()
+        court_passages, court_ids = court_future.result()
+    return Retrieval(
+        excerpts_block=case_knowledge.passages_block(case_passages),
+        rules_block=rules_block(court_passages),
+        chunk_ids=[f"case:{i}" for i in case_ids] + [f"court:{i}" for i in court_ids],
+    )
+
+
 def dual_blocks(
     session_id: str, query: str, *, k: int = 4, timeout: float = _TIMEOUT
 ) -> tuple[str, str]:
-    """Fetch pleading excerpts AND court rules for one query, in parallel (two independent
-    backend calls — serializing them would double the latency cost on the live paths). Returns
-    (pleading_block, rules_block), each '' when nothing was retrieved."""
-    if not session_id or not query.strip():
-        return "", ""
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        case_future = pool.submit(
-            case_knowledge.retrieve_passages, session_id, query, k, timeout
-        )
-        court_future = pool.submit(retrieve_court_passages, session_id, query, k, timeout)
-        case_passages = case_future.result()
-        court_passages = court_future.result()
-    return case_knowledge.passages_block(case_passages), rules_block(court_passages)
+    """Blocks-only convenience over dual_retrieval (see Retrieval for the provenance variant)."""
+    return dual_retrieval(session_id, query, k=k, timeout=timeout).blocks()

@@ -39,16 +39,28 @@ class SessionContextOut(BaseModel):
 
 
 class KnowledgeOut(BaseModel):
-    """Case-knowledge retrieval for the agents (§12): the summary + the query-relevant passages."""
+    """Case-knowledge retrieval for the agents (§12): the summary + the query-relevant passages.
+    `chunk_ids` parallels `passages` — which chunks were actually shown (§13 provenance)."""
 
     summary: str = ""
     passages: list[str] = []
+    chunk_ids: list[str] = []
 
 
 class CourtRulesOut(BaseModel):
     """Court-rules retrieval for the agents (§13): verbatim rule passages for the session's forum.
     A SIBLING shape to KnowledgeOut, not a `scope` param on it — the case shape carries a summary
     field that has no rules counterpart (no LLM digest of rules exists, by design), so overloading
-    one route would force dead fields on both callers."""
+    one route would force dead fields on both callers. `chunk_ids` parallels `passages`."""
 
     passages: list[str] = []
+    chunk_ids: list[str] = []
+
+
+class ProvenanceWriteIn(BaseModel):
+    """§13 Phase 5: the audit trail for one ruling — which chunks the model was actually shown,
+    and which citations in its output were NOT grounded in them (turn-scoped check)."""
+
+    ruling_type: str  # 'objection_ruling' | 'final_ruling' (validated in the service)
+    chunk_ids_used: list[str] = []
+    citation_flags: list[str] = []

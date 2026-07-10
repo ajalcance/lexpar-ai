@@ -15,7 +15,13 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session as DbSession
 
 from app.db import get_db
-from app.schemas.agent import CourtRulesOut, KnowledgeOut, ScorecardWriteIn, SessionContextOut
+from app.schemas.agent import (
+    CourtRulesOut,
+    KnowledgeOut,
+    ProvenanceWriteIn,
+    ScorecardWriteIn,
+    SessionContextOut,
+)
 from app.schemas.scorecard import ScorecardOut
 from app.schemas.session import SessionOut
 from app.security_agent import require_agent_service
@@ -58,6 +64,17 @@ def get_session_court_rules(
     # §13: verbatim procedural-rule passages for the session's forum, relevant to the statement
     # being evaluated. Sibling of /knowledge (see CourtRulesOut for why not a scope param).
     return agent_write_service.get_court_rules(db, session_id, q, k)
+
+
+@router.post("/{session_id}/provenance", status_code=201)
+def write_ruling_provenance(
+    session_id: uuid.UUID,
+    payload: ProvenanceWriteIn,
+    db: DbSession = Depends(get_db),
+) -> dict:
+    # §13 Phase 5: the per-ruling audit trail — chunks actually shown + ungrounded-citation flags.
+    row_id = agent_write_service.write_provenance(db, session_id, payload)
+    return {"id": str(row_id)}
 
 
 @router.post("/{session_id}/complete", response_model=SessionOut)

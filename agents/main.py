@@ -278,16 +278,33 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         # the timeout below bounds how long that hold can last if the model call hangs.
         turn_flags["objected"] = True  # skip the redundant end-of-turn OC reply (Issue 1)
         try:
-            ruling, reason = await asyncio.wait_for(
+            result = await asyncio.wait_for(
                 asyncio.to_thread(judge.quick_ruling, state, objection, fragment), timeout=10.0
             )
         except Exception:
             logger.warning("inline ruling unavailable — objection stays pending")
             return
+        ruling, reason = result.ruling, result.reason
         try:
             state.rule_on_objection(objection, ruling)
         except ValueError:
             return  # already resolved (e.g. session finalized concurrently) — don't speak stale
+        # §13 Phase 5: persist the ruling's audit trail (chunks actually shown + turn-scoped
+        # citation flags) as soon as the ruling is on the ledger. Fire-and-forget off the loop —
+        # provenance must never delay or block the spoken ruling; a failure is logged, not raised.
+        async def _persist_provenance() -> None:
+            try:
+                await asyncio.to_thread(
+                    backend_client.write_provenance,
+                    session_id,
+                    "objection_ruling",
+                    result.chunk_ids,
+                    result.flagged_citations,
+                )
+            except Exception:
+                logger.warning("could not persist objection-ruling provenance for %s", session_id)
+
+        asyncio.create_task(_persist_provenance())
         spoken = f"{ruling.capitalize()}. {reason}" if reason else f"{ruling.capitalize()}."
         state.add_turn("judge", spoken)
         try:
@@ -358,6 +375,17 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             logger.info("Persisted session %s (scorecard + %d turns)", session_id, turn_count)
         except Exception:
             logger.exception("Failed to persist session %s", session_id)
+        # §13 Phase 5: the final ruling's audit trail (best-effort — never blocks finalization).
+        try:
+            await asyncio.to_thread(
+                backend_client.write_provenance,
+                session_id,
+                "final_ruling",
+                assessment.get("chunk_ids", []),
+                assessment.get("flagged_citations", []),
+            )
+        except Exception:
+            logger.warning("could not persist final-ruling provenance for %s", session_id)
         # Tell the frontend the ruling is delivered + the scorecard is written, so it can navigate.
         try:
             done = json.dumps({"type": "end_complete"}).encode("utf-8")

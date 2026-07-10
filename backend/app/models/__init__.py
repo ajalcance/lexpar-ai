@@ -9,6 +9,7 @@ from app.models.case import Case
 from app.models.case_document import CaseChunk, CaseDocument
 from app.models.court import Court
 from app.models.court_rule import CourtRuleChunk, CourtRuleDocument
+from app.models.ruling_provenance import RulingProvenance
 from app.models.scorecard import Scorecard
 from app.models.session import Session
 from app.models.transcript import Transcript
@@ -22,6 +23,7 @@ __all__ = [
     "Court",
     "CourtRuleDocument",
     "CourtRuleChunk",
+    "RulingProvenance",
     "Session",
     "Transcript",
     "Scorecard",

@@ -113,6 +113,25 @@ def ingest_document(
         logger.exception("ingestion failed for document %s", document.id)
 
 
+def retrieve_refs(
+    db: DbSession,
+    case_id: uuid.UUID,
+    query: str,
+    k: int = DEFAULT_TOP_K,
+    *,
+    embedder=embedding_service.embed_text,
+) -> list[tuple[str, str]]:
+    """Top-k (chunk_id, passage) pairs most relevant to `query` for a case. The chunk ids feed the
+    §13 provenance trail (which chunks were actually shown to the model on a given turn)."""
+    rows = db.scalars(select(CaseChunk).where(CaseChunk.case_id == case_id)).all()
+    if not rows or not query.strip():
+        return []
+    query_vec = embedder(query)
+    # top_k ranks by score only, so any payload works as the "text" element — pair id with text.
+    candidates = [((str(row.id), row.content), row.embedding) for row in rows]
+    return embedding_service.top_k(query_vec, candidates, k)
+
+
 def retrieve(
     db: DbSession,
     case_id: uuid.UUID,
@@ -123,12 +142,7 @@ def retrieve(
 ) -> list[str]:
     """Return the top-k pleading passages most relevant to `query` for a case (cosine over the
     stored chunk embeddings). Empty list if the case has no ingested chunks."""
-    rows = db.scalars(select(CaseChunk).where(CaseChunk.case_id == case_id)).all()
-    if not rows or not query.strip():
-        return []
-    query_vec = embedder(query)
-    candidates = [(row.content, row.embedding) for row in rows]
-    return embedding_service.top_k(query_vec, candidates, k)
+    return [text for _chunk_id, text in retrieve_refs(db, case_id, query, k, embedder=embedder)]
 
 
 def summary_for(db: DbSession, case_id: uuid.UUID) -> str:
@@ -181,8 +195,11 @@ def create_document_row(
 
 
 def context_payload(db: DbSession, case_id: uuid.UUID, query: str, k: int = DEFAULT_TOP_K) -> dict:
-    """The agent-facing knowledge bundle: the always-in-context summary + the retrieved passages."""
+    """The agent-facing knowledge bundle: the always-in-context summary + the retrieved passages,
+    with the chunk ids that produced them (§13 provenance)."""
+    refs = retrieve_refs(db, case_id, query, k)
     return {
         "summary": summary_for(db, case_id),
-        "passages": retrieve(db, case_id, query, k),
+        "passages": [text for _chunk_id, text in refs],
+        "chunk_ids": [chunk_id for chunk_id, _text in refs],
     }

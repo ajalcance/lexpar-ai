@@ -155,13 +155,16 @@ def test_parse_quick_ruling_rejects_non_json():
         judge_mod._parse_quick_ruling("the model rambled")
 
 
-def test_quick_ruling_returns_parsed_pair(monkeypatch):
+def test_quick_ruling_returns_parsed_result(monkeypatch):
     monkeypatch.setattr(
         judge_mod, "chat", lambda *a, **k: '{"ruling": "overruled", "reason": "goes to weight"}'
     )
     state = _seeded_state()
-    ruling, reason = judge_mod.quick_ruling(state, _pending_objection(state), "fragment")
-    assert (ruling, reason) == ("overruled", "goes to weight")
+    result = judge_mod.quick_ruling(state, _pending_objection(state), "fragment")
+    assert (result.ruling, result.reason) == ("overruled", "goes to weight")
+    # offline state (no session_id) → no retrieval → empty provenance, and the citation-free
+    # reason carries no flags
+    assert result.chunk_ids == [] and result.flagged_citations == []
 
 
 def test_quick_ruling_raises_so_caller_fails_safe(monkeypatch):

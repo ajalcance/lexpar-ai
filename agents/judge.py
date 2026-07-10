@@ -19,11 +19,16 @@ Security notes: Feeds session content (work product) to the model as prompt cont
 from __future__ import annotations
 
 import json
+import logging
+from dataclasses import dataclass, field
 from pathlib import Path
 
+import citation_check
 import court_knowledge
 from llm_router import build_endpoint, chat, judge_config, objection_config
 from session_state import Objection, SessionState
+
+logger = logging.getLogger("lexpar.agents.judge")
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "judge.md"
 
@@ -110,16 +115,27 @@ def generate_ruling(state: SessionState, attorney_turn: str) -> str:
     """Generate the Judge's short spoken ruling. Makes a live API call. When the state carries a
     session_id (live worker), the ruling is grounded in retrieved pleading excerpts + the forum's
     procedural rules (§13 — this closes the Judge's missing-RAG gap found by the audit)."""
-    excerpts, rules = court_knowledge.dual_blocks(state.session_id, attorney_turn)
+    retrieval = court_knowledge.dual_retrieval(state.session_id, attorney_turn)
     endpoint = build_endpoint(judge_config())
     content = chat(
         endpoint,
-        build_messages(state, attorney_turn, excerpts, rules),
+        build_messages(state, attorney_turn, *retrieval.blocks()),
         temperature=0.3,
         max_tokens=400,
         response_format={"type": "json_object"},
     )
-    return _parse_ruling(content)
+    ruling = _parse_ruling(content)
+    # §13 Phase 5: flag-and-log only on this (harness/legacy) path — the live paths persist
+    # provenance rows; this one is not wired into the worker.
+    flagged = citation_check.flag_ungrounded(ruling, retrieval.shown_text)
+    if flagged:
+        logger.warning(
+            "ungrounded citation(s) in ruling [session=%s path=generate_ruling citations=%s "
+            "flagged=true]",
+            state.session_id,
+            flagged,
+        )
+    return ruling
 
 
 def _render_transcript(state: SessionState) -> str:
@@ -207,24 +223,36 @@ def _parse_quick_ruling(content: str) -> tuple[str, str]:
     return ruling, reason
 
 
-def quick_ruling(state: SessionState, objection: Objection, fragment: str) -> tuple[str, str]:
+@dataclass
+class QuickRuling:
+    """An inline ruling plus its §13 audit trail: which chunks the model was shown (turn-scoped)
+    and which citations in its spoken reason were NOT grounded in them."""
+
+    ruling: str
+    reason: str
+    chunk_ids: list[str] = field(default_factory=list)
+    flagged_citations: list[str] = field(default_factory=list)
+
+
+def quick_ruling(state: SessionState, objection: Objection, fragment: str) -> QuickRuling:
     """
     Inline ruling for a just-fired objection — the judge's real-time "Sustained/Overruled" (§6.5).
     Uses the FAST model (the objection classifier's config, gpt-oss class) because this sits
     directly in the live conversational path — same latency philosophy as the classifier and
-    verification, NOT the reasoning model. Returns (ruling, reason). Raises on any error or
-    unparseable output — the caller stays silent and leaves the objection pending for the
-    end-of-session assessment (never fabricate a ruling).
+    verification, NOT the reasoning model. Returns a QuickRuling (ruling + reason + provenance).
+    Raises on any error or unparseable output — the caller stays silent and leaves the objection
+    pending for the end-of-session assessment (never fabricate a ruling).
     """
     # Targeted §13 grounding: query = the objection's grounds + the objected statement. Fetched in
     # parallel with a TIGHT budget — this call already runs concurrently with the canned objection
     # line's playback (main.py), and a slow retrieval must not push the spoken ruling late; on
     # timeout the ruling simply proceeds ungrounded-but-recorded, same fail-open as everywhere.
-    excerpts, rules = court_knowledge.dual_blocks(
+    retrieval = court_knowledge.dual_retrieval(
         state.session_id,
         f"{objection.grounds}: {fragment}",
         timeout=court_knowledge.FAST_TIMEOUT,
     )
+    excerpts, rules = retrieval.blocks()
     endpoint = build_endpoint(objection_config())
     content = chat(
         endpoint,
@@ -237,7 +265,19 @@ def quick_ruling(state: SessionState, objection: Objection, fragment: str) -> tu
         max_tokens=1024,
         response_format={"type": "json_object"},
     )
-    return _parse_quick_ruling(content)
+    ruling, reason = _parse_quick_ruling(content)
+    # §13 Phase 5: TURN-SCOPED citation check — compare against the chunks shown to THIS call,
+    # never the corpus (a real-but-unretrieved citation still flags: asserted without being seen).
+    # Flag + log, never rewrite the spoken output.
+    flagged = citation_check.flag_ungrounded(reason, retrieval.shown_text)
+    if flagged:
+        logger.warning(
+            "ungrounded citation(s) in inline ruling [session=%s path=objection_ruling "
+            "citations=%s flagged=true]",
+            state.session_id,
+            flagged,
+        )
+    return QuickRuling(ruling, reason, retrieval.chunk_ids, flagged)
 
 
 def assess_session(state: SessionState) -> dict:
@@ -254,9 +294,10 @@ def assess_session(state: SessionState) -> dict:
     last_turn = next(
         (t.content for t in reversed(state.transcript) if t.speaker == "attorney"), ""
     )
-    excerpts, rules = court_knowledge.dual_blocks(
+    retrieval = court_knowledge.dual_retrieval(
         state.session_id, f"{pending} {last_turn}".strip()
     )
+    excerpts, rules = retrieval.blocks()
     endpoint = build_endpoint(judge_config())
     try:
         content = chat(
@@ -271,7 +312,24 @@ def assess_session(state: SessionState) -> dict:
         )
         result = _parse_assessment(content)
     except Exception:
-        return {"rulings": [], "established_facts": [], "closing_ruling": _FALLBACK_CLOSING}
+        return {
+            "rulings": [],
+            "established_facts": [],
+            "closing_ruling": _FALLBACK_CLOSING,
+            "chunk_ids": [],
+            "flagged_citations": [],
+        }
     if not result["closing_ruling"]:
         result["closing_ruling"] = _FALLBACK_CLOSING
+    # §13 Phase 5: turn-scoped citation check on the closing ruling (flag + log, never rewrite).
+    flagged = citation_check.flag_ungrounded(result["closing_ruling"], retrieval.shown_text)
+    if flagged:
+        logger.warning(
+            "ungrounded citation(s) in closing ruling [session=%s path=final_ruling "
+            "citations=%s flagged=true]",
+            state.session_id,
+            flagged,
+        )
+    result["chunk_ids"] = retrieval.chunk_ids
+    result["flagged_citations"] = flagged
     return result

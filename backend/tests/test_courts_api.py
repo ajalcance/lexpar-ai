@@ -268,7 +268,7 @@ def test_court_rules_route_requires_agent_token(client, auth_headers):
     assert client.get(url, headers=auth_headers).status_code == 401  # user JWT is not enough
     ok = client.get(url, headers=AGENT)
     assert ok.status_code == 200
-    assert ok.json() == {"passages": []}  # no court on the case → empty, fail-open
+    assert ok.json() == {"passages": [], "chunk_ids": []}  # no court → empty, fail-open
 
 
 def test_court_rules_route_returns_passages(client, auth_headers, db_session, monkeypatch):
@@ -293,3 +293,68 @@ def test_court_rules_route_returns_passages(client, auth_headers, db_session, mo
     passages = resp.json()["passages"]
     assert len(passages) == 1
     assert passages[0].startswith("[Section 12] ")
+
+
+# --- §13 Phase 5: chunk ids in retrieval + ruling provenance --------------------------------------
+
+def test_court_rules_route_returns_parallel_chunk_ids(
+    client, auth_headers, db_session, monkeypatch
+):
+    from app.services import document_service, embedding_service
+
+    court = _court(db_session, name="Prov Court")
+    document = court_knowledge_service.create_rule_document_row(
+        db_session, court.id, "Rules", "courts/x/rules.pdf"
+    )
+    monkeypatch.setattr(
+        document_service, "extract_pdf_text", lambda data: f"{SECTION_CHUNK}\n\n{PLAIN_CHUNK}"
+    )
+    embed = _keyword_embedder(["schema", "heading", "paragraph"])
+    court_knowledge_service.ingest_rule_document(db_session, document, b"%PDF", embedder=embed)
+    monkeypatch.setattr(embedding_service, "embed_text", embed)
+
+    session = _session_for_court(client, auth_headers, court.id)
+    body = client.get(
+        f"/api/sessions/{session['id']}/court-rules?q=schema testing&k=1", headers=AGENT
+    ).json()
+    assert len(body["passages"]) == 1
+    assert len(body["chunk_ids"]) == 1  # parallel arrays: id[i] produced passage[i]
+    import uuid as _uuid
+
+    from app.models.court_rule import CourtRuleChunk
+
+    row = db_session.get(CourtRuleChunk, _uuid.UUID(body["chunk_ids"][0]))
+    assert row is not None and row.court_id == court.id
+
+
+def test_provenance_route_persists_and_validates(client, auth_headers, db_session):
+    session = _session_for_court(client, auth_headers)
+    url = f"/api/sessions/{session['id']}/provenance"
+    payload = {
+        "ruling_type": "objection_ruling",
+        "chunk_ids_used": ["court:abc", "case:def"],
+        "citation_flags": ["Rule 99"],
+    }
+    # agent-token only
+    assert client.post(url, json=payload).status_code == 401
+    assert client.post(url, headers=auth_headers, json=payload).status_code == 401
+    created = client.post(url, headers=AGENT, json=payload)
+    assert created.status_code == 201
+
+    import uuid as _uuid
+
+    from app.models.ruling_provenance import RulingProvenance
+
+    row = db_session.get(RulingProvenance, _uuid.UUID(created.json()["id"]))
+    assert row.ruling_type == "objection_ruling"
+    assert row.chunk_ids_used == ["court:abc", "case:def"]
+    assert row.citation_flags == ["Rule 99"]
+
+    # unknown ruling type → 422; unknown session → 404
+    bad = dict(payload, ruling_type="hunch")
+    assert client.post(url, headers=AGENT, json=bad).status_code == 422
+    missing = "00000000-0000-0000-0000-000000000000"
+    assert (
+        client.post(f"/api/sessions/{missing}/provenance", headers=AGENT, json=payload).status_code
+        == 404
+    )

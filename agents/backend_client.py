@@ -54,3 +54,22 @@ def write_scorecard(session_id: str, payload: dict) -> None:
     )
     if resp.status_code != httpx.codes.CONFLICT:
         resp.raise_for_status()
+
+
+def write_provenance(
+    session_id: str, ruling_type: str, chunk_ids: list[str], citation_flags: list[str]
+) -> None:
+    """Persist the §13 audit-trail row for one ruling (objection_ruling | final_ruling): the
+    chunks actually shown to the model + the turn-scoped ungrounded-citation flags. Raises on
+    error; callers treat provenance as best-effort (log, never block the live loop)."""
+    resp = httpx.post(
+        f"{config.AGENT_BACKEND_URL}/api/sessions/{session_id}/provenance",
+        headers=_headers(),
+        json={
+            "ruling_type": ruling_type,
+            "chunk_ids_used": chunk_ids,
+            "citation_flags": citation_flags,
+        },
+        timeout=_TIMEOUT,
+    )
+    resp.raise_for_status()
