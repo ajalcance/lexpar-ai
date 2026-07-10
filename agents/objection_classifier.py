@@ -239,12 +239,16 @@ _SYSTEM = (
 
 
 def _build_messages(
-    fragment: str, state: SessionState, candidates: list[str]
+    fragment: str, state: SessionState, candidates: list[str], rules: str = ""
 ) -> list[dict[str, str]]:
-    """Assemble the minimal classifier messages. Pure — no API call."""
+    """Assemble the minimal classifier messages (+ the §13 procedural-rules block when retrieval
+    produced one). Pure — no API call."""
     hint = ", ".join(candidates) if candidates else "none"
+    context = f"SESSION RECORD:\n{state.snapshot()}"
+    if rules:
+        context += f"\n\n{rules}"
     user = (
-        f"SESSION RECORD:\n{state.snapshot()}\n\n"
+        f"{context}\n\n"
         f"HEURISTIC CANDIDATES: {hint}\n\n"
         f'ATTORNEY (statement in progress): "{fragment}"'
     )
@@ -286,10 +290,27 @@ def classify_fragment(fragment: str, state: SessionState) -> Decision:
             True, ground, f"high-confidence {ground} pattern", outcome=FIRE_IMMEDIATE
         )
     try:
+        # §13: ground the AMBIGUOUS-candidate judgment in the forum's actual rules. Court corpus
+        # only (the snapshot already carries the case summary); query = fragment + the candidate
+        # grounds so retrieval is targeted. TIGHT timeout — this sits in the live barge-in path;
+        # a slow fetch degrades to an ungrounded (current-behavior) decision, never a stall.
+        # Runs ONLY on the tier-3 path (gate rejects and immediate fires never reach here) and
+        # ONLY with a live session id — offline harnesses/tests never attempt retrieval.
+        rules = ""
+        if state.session_id:
+            import court_knowledge
+
+            rules = court_knowledge.rules_block(
+                court_knowledge.retrieve_court_passages(
+                    state.session_id,
+                    f"{', '.join(candidates)}: {fragment}",
+                    timeout=court_knowledge.FAST_TIMEOUT,
+                )
+            )
         endpoint = build_endpoint(objection_config())
         content = chat(
             endpoint,
-            _build_messages(fragment, state, candidates),
+            _build_messages(fragment, state, candidates, rules),
             temperature=0.0,
             # gpt-oss reasons before emitting; too small a budget yields empty content, so give it
             # room for the hidden reasoning plus the short JSON decision.

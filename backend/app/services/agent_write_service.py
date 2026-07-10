@@ -33,6 +33,8 @@ def get_session_context(db: DbSession, session_id: uuid.UUID) -> SessionContextO
         case_facts=(case.case_facts if case and case.case_facts else ""),
         case_title=(case.title if case else ""),
         case_summary=(case.case_summary if case and case.case_summary else ""),
+        court_id=(str(case.court_id) if case and case.court_id else ""),
+        proceeding_type=session.proceeding_type or "",
     )
 
 
@@ -45,6 +47,22 @@ def get_session_knowledge(db: DbSession, session_id: uuid.UUID, query: str, k: i
     session = session_service.get_session_by_id(db, session_id)
     payload = case_knowledge_service.context_payload(db, session.case_id, query, k)
     return KnowledgeOut(**payload)
+
+
+def get_court_rules(db: DbSession, session_id: uuid.UUID, query: str, k: int = 4):
+    """Court-rules retrieval for a session (§13): the query-relevant VERBATIM rule passages of the
+    forum the session's case names. Empty when the case names no court or the court has no
+    ingested corpus — the agents fail open on an empty block."""
+    from app.schemas.agent import CourtRulesOut
+    from app.services import court_knowledge_service
+
+    session = session_service.get_session_by_id(db, session_id)
+    case = db.get(Case, session.case_id)
+    if case is None or case.court_id is None:
+        return CourtRulesOut(passages=[])
+    return CourtRulesOut(
+        passages=court_knowledge_service.retrieve_rule_passages(db, case.court_id, query, k)
+    )
 
 
 def complete_session(db: DbSession, session_id: uuid.UUID) -> Session:

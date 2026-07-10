@@ -1777,7 +1777,7 @@ and nothing non-obvious surfaced. **Untouched as instructed:** judge-participant
 
 ---
 
-### Court & Procedural Rules Grounding + Enterprise Hardening — status: Phases 1-2 done, Phases 3-8 not started
+### Court & Procedural Rules Grounding + Enterprise Hardening — status: Phases 1-3 done, Phases 4-8 not started
 
 **Why:** the grounding audit (2026-07-10) established the agents have ZERO engineered procedural
 grounding — no rules corpus, no jurisdiction prompt; all grounding is the uploaded pleading.
@@ -1901,3 +1901,37 @@ by court w/ section prefix), agents 126 unchanged, ruff clean (incl. scripts/).*
 **No-fabrication check passed:** all fixture text is labeled synthetic placeholder prose
 ("Placeholder body text… not a real rule"); greped new files for statutory-style language — clean.
 ARCHITECTURE §5/§13 doc updates deferred to Phase 8 per the plan.
+
+**Phase 3 Result:** Done, tested, committed — dual-corpus retrieval wired agents-side; suite run
+after EVERY meaningful change (baseline 126 held throughout; no live LiveKit session started, per
+instruction). **Backend:** `SessionContextOut` + `court_id` + `proceeding_type` (proceeding_type
+pulled forward from Phase 4 — same struct, avoids a second schema change); new agent-authed
+sibling route `GET /api/sessions/{id}/court-rules?q=&k=` → `agent_write_service.get_court_rules`
+(session→case→court_id; `{"passages": []}` fail-open when no court/corpus). Route-shape decision
+documented on `CourtRulesOut`: sibling over a `scope` param because the case shape carries a
+`summary` field with no rules counterpart (no LLM digest of rules exists, by design). **Agents:**
+`SessionState` gained plumbing fields `session_id`/`court_id`/`proceeding_type` (defaults "";
+snapshot() unchanged — tested, so every offline harness/test stays retrieval-inert);
+`case_knowledge.retrieve_passages` gained a `timeout` param; new `agents/court_knowledge.py` —
+`retrieve_court_passages` (fail-open, bounded), `rules_block` (the SEPARATE "RELEVANT PROCEDURAL
+RULES:" header, distinct from "RELEVANT PLEADING EXCERPTS:"), `dual_blocks` (parallel two-corpus
+fetch via ThreadPoolExecutor, `FAST_TIMEOUT=2.0s` for live paths). **Judge missing-RAG fix (the
+audit bug):** all three entry points now grounded — `generate_ruling` (dual blocks on the turn),
+`quick_ruling` (targeted query = grounds + objected fragment, FAST_TIMEOUT — runs concurrent with
+canned-line playback, so a slow fetch degrades to an ungrounded ruling, never a stall),
+`assess_session` (targeted query = pending-objection grounds + last attorney turn); builders take
+optional `excerpts`/`rules` (pure, offline-testable). **OC:** `build_messages` + `rules` block;
+`stream_reply` fetches both corpora via `dual_blocks`. **Classifier tier-3:** court-rules
+retrieval (court corpus only; query = candidate grounds + fragment; FAST_TIMEOUT) gated on
+`state.session_id` AND only on the ambiguous path — gate rejects/immediate fires never retrieve.
+**main.py:** seeds SessionState with session_id/court_id/proceeding_type from the context route
+(judge-participant/judge-voice paths untouched). **Seed script:** operator-supplied forum naming
+baked in as defaults ("Regional Trial Court — Special Commercial Court, Taguig City" + NCJR/
+Sec. 73 RA 11232 / A.M. No. 01-2-04-SC jurisdiction description — named instruments only, no rule
+text). **Tests: backend 61 (was 58; +3 — context carries court_id/proceeding_type, court-rules
+route auth + passages), agents 139 offline (was 126; +13 — court_knowledge module, snapshot
+purity, judge grounding ×4 incl. tight-timeout + targeted-query assertions, OC block separation,
+classifier tier-3-only retrieval + offline-skip + debounce-with-grounding), ruff clean, main.py
+compiles.** **No-fabrication check passed** (diff greped; fixture "rules" are labeled
+placeholders). ⚠️ Live-room confirmation of the grounded paths remains the user's deliberate
+standalone step.

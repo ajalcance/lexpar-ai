@@ -132,17 +132,29 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     # Load the case context from the backend (agent-authed) so verification + the judge reason with
     # the real case: the raw facts AND the structured pleading summary (§12), which goes into every
-    # prompt via SessionState.snapshot(). Non-fatal: if it fails, start empty rather than crash.
+    # prompt via SessionState.snapshot(), plus the §13 grounding plumbing (court_id enables
+    # court-rules retrieval; proceeding_type gates eligible objection grounds, Phase 4).
+    # Non-fatal: if it fails, start empty rather than crash.
     case_facts = ""
     case_summary = ""
+    court_id = ""
+    proceeding_type = ""
     try:
         context = await asyncio.to_thread(backend_client.get_session_context, session_id)
         case_facts = context.get("case_facts", "")
         case_summary = context.get("case_summary", "")
+        court_id = context.get("court_id", "")
+        proceeding_type = context.get("proceeding_type", "")
     except Exception:
         logger.warning("could not load case context for %s; starting with empty facts", session_id)
 
-    state = SessionState(case_facts=case_facts, case_summary=case_summary)
+    state = SessionState(
+        case_facts=case_facts,
+        case_summary=case_summary,
+        session_id=session_id,
+        court_id=court_id,
+        proceeding_type=proceeding_type,
+    )
     classifier = ObjectionClassifier(state)
     # Shared with OpposingCounselAgent.llm_node: set when an objection fires on a turn so the
     # end-of-turn full reply is skipped (object → rule → continue, no redundant re-argument).

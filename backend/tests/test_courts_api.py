@@ -230,3 +230,64 @@ def test_retrieve_rule_passages_scoped_to_court_with_section_prefix(db_session, 
         )
         == []
     )
+
+
+# --- §13 Phase 3: internal court-rules route + context court_id --------------------------------
+
+AGENT = {"X-Agent-Token": "test-agent-token"}
+
+
+def _session_for_court(client, auth_headers, court_id=None):
+    body = {"title": "C", "case_facts": "f"}
+    if court_id:
+        body["court_id"] = str(court_id)
+    case = client.post("/api/cases", headers=auth_headers, json=body).json()
+    return client.post(
+        "/api/sessions", headers=auth_headers, json={"case_id": case["id"]}
+    ).json()
+
+
+def test_context_route_carries_court_id_and_proceeding_type(client, auth_headers, db_session):
+    court = _court(db_session, name="Context Court")
+    session = _session_for_court(client, auth_headers, court.id)
+    body = client.get(f"/api/sessions/{session['id']}/context", headers=AGENT).json()
+    assert body["court_id"] == str(court.id)
+    assert body["proceeding_type"] == "oral_argument"
+    # and empty-string (not null/missing) when the case names no court
+    plain = _session_for_court(client, auth_headers)
+    body = client.get(f"/api/sessions/{plain['id']}/context", headers=AGENT).json()
+    assert body["court_id"] == ""
+
+
+def test_court_rules_route_requires_agent_token(client, auth_headers):
+    session = _session_for_court(client, auth_headers)
+    url = f"/api/sessions/{session['id']}/court-rules?q=test"
+    assert client.get(url).status_code == 401
+    assert client.get(url, headers=auth_headers).status_code == 401  # user JWT is not enough
+    ok = client.get(url, headers=AGENT)
+    assert ok.status_code == 200
+    assert ok.json() == {"passages": []}  # no court on the case → empty, fail-open
+
+
+def test_court_rules_route_returns_passages(client, auth_headers, db_session, monkeypatch):
+    from app.services import document_service, embedding_service
+
+    court = _court(db_session, name="Rules Court")
+    document = court_knowledge_service.create_rule_document_row(
+        db_session, court.id, "Rules", "courts/x/rules.pdf"
+    )
+    monkeypatch.setattr(
+        document_service, "extract_pdf_text", lambda data: f"{SECTION_CHUNK}\n\n{PLAIN_CHUNK}"
+    )
+    embed = _keyword_embedder(["schema", "heading", "paragraph"])
+    court_knowledge_service.ingest_rule_document(db_session, document, b"%PDF", embedder=embed)
+    monkeypatch.setattr(embedding_service, "embed_text", embed)
+
+    session = _session_for_court(client, auth_headers, court.id)
+    resp = client.get(
+        f"/api/sessions/{session['id']}/court-rules?q=schema testing&k=1", headers=AGENT
+    )
+    assert resp.status_code == 200
+    passages = resp.json()["passages"]
+    assert len(passages) == 1
+    assert passages[0].startswith("[Section 12] ")

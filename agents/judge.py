@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import court_knowledge
 from llm_router import build_endpoint, chat, judge_config, objection_config
 from session_state import Objection, SessionState
 
@@ -66,9 +67,23 @@ def load_prompt() -> str:
     return _PROMPT_PATH.read_text(encoding="utf-8")
 
 
-def build_messages(state: SessionState, attorney_turn: str) -> list[dict[str, str]]:
-    """Assemble the chat messages (persona + session record + the attorney's latest turn)."""
+def _grounded_context(state: SessionState, excerpts: str, rules: str) -> str:
+    """The session record plus the two clearly-separated retrieval blocks (§12 pleading excerpts,
+    §13 procedural rules) — kept distinct so the model can tell case-specific fact from
+    generally-applicable rule. Pure."""
     context = f"SESSION RECORD:\n{state.snapshot()}"
+    if excerpts:
+        context += f"\n\n{excerpts}"
+    if rules:
+        context += f"\n\n{rules}"
+    return context
+
+
+def build_messages(
+    state: SessionState, attorney_turn: str, excerpts: str = "", rules: str = ""
+) -> list[dict[str, str]]:
+    """Assemble the chat messages (persona + grounded session record + the attorney's latest
+    turn). Pure — retrieval happens in the live wrappers."""
     user = (
         f'The attorney just argued:\n"{attorney_turn}"\n\n'
         "As the presiding judge, rule on any pending objection or give brief guidance if "
@@ -76,7 +91,7 @@ def build_messages(state: SessionState, attorney_turn: str) -> list[dict[str, st
     )
     return [
         {"role": "system", "content": load_prompt()},
-        {"role": "system", "content": context},
+        {"role": "system", "content": _grounded_context(state, excerpts, rules)},
         {"role": "user", "content": user},
     ]
 
@@ -92,11 +107,14 @@ def _parse_ruling(content: str) -> str:
 
 
 def generate_ruling(state: SessionState, attorney_turn: str) -> str:
-    """Generate the Judge's short spoken ruling. Makes a live API call."""
+    """Generate the Judge's short spoken ruling. Makes a live API call. When the state carries a
+    session_id (live worker), the ruling is grounded in retrieved pleading excerpts + the forum's
+    procedural rules (§13 — this closes the Judge's missing-RAG gap found by the audit)."""
+    excerpts, rules = court_knowledge.dual_blocks(state.session_id, attorney_turn)
     endpoint = build_endpoint(judge_config())
     content = chat(
         endpoint,
-        build_messages(state, attorney_turn),
+        build_messages(state, attorney_turn, excerpts, rules),
         temperature=0.3,
         max_tokens=400,
         response_format={"type": "json_object"},
@@ -113,10 +131,14 @@ def _render_transcript(state: SessionState) -> str:
     return "\n".join(lines) or "(no transcript)"
 
 
-def _build_assessment_messages(state: SessionState) -> list[dict[str, str]]:
-    """Assemble the end-of-session assessment messages (persona + record + transcript). Pure."""
+def _build_assessment_messages(
+    state: SessionState, excerpts: str = "", rules: str = ""
+) -> list[dict[str, str]]:
+    """Assemble the end-of-session assessment messages (persona + grounded record + transcript).
+    Pure — retrieval happens in assess_session."""
     context = (
-        f"SESSION RECORD:\n{state.snapshot()}\n\nFULL TRANSCRIPT:\n{_render_transcript(state)}"
+        f"{_grounded_context(state, excerpts, rules)}\n\n"
+        f"FULL TRANSCRIPT:\n{_render_transcript(state)}"
     )
     return [
         {"role": "system", "content": load_prompt()},
@@ -152,11 +174,15 @@ def _parse_assessment(content: str) -> dict:
 
 
 def _build_quick_ruling_messages(
-    state: SessionState, objection: Objection, fragment: str
+    state: SessionState,
+    objection: Objection,
+    fragment: str,
+    excerpts: str = "",
+    rules: str = "",
 ) -> list[dict[str, str]]:
     """Assemble the inline-ruling messages (minimal — this sits in the live path). Pure."""
     user = (
-        f"SESSION RECORD:\n{state.snapshot()}\n\n"
+        f"{_grounded_context(state, excerpts, rules)}\n\n"
         f'ATTORNEY (statement objected to): "{fragment}"\n'
         f"OBJECTION: {objection.grounds} (raised by {objection.raised_by})"
     )
@@ -190,10 +216,19 @@ def quick_ruling(state: SessionState, objection: Objection, fragment: str) -> tu
     unparseable output — the caller stays silent and leaves the objection pending for the
     end-of-session assessment (never fabricate a ruling).
     """
+    # Targeted §13 grounding: query = the objection's grounds + the objected statement. Fetched in
+    # parallel with a TIGHT budget — this call already runs concurrently with the canned objection
+    # line's playback (main.py), and a slow retrieval must not push the spoken ruling late; on
+    # timeout the ruling simply proceeds ungrounded-but-recorded, same fail-open as everywhere.
+    excerpts, rules = court_knowledge.dual_blocks(
+        state.session_id,
+        f"{objection.grounds}: {fragment}",
+        timeout=court_knowledge.FAST_TIMEOUT,
+    )
     endpoint = build_endpoint(objection_config())
     content = chat(
         endpoint,
-        _build_quick_ruling_messages(state, objection, fragment),
+        _build_quick_ruling_messages(state, objection, fragment, excerpts, rules),
         temperature=0.0,
         # gpt-oss reasons before emitting; 512 was intermittently EMPTY for this prompt (the
         # session record makes it longer than the classifier's), so give it the same headroom
@@ -212,11 +247,21 @@ def assess_session(state: SessionState) -> dict:
     rulings (objections stay pending = not sustained, so the attorney is never penalized on a
     model failure), no facts, and a neutral closing ruling.
     """
+    # §13 grounding for the assessment: what is being judged is the pending objections (plus the
+    # session's closing context), so the retrieval query is their grounds + the last attorney
+    # turn — targeted, not a generic dump of the whole transcript.
+    pending = ", ".join(o.grounds for o in state.pending_objections())
+    last_turn = next(
+        (t.content for t in reversed(state.transcript) if t.speaker == "attorney"), ""
+    )
+    excerpts, rules = court_knowledge.dual_blocks(
+        state.session_id, f"{pending} {last_turn}".strip()
+    )
     endpoint = build_endpoint(judge_config())
     try:
         content = chat(
             endpoint,
-            _build_assessment_messages(state),
+            _build_assessment_messages(state, excerpts, rules),
             temperature=0.3,
             # gpt-oss reasons before emitting; the assessment (rule every objection + extract facts
             # + closing ruling) needs a bigger budget than the classifier's 512, else the hidden

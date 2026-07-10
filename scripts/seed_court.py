@@ -32,10 +32,15 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "backend"))
 
-# No formal court-naming source exists in the repo (case documents are operator-local, never
-# committed), so this default follows the build spec's suggested forum naming; override --name
-# to match the exact formal designation used in your actual case papers.
-DEFAULT_COURT_NAME = "RTC Special Commercial Court — Intra-Corporate Controversies"
+# Operator-supplied defaults matching the actual filed petition's own caption and jurisdictional
+# language (provided by the operator 2026-07-10 — named instruments only, no rule text). Override
+# --name/--jurisdiction if your case papers designate the forum differently.
+DEFAULT_COURT_NAME = "Regional Trial Court — Special Commercial Court, Taguig City"
+DEFAULT_JURISDICTION = (
+    "National Capital Judicial Region; designated Special Commercial Court; jurisdiction over "
+    "intra-corporate controversies under Section 73 of RA 11232 in relation to A.M. No. "
+    "01-2-04-SC"
+)
 
 MISSING_RULES_MESSAGE = """
 ERROR: no rule documents found to ingest.
@@ -66,7 +71,7 @@ def _load_manifest(rules_dir: Path) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--name", default=DEFAULT_COURT_NAME)
-    parser.add_argument("--jurisdiction", default=None)
+    parser.add_argument("--jurisdiction", default=DEFAULT_JURISDICTION)
     parser.add_argument("--rules-dir", default=str(REPO_ROOT / "seed_data" / "court_rules"))
     parser.add_argument(
         "--promote-admin",

@@ -53,6 +53,13 @@ class SessionState:
     # prompt via snapshot() — this is what lets Opposing Counsel object and the Judge rule with the
     # real case, not a few sentences. Retrieved pleading passages are added per-reply on top.
     case_summary: str = ""
+    # §13 plumbing (loaded from the session-context route at room join; NOT snapshot() content):
+    # session_id lets any consumer holding the state retrieve pleading/court-rule passages without
+    # signature churn; court_id/proceeding_type gate whether/which retrieval and objection grounds
+    # apply. All default "" — offline harnesses/tests skip retrieval entirely.
+    session_id: str = ""
+    court_id: str = ""
+    proceeding_type: str = ""
     established_facts: list[str] = field(default_factory=list)
     objections: list[Objection] = field(default_factory=list)
     transcript: list[TranscriptTurn] = field(default_factory=list)

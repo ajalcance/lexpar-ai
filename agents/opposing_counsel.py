@@ -38,13 +38,17 @@ def load_prompt() -> str:
 
 
 def build_messages(
-    state: SessionState, attorney_turn: str, excerpts: str = ""
+    state: SessionState, attorney_turn: str, excerpts: str = "", rules: str = ""
 ) -> list[dict[str, str]]:
     """Assemble the chat messages (persona + session record + optional retrieved pleading excerpts
-    + the attorney's latest turn). `excerpts` (§12) are the passages retrieved for this turn."""
+    + optional retrieved procedural rules + the attorney's latest turn). `excerpts` (§12) and
+    `rules` (§13) stay two clearly-separated blocks — case-specific fact vs generally-applicable
+    rule must be distinguishable to the model."""
     context = f"SESSION RECORD (what is on the record so far):\n{state.snapshot()}"
     if excerpts:
         context += f"\n\n{excerpts}"
+    if rules:
+        context += f"\n\n{rules}"
     user = f'The attorney just argued:\n"{attorney_turn}"\n\n{_REPLY_STYLE}'
     return [
         {"role": "system", "content": load_prompt()},
@@ -93,18 +97,20 @@ def stream_reply(
     state: SessionState, attorney_turn: str, session_id: str = ""
 ) -> Iterator[str]:
     """Stream Opposing Counsel's next reply as text deltas. Makes a live API call. If `session_id`
-    is given, retrieves the pleading passages relevant to this turn (§12) and grounds the reply in
-    them (best-effort — retrieval failure just proceeds on the case summary)."""
-    excerpts = ""
+    is given, retrieves BOTH the pleading passages (§12) and the forum's procedural-rule passages
+    (§13) relevant to this turn — fetched in parallel — and grounds the reply in them
+    (best-effort — retrieval failure just proceeds on the case summary)."""
+    excerpts, rules = "", ""
     if session_id:
-        import case_knowledge
+        import court_knowledge
 
-        excerpts = case_knowledge.passages_block(
-            case_knowledge.retrieve_passages(session_id, attorney_turn)
-        )
+        excerpts, rules = court_knowledge.dual_blocks(session_id, attorney_turn)
     endpoint = build_endpoint(opposing_counsel_config())
     yield from chat_stream(
-        endpoint, build_messages(state, attorney_turn, excerpts), temperature=0.7, max_tokens=400
+        endpoint,
+        build_messages(state, attorney_turn, excerpts, rules),
+        temperature=0.7,
+        max_tokens=400,
     )
 
 
