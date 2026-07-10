@@ -244,8 +244,13 @@ round-trips inside the live voice loop).
     direct "he told me" hearsay) that it **fires immediately with no LLM call at all**, the only way
     to hit ~0.5 s barge-in given the account has no sub-second model; (3) the fast model
     (`classify_fragment`, gpt-oss-120b JSON) judges the remaining **ambiguous** candidates.
-    `ObjectionClassifier` adds **per-utterance debounce** (no re-firing on a growing fragment) and
-    the LLM stage **fails closed** (any error → no interruption). Six audit outcomes distinguish
+    `ObjectionClassifier` adds **per-utterance debounce** (compared on **normalized** text — STT
+    finals rewrite casing/punctuation relative to their interims, so an exact-prefix check re-arms
+    on the revised final and double-fires; see LESSONS), a **re-fire cooldown** (time floor ~5 s,
+    injectable clock), and a **ruling hold** (`hold()`/`release_hold()`): while an inline judge
+    ruling is in flight no new objection can fire over the judge, and re-arming requires BOTH the
+    floor elapsed AND the hold released — so a slow ruling call (network jitter) stays protected.
+    The LLM stage **fails closed** (any error → no interruption). Six audit outcomes distinguish
     `fire_immediate` (tier 2, no model) from `fire` (tier 3, model-judged) so an over-aggressive
     high-confidence gate is visible in the data. `consider()` is **lock-serialized** — the worker
     feeds interim transcripts through it from concurrent `asyncio.to_thread` calls, so its debounce
@@ -335,15 +340,45 @@ session runs:
   `on_user_turn_completed` hook), not once per Deepgram `is_final` — otherwise a single spoken turn
   shreds into a dozen transcript fragments. The classifier still sees every interim.
 
-### End-of-session judge assessment
+### Inline judge rulings (real courtroom sequence)
+
+When an objection fires and Opposing Counsel's line is spoken, the Judge immediately follows aloud
+— "Sustained." / "Overruled — <one short reason>." — before the attorney continues:
+
+- **`judge.quick_ruling`** on the FAST model (the objection classifier's config, gpt-oss class —
+  this sits directly in the live conversational path, same latency philosophy as the classifier and
+  verification; `max_tokens=1024`, the empty-content floor for this prompt).
+- The ruling is applied to the ledger **immediately** (`rule_on_objection`) and the spoken line
+  recorded as a judge turn; a `{"type": "ruling"}` data event lets the frontend render it live.
+- **The Judge speaks with a distinct voice** (`JUDGE_VOICE_ID`, default "Daniel"): judge lines are
+  synthesized on a second ElevenLabs TTS instance and played via `session.say(audio=…)`, so a user
+  can tell who's speaking by ear — like a real courtroom.
+- **Not interruptible** (`allow_interruptions=False`) — you don't talk over the judge; and while the
+  ruling is in flight the classifier is on `hold()` (§6), so OC can't object over the judge either.
+- **Fail-safe:** on any error/timeout (10 s bound) the judge stays **silent** and the objection
+  stays **pending** — the end-of-session assessment rules it; a ruling is never fabricated.
+
+### End-of-session judge assessment (spoken ruling + scorecard)
 
 At session end the Judge makes **one** structured call (`judge.assess_session`) that: rules each
-pending objection `sustained`/`overruled` (→ scorecard **score** and **weaknesses**), extracts the
-2–5 facts the attorney genuinely established (→ scorecard **strengths**), and returns the closing
-ruling. This is what makes the scorecard reflect what actually happened instead of a hollow default
-(score always 100). It **fails safe**: on an unparseable/empty model response, objections stay
-pending (not sustained → the attorney is never penalized on a model glitch), no facts are invented,
-and a neutral closing ruling is used. Batched at shutdown so it adds no latency to the live loop.
+objection **still pending** `sustained`/`overruled` (→ scorecard **score** and **weaknesses**),
+extracts the 2–5 facts the attorney genuinely established (→ scorecard **strengths**), and returns
+the closing ruling — which **acknowledges the objections already ruled from the bench during the
+session** rather than re-ruling them (inline rulings are final). This is what makes the scorecard
+reflect what actually happened instead of a hollow default (score always 100). It **fails safe**:
+on an unparseable/empty model response, objections stay pending (not sustained → the attorney is
+never penalized on a model glitch), no facts are invented, and a neutral closing ruling is used.
+
+**End-of-session handshake (so the judge is *heard*, and the scorecard is ready when the page
+loads).** When the attorney clicks "End session", the browser publishes an `end_session` data
+message (topic `control`) and waits. The worker's `_finalize_session(speak=True)` runs the
+assessment, **speaks the closing ruling aloud** (`session.say`), persists the scorecard + transcript,
+then publishes `end_complete` — only then does the frontend navigate to the scorecard (which is now
+written). This runs **exactly once** (idempotent guard) with two backstops that finalize *silently*
+if the attorney never sends the event: `participant_disconnected` (tab closed) and the job shutdown
+callback — so the scorecard always lands rather than waiting on the room's empty-timeout. The
+scorecard page also **polls** briefly (≈30 s) on a 409/404 to cover the few seconds the judge call +
+persistence take.
 
 ### Co-location
 
@@ -507,7 +542,8 @@ S3-compatible (MinIO locally, DigitalOcean Spaces in production).
 | `VERIFICATION_LLM_PROVIDER` / `VERIFICATION_LLM_ENDPOINT` / `VERIFICATION_LLM_MODEL` | Verifier, NOT the reasoning model (§6.5; default `gpt-oss-120b` — swap for a smaller model when deployed) |
 | `OBJECTION_LLM_PROVIDER` / `OBJECTION_LLM_ENDPOINT` / `OBJECTION_LLM_MODEL` | Objection classifier — the latency-sensitive streaming call (§6; default `gpt-oss-120b`) |
 | `FIREWORKS_API_KEY` / `DEEPGRAM_API_KEY` / `ELEVENLABS_API_KEY` | Provider auth |
-| `DEEPGRAM_MODEL` / `ELEVENLABS_MODEL` / `ELEVENLABS_VOICE_ID` | Voice pipeline (agents/main.py); defaults `nova-3` / `eleven_flash_v2_5` / a stock voice |
+| `DEEPGRAM_MODEL` / `ELEVENLABS_MODEL` / `ELEVENLABS_VOICE_ID` | Voice pipeline (agents/main.py); defaults `nova-3` / `eleven_flash_v2_5` / "George" (premade, free-tier-usable) |
+| `JUDGE_VOICE_ID` | The Judge's DISTINCT voice (§6.5 inline rulings; default "Daniel") — speakers are tellable apart by ear |
 | `JWT_SECRET` | Token signing — **required, ≥ 32 chars**; the app refuses to start with a blank/missing/weak key (`openssl rand -hex 32`) |
 | `AUTH_MODE` | `stub` \| `production` |
 | `CORS_ORIGINS` | Comma-separated browser origins allowed to call the API (e.g. the Vite dev server) |

@@ -1301,3 +1301,145 @@ ruff clean.** **Docs:** ARCHITECTURE §5 (context route) + §6.5 (live ledger fe
 assessment); LESSONS (budget-scales-with-complexity). Decisions built as recommended: batch ruling +
 judge-extracted facts, all four together. **Not verified here:** a full live *room* session
 (needs mic + worker) — but every piece is proven via the harness + unit/live tests.
+
+---
+
+### Session-end flow: spoken judge ruling + scorecard reliably appears — status: done
+
+**Problem (live session):** after "End session" the scorecard showed "Not available yet" (stale
+copy), and the judge never spoke. Root cause: the scorecard was written only at *job shutdown*,
+which doesn't happen promptly when the attorney leaves (the agent keeps the room non-empty), and the
+frontend fetched once (no retry). The judge produced a written ruling but never delivered it aloud.
+
+**Fixes (all four, as approved):**
+- **Agent (`main.py`):** refactored persistence into idempotent `_finalize_session(speak)`.
+  Triggered by an `end_session` data message (topic `control`) → assess → **judge speaks the closing
+  ruling** (`session.say`) → persist → publish `end_complete`. Backstops that finalize *silently*:
+  `participant_disconnected` (tab closed) and the shutdown callback. Runs exactly once.
+- **Frontend `useSparringRoom`:** `endSession()` publishes `end_session` and resolves on
+  `end_complete` (or a 30 s timeout, so a missing agent never hangs); `DataReceived` handles the
+  control message.
+- **Frontend `SparringRoom`:** "End session" in a live session shows "The judge is delivering the
+  ruling…", awaits `endSession()`, then navigates; fallback (no agent) navigates straight.
+- **Frontend `Scorecard`:** polls on 409/404 (~30 s, `retry` + 2 s delay) showing a "Scoring your
+  session…" state, fetches the transcript only once the scorecard exists, and the stale "isn't wired
+  up yet" copy → honest "Scorecard not ready".
+
+**Tests:** agents 97 offline + 8 live, ruff clean; frontend type-check + lint + 12 tests (Scorecard
+test updated to assert the polling state). **Docs:** ARCHITECTURE §6.5 (end-of-session handshake +
+spoken ruling). **Not verified here:** the live handshake + spoken ruling need a real room + agent —
+logic is unit-tested and the fallback path is unchanged.
+
+**Deferred (not in scope):** a spoken judge *during* the session (inline rulings after each
+objection) — this delivers only the closing ruling aloud.
+
+---
+
+### Double-fire debounce bug + inline spoken judge rulings — status: done
+
+*(Stacked on the PR #4 branch — the inline rulings interact with `_finalize_session`/assess_session
+from that PR.)*
+
+**Bug — objection fired twice for one utterance (traced, not guessed).** The live transcript shows
+two "Objection — hearsay." turns around a single attorney utterance, the second ~1 s after speech
+stopped. Trace: (1) an *interim* arrives lowercase/unpunctuated ("i i my client told me…") → fires;
+debounce stores it as `_prev`. (2) Growing interims pass `current.startswith(prev)` → correctly
+debounced (the only case currently tested). (3) After the pause, Deepgram emits the segment's
+**final** with smart formatting ("I, I, my client told me… the safety report, quote, wasn't going to
+matter…") — finals are **not prefix-stable** with interims (casing, inserted punctuation,
+"March third"→"March 3"), so `startswith` fails, `_is_continuation` treats it as a NEW utterance,
+the classifier re-arms, and the revised final re-fires on the same content. The "pause" is
+Deepgram's endpointing delay before the final lands. `UserInputTranscribedEvent` carries **no
+segment id** (verified: transcript/is_final/speaker_id only), so the fix must be text/time-based.
+
+**Fix (two layers, both pure/offline-testable):**
+1. **Normalized continuation check** — `_is_continuation` compares a normalized form (lowercase,
+   strip non-alphanumeric, collapse whitespace), so punctuation/casing revisions of the same
+   utterance no longer look like new speech. (Doesn't cover digit rewrites like "third"→"3" — hence
+   layer 2.)
+2. **Re-fire cooldown** — after any fire, suppress further fires for `refire_cooldown` seconds
+   (default ~5 s), with an **injectable clock** (`time.monotonic`) so tests/harness stay
+   deterministic. Robust against any transcript rewrite; realistic (no courtroom double-objection
+   within 5 s of being interrupted); and it **doubles as the don't-object-over-the-judge guard**
+   (below). Suppressions report as `DEBOUNCED` with a cooldown reason (no new audit category).
+
+**Regression tests (own cases, not just growing-fragment):** interim fires → grown interim
+debounced → *pause* → **revised final (casing/punctuation changed, same content) → must NOT fire**;
+cooldown with injected clock (non-continuation objectionable fragment at +1 s suppressed, at +6 s
+fires); `objection_harness` gains the revised-final sequence with a clock that jumps between
+utterances so the demo matches real pacing.
+
+**Feature — inline spoken judge rulings (real courtroom sequence).** When an objection fires
+(immediate or LLM-judged) and OC's line is spoken, the Judge immediately follows aloud:
+"Sustained." / "Overruled — <one short reason>."
+
+- **`judge.quick_ruling(state, objection, fragment)`** — fast-model call reusing the **objection
+  classifier's config** (gpt-oss-120b class; same latency philosophy as classifier/verification; no
+  new env vars, swap via `OBJECTION_LLM_*`), temp 0, `max_tokens=512` (the known gpt-oss floor),
+  JSON `{"ruling": "sustained"|"overruled", "reason": "<a few words>"}`. Pure `_build`/`_parse`
+  split for offline tests.
+- **Wiring:** `voice_interrupt.handle_interim` captures the `Objection` returned by
+  `record_objection` and calls an **injectable** `judge_rule(objection, fragment)` after OC's line +
+  publish (module stays livekit-free). `main.py` provides it: `quick_ruling` off-loop →
+  `state.rule_on_objection(objection, ruling)` **immediately** → judge speaks
+  (`session.say(..., allow_interruptions=False)`) → `state.add_turn("judge", …)` → publish a
+  `{"type": "ruling", …}` data event; frontend renders it as a judge line (small — same parse path
+  as objection events).
+- **Latency/ordering:** ruling generation starts while OC's objection line is playing;
+  `session.say` calls are queued by the SDK, so the judge line plays right after OC's. Expected
+  ruling audio ≲1 s after OC's line ends (gpt-oss ~1.3 s ≈ OC line duration).
+- **Fail-safe:** quick-ruling error/unparseable → judge stays **silent**, objection stays
+  **pending**; the end-of-session `assess_session` backstop rules it. Never fabricate a penalty —
+  consistent with every other fail-safe in the pipeline.
+- **`assess_session` update:** mechanically it already only rules *pending* objections (the zip is
+  over `pending_objections()`), so inline-ruled ones can't be re-ruled; update
+  `_ASSESSMENT_INSTRUCTION` so the closing ruling **references/summarizes already-ruled objections**
+  (they're in the SESSION RECORD snapshot with their rulings) instead of ignoring them. Scorecard
+  needs no change — `sustained_objections()` counts rulings regardless of when they landed.
+
+**Barge-in interaction & interruptibility (the design questions):**
+- **Attorney cannot interrupt the Judge mid-ruling** (recommended): ruling spoken with
+  `allow_interruptions=False` — courtroom realism (you don't talk over the judge), and it's a 1–2 s
+  line. OC's objection line stays interruptible (unchanged).
+- **OC cannot object while the Judge is ruling:** a classifier fire during the ruling would call
+  `session.interrupt()` and cut the judge off mid-sentence. The **re-fire cooldown covers exactly
+  this window** — the ruling always follows a fire, so the classifier is in cooldown (~5 s ≳ OC
+  line + ruling generation + ruling speech). One mechanism for both the bug and this guard; no extra
+  flag. Residual: a genuinely new objectionable utterance inside the cooldown is suppressed —
+  acceptable (un-courtroom-like anyway; end-of-session assessment still sees the transcript).
+- **Judge voice = OC voice for now (flagged):** one `AgentSession` has one TTS; a distinct judge
+  voice needs a second TTS instance + manual audio playout — follow-up, not here.
+
+**Tests (offline):** the debounce regression set; `voice_interrupt` — on fire, `judge_rule` is
+awaited with the recorded Objection (not on no-fire/debounce); `quick_ruling` `_parse` (valid /
+unknown-ruling fail-safe / garbage raises) + monkeypatched error path leaves the objection pending;
+harness gains an inline-ruling printout (fragment → fire → ruling → ledger state). **⚠️ Needs a live
+room:** actual audio sequencing (attorney cut → OC line → judge ruling), non-interruptibility feel,
+cooldown vs. real speech pacing, ruling-event rendering.
+
+**Decisions (resolved):** (1) judge ruling not interruptible ✓; (2) failed ruling → silent +
+pending, never fabricated ✓; (3) **adjusted:** not a fixed timer alone — re-arming is gated on the
+ruling call *actually completing* (success/failure/timeout) AND a 5 s floor
+(`hold()`/`release_hold()` + cooldown), so a slow ruling can't be objected over; (4) fast model =
+objection classifier config ✓; (5) **adjusted:** the Judge gets a DISTINCT voice now via
+`JUDGE_VOICE_ID` (default "Daniel", already free-tier-verified) — judge lines synthesized on a
+second TTS instance, played via `session.say(audio=…)`.
+
+**Result:** Done. **Bug fix:** `_is_continuation` compares **normalized** text (casing/punctuation
+revisions of the same utterance no longer re-arm) + a **re-fire cooldown** (5 s floor, injectable
+clock) + the **ruling hold**. Harness proves the exact regression live: the revised final
+("Now, isn't it true…?", +1 s pause) is now **debounced** where it previously re-fired.
+**Feature:** `judge.quick_ruling` (fast model; `max_tokens=1024` — 512 was intermittently EMPTY for
+this prompt, the LESSONS budget-scales-with-complexity rule again; verified 3/3 live) →
+`rule_on_objection` immediately → judge speaks in the **Daniel** voice via `_judge_say`
+(`session.say(audio=…)`, not interruptible) → judge turn recorded → `{"type":"ruling"}` data event
+rendered live by the frontend (parse + judge line, tests added). The closing ruling also speaks in
+the judge voice now. `_ASSESSMENT_INSTRUCTION` updated: already-ruled objections are final —
+acknowledge, don't re-rule (mechanically enforced by the pending-only zip). **Tests: agents 110
+offline + 10 live** (new: revised-final regression, cooldown timing, hold-gating, normalized
+continuation, judge_rule wiring ×3, quick_ruling ×6, live quick_ruling; two pre-existing tests
+updated for injected clocks), **frontend 16** (ruling parse/map ×4), ruff + type-check clean.
+**Docs:** ARCHITECTURE §6 (debounce/cooldown/hold), §6.5 (inline rulings section), §9
+(`JUDGE_VOICE_ID`); LESSONS (STT finals not prefix-stable); `.env.example`. **⚠️ Needs a live room:**
+the audio sequencing (attorney cut → OC line → judge ruling in a different voice), the
+non-interruptibility feel, cooldown vs. real pacing, and ruling-event rendering.

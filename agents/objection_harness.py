@@ -7,8 +7,11 @@ Purpose: A text-only harness for the objection classifier — no Deepgram / Live
     It also MEASURES latency per fragment and reports a before/after comparison — the two-tier
     gate (high-confidence patterns fire immediately, no LLM) vs. an LLM-only run that simulates the
     pre-two-tier behavior — so the barge-in speedup is measured, not assumed (ARCHITECTURE §6).
-Depends on: agents/objection_classifier.py, agents/session_state.py (live Fireworks calls for
-    ambiguous gate candidates)
+    Includes the DOUBLE-FIRE REGRESSION sequence (an STT final revised with smart formatting
+    arriving after a pause must NOT re-fire) and an inline-ruling demo (fire → judge rules →
+    ledger updated), both deterministic via an injected clock / fake judge.
+Depends on: agents/objection_classifier.py, agents/session_state.py, agents/voice_interrupt.py
+    (live Fireworks calls for ambiguous gate candidates)
 Related: agents/harness.py, docs/ARCHITECTURE.md §6, docs/LESSONS.md
 Security notes: Uses fabricated sample fragments only — never feed real transcript through this
     demo. Requires FIREWORKS_API_KEY for the ambiguous candidates (clean/high-confidence make no
@@ -18,25 +21,39 @@ Usage: from agents/, run `python objection_harness.py`.
 
 from __future__ import annotations
 
+import asyncio
 import statistics
 import time
 
 import objection_classifier as oc
 from objection_classifier import ObjectionClassifier
 from session_state import SessionState
+from voice_interrupt import handle_interim
 
-# Each line is one partial-transcript fragment as it would stream in. The middle three grow the
-# SAME leading-question utterance to show debounce (fire once, then suppressed).
-FRAGMENTS = [
-    "The contract was signed on March 3.",
-    "Now, isn't it true",
-    "Now, isn't it true that you never",
-    "Now, isn't it true that you never actually read the contract?",
-    "Now, isn't it true that you never actually read the contract?",
-    "My neighbor told me the defendant ran the red light.",
-    "I think the delay was probably intentional.",
-    "The invoice is dated April 2.",
+# Each entry is (seconds_since_previous, fragment) — one partial transcript as it would stream in.
+# Utterance 2 grows across three fragments (debounce), utterance 2's FINAL arrives revised by smart
+# formatting after a 1s endpointing pause (the double-fire regression), and later utterances arrive
+# after realistic >5s gaps so the re-fire cooldown has elapsed.
+TIMED_FRAGMENTS = [
+    (0.0, "The contract was signed on March 3."),
+    (6.0, "now isn't it true"),
+    (0.5, "now isn't it true that you never"),
+    (0.5, "now isn't it true that you never actually read the contract"),
+    # REGRESSION: the segment's final — capitalized + punctuated, same content, 1s pause. The old
+    # exact-prefix debounce re-armed on this and double-fired.
+    (1.0, "Now, isn't it true that you never actually read the contract?"),
+    (7.0, "My neighbor told me the defendant ran the red light."),
+    (7.0, "I think the delay was probably intentional."),
+    (6.0, "The invoice is dated April 2."),
 ]
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
 
 
 def build_demo_state() -> SessionState:
@@ -53,10 +70,12 @@ def _run(label: str, *, immediate_enabled: bool) -> tuple[ObjectionClassifier, l
     if not immediate_enabled:
         oc.high_confidence_grounds = lambda fragment: []  # force all candidates to the LLM
     try:
-        classifier = ObjectionClassifier(build_demo_state(), record=True)
+        clock = FakeClock()
+        classifier = ObjectionClassifier(build_demo_state(), record=True, clock=clock)
         latencies: list[float] = []
         print(f"\n=== {label} ===")
-        for fragment in FRAGMENTS:
+        for gap, fragment in TIMED_FRAGMENTS:
+            clock.now += gap  # simulated speech pacing (cooldown floor sees realistic gaps)
             t0 = time.perf_counter()
             decision = classifier.consider(fragment)
             dt = time.perf_counter() - t0
@@ -73,6 +92,33 @@ def _run(label: str, *, immediate_enabled: bool) -> tuple[ObjectionClassifier, l
         return classifier, latencies
     finally:
         oc.high_confidence_grounds = original
+
+
+class _FakeSession:
+    async def interrupt(self):
+        pass
+
+    async def say(self, text, allow_interruptions=True):
+        print(f'    OC speaks: "{text}"')
+
+
+async def _inline_ruling_demo() -> None:
+    """Fire → the (fake, deterministic) judge rules inline → the ledger is updated immediately."""
+    print("\n=== Inline judge ruling (deterministic fake judge) ===")
+    state = build_demo_state()
+    clock = FakeClock()
+    classifier = ObjectionClassifier(state, clock=clock)
+
+    async def fake_judge(objection, fragment):
+        state.rule_on_objection(objection, "sustained")
+        state.add_turn("judge", "Sustained. Classic hearsay.")
+        print('    Judge speaks: "Sustained. Classic hearsay."')
+
+    fragment = "He told me the defendant ran the red light."
+    print(f'  Attorney: "{fragment}"')
+    await handle_interim(_FakeSession(), classifier, fragment, None, fake_judge)
+    print(f"  Ledger: {[(o.grounds, o.ruling) for o in state.objections]}")
+    print(f"  Transcript: {[(t.speaker, t.content) for t in state.transcript]}")
 
 
 def main() -> None:
@@ -98,6 +144,8 @@ def main() -> None:
     _review("Gate-rejected (never reached the LLM)", two_tier.gate_rejected())
     _review("Immediate fires (high-confidence, no LLM)", two_tier.immediate_fires())
     _review("LLM no-fire (reached the LLM, judged not to object)", two_tier.llm_no_fire())
+
+    asyncio.run(_inline_ruling_demo())
 
 
 if __name__ == "__main__":

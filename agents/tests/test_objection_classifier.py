@@ -160,20 +160,40 @@ def test_parse_decision_raises_on_non_json():
         oc._parse_decision("no json here")
 
 
-# --- Debounce (deterministic, injected decider) ----------------------------------------------
+# --- Debounce (deterministic, injected decider + clock) --------------------------------------
 
-def test_debounce_fires_once_per_utterance():
-    calls: list[str] = []
+class FakeClock:
+    """Injectable monotonic clock for deterministic cooldown tests."""
 
-    def always_fire(fragment: str, state: SessionState) -> Decision:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def always_fire_decider(calls: list[str]):
+    def decider(fragment: str, state: SessionState) -> Decision:
         calls.append(fragment)
         return Decision(True, "leading", "x")
 
-    classifier = ObjectionClassifier(SessionState(), decider=always_fire)
+    return decider
+
+
+def test_debounce_fires_once_per_utterance():
+    calls: list[str] = []
+    clock = FakeClock()
+    classifier = ObjectionClassifier(
+        SessionState(), decider=always_fire_decider(calls), clock=clock
+    )
 
     first = classifier.consider("Isn't it true")
     grown = classifier.consider("Isn't it true that you lied?")   # same utterance, still growing
     again = classifier.consider("Isn't it true that you lied?")   # same again
+    clock.advance(6.0)  # past the re-fire cooldown — genuinely later speech
     new_utterance = classifier.consider("He told me it was red.")  # new utterance re-arms
 
     assert first.fire is True
@@ -182,6 +202,81 @@ def test_debounce_fires_once_per_utterance():
     # the decider is only invoked when not suppressed
     assert calls == ["Isn't it true", "He told me it was red."]
     assert grown.outcome == oc.DEBOUNCED
+
+
+def test_revised_final_after_pause_does_not_refire():
+    # THE double-fire regression (see PLAN/LESSONS): the STT *final* for an utterance arrives after
+    # a pause with smart formatting applied — casing/punctuation changed, same content. It is NOT a
+    # string prefix of the last interim, but it must still be treated as the SAME utterance.
+    calls: list[str] = []
+    clock = FakeClock()
+    classifier = ObjectionClassifier(
+        SessionState(), decider=always_fire_decider(calls), clock=clock
+    )
+
+    interim = classifier.consider("i i my client told me that his supervisor said")
+    assert interim.fire is True
+
+    clock.advance(1.0)  # the endpointing pause before the final lands
+    revised_final = classifier.consider(
+        "I, I, my client told me that his supervisor said the safety report wouldn't matter."
+    )
+    assert revised_final.fire is False
+    assert revised_final.outcome == oc.DEBOUNCED
+    assert calls == ["i i my client told me that his supervisor said"]  # LLM never re-consulted
+
+
+def test_cooldown_suppresses_new_utterance_then_releases():
+    # A genuinely NEW objectionable utterance within the cooldown floor is suppressed (no courtroom
+    # double-objection seconds after being interrupted); after the floor it fires again.
+    calls: list[str] = []
+    clock = FakeClock()
+    classifier = ObjectionClassifier(
+        SessionState(), decider=always_fire_decider(calls), clock=clock
+    )
+
+    assert classifier.consider("Isn't it true you lied?").fire is True
+    clock.advance(1.0)
+    inside_cooldown = classifier.consider("He told me it was red.")
+    assert inside_cooldown.fire is False
+    assert inside_cooldown.outcome == oc.DEBOUNCED
+    assert "cooldown" in inside_cooldown.reason
+
+    clock.advance(5.0)  # 6s total — past the floor
+    after_cooldown = classifier.consider("She said that he confessed.")
+    assert after_cooldown.fire is True
+
+
+def test_hold_blocks_refire_until_released_and_floor_elapsed():
+    # Re-arming requires BOTH: the ruling hold released AND the time floor elapsed — a slow inline
+    # ruling (network jitter) must keep the classifier suppressed past the fixed timer.
+    calls: list[str] = []
+    clock = FakeClock()
+    classifier = ObjectionClassifier(
+        SessionState(), decider=always_fire_decider(calls), clock=clock
+    )
+
+    assert classifier.consider("Isn't it true you lied?").fire is True
+    classifier.hold()  # inline ruling in flight
+
+    clock.advance(10.0)  # floor long elapsed, but the ruling hasn't finished
+    held = classifier.consider("He told me it was red.")
+    assert held.fire is False
+    assert "ruling in progress" in held.reason
+
+    classifier.release_hold()  # ruling finished (floor already elapsed)
+    released = classifier.consider("She said that he confessed to it.")
+    assert released.fire is True
+
+
+def test_normalized_continuation_handles_casing_and_punctuation():
+    assert ObjectionClassifier._is_continuation(
+        "i i my client told me", "I, I, my client told me that his supervisor said"
+    )
+    assert not ObjectionClassifier._is_continuation(
+        "i i my client told me", "The document was never produced."
+    )
+    assert not ObjectionClassifier._is_continuation("", "anything")
 
 
 # --- Audit outcomes + review log -------------------------------------------------------------
@@ -214,11 +309,13 @@ def test_review_log_partitions_gate_immediate_and_llm(monkeypatch):
     # A clean fragment (gate reject), a high-confidence fragment (immediate fire, no LLM), and an
     # ambiguous candidate that reaches the stubbed LLM (no-fire) — each lands in its own partition.
     monkeypatch.setattr(oc, "chat", lambda *a, **k: '{"fire": false, "objection_type": null}')
-    classifier = ObjectionClassifier(SessionState(), record=True)
+    clock = FakeClock()
+    classifier = ObjectionClassifier(SessionState(), record=True, clock=clock)
     clean = "The contract was signed on March 3."
     immediate = "Isn't it true you were there?"
     classifier.consider(clean)      # gate reject
     classifier.consider(immediate)  # high-confidence -> immediate fire (no LLM)
+    clock.advance(6.0)              # past the re-fire cooldown from the immediate fire
     classifier.consider(AMBIGUOUS)  # ambiguous candidate -> LLM no-fire
 
     assert [r.fragment for r in classifier.gate_rejected()] == [clean]

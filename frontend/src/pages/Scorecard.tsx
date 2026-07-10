@@ -22,27 +22,42 @@ import { TranscriptLine } from '@/components/TranscriptLine';
 import * as api from '@/lib/api';
 import { ApiError } from '@/lib/api';
 
+// The scorecard is written by the Judge agent at session end (assess → persist), which takes a few
+// seconds after "End session". Poll on 409 (session not yet completed) / 404 (completed but unscored)
+// for a while before giving up, so a freshly ended session resolves instead of showing a fallback.
+const MAX_SCORECARD_RETRIES = 15; // × 2s ≈ 30s
+
 export function Scorecard() {
   const { id } = useParams<{ id: string }>();
   const sessionId = id ?? '';
   const { data: scorecard, isLoading, isError, error } = useQuery({
     queryKey: ['scorecard', sessionId],
     queryFn: () => api.getScorecard(sessionId),
-    retry: false,
+    retry: (failureCount, err) => {
+      const status = err instanceof ApiError ? err.status : 0;
+      return (status === 404 || status === 409) && failureCount < MAX_SCORECARD_RETRIES;
+    },
+    retryDelay: 2000,
   });
+  // Only fetch the transcript once the scorecard exists — it's written in the same batch, so before
+  // then GET session returns an (unhelpful) empty transcript rather than an error we could retry on.
   const { data: transcript } = useQuery({
     queryKey: ['session-transcript', sessionId],
     queryFn: () => api.getSessionTranscript(sessionId),
+    enabled: !!scorecard,
     retry: false,
   });
 
   if (isLoading) {
-    return <p className="text-sm text-muted-foreground">Scoring your session…</p>;
+    return (
+      <p className="text-sm text-muted-foreground">
+        Scoring your session… the judge is finalizing your scorecard.
+      </p>
+    );
   }
 
-  // The scorecard is written by the Judge agent, which isn't built yet: an incomplete session
-  // returns 409 and a completed-but-unscored one returns 404. Show an honest placeholder rather
-  // than a hard error or a fabricated score. (ARCHITECTURE §4 "Wiring status".)
+  // Still not written after the polling window: an incomplete session returns 409, a
+  // completed-but-unscored one 404. Show an honest placeholder rather than a fabricated score.
   const notYetAvailable = error instanceof ApiError && (error.status === 404 || error.status === 409);
   if (isError && notYetAvailable) {
     return (
@@ -55,11 +70,11 @@ export function Scorecard() {
         </div>
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Not available yet</CardTitle>
+            <CardTitle className="text-lg">Scorecard not ready</CardTitle>
             <CardDescription>
-              The AI Judge that scores your session isn't wired up yet — it arrives with the
-              real-time agents pipeline. Your session was recorded; the written scorecard will
-              appear here once the Judge can generate it.
+              We couldn't load a scorecard for this session yet. If you just finished, give it a
+              moment and refresh — the judge writes it at the end of the session. If the session
+              ended early or the agent wasn't running, there may be nothing to score.
             </CardDescription>
           </CardHeader>
         </Card>

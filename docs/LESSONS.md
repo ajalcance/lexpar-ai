@@ -190,3 +190,18 @@ retry latency + warning noise for services we don't have.
 Also note `livekit.plugins.turn_detector` (EnglishModel/MultilingualModel) is deprecated in favor of
 `livekit.agents.inference.TurnDetector`, and the plugin models only construct inside a job context —
 verify SDK usage against the installed version, not remembered docs.
+
+### [Agents/STT] Deepgram finals are NOT prefix-stable with their interims — don't debounce on raw text
+**Wrong:** The objection debouncer decided "same utterance still growing" with an exact string check
+(`current.startswith(prev)`). Interims arrive lowercase/unpunctuated ("i i my client told me…");
+after the endpointing pause, the segment's **final** arrives with smart formatting applied —
+capitalized, commas inserted, numbers rewritten ("March third" → "March 3"). The final fails the
+prefix check, gets treated as a NEW utterance, re-arms the debounce, and **the same objection fires
+twice** — the second time "with no new speech" (the pause was just Deepgram finalizing). The SDK's
+`UserInputTranscribedEvent` has no segment id to key on (transcript/is_final/speaker_id only).
+**Right:** Two layers. (1) Compare continuation on **normalized** text (lowercase, alphanumerics
+only) so revisions of the same utterance don't re-arm. (2) A **re-fire cooldown** (time floor,
+injectable clock for tests) catches what normalization can't (digit rewrites), and doubles as the
+"don't object over the judge" guard — re-arming additionally gated on the inline ruling completing
+(`hold()`/`release_hold()`), not just the timer. General rule: anything keyed on interim STT text
+must survive the final's rewrite; test with a revised-final case, not just growing fragments.

@@ -127,6 +127,15 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         api_key=config.ELEVENLABS_API_KEY,
     )
 
+    # The Judge speaks with a DISTINCT voice (like a real courtroom — tellable apart by ear). One
+    # AgentSession has one TTS, so judge lines are synthesized on this second instance and played
+    # through session.say(audio=...) rather than the session's own (Opposing Counsel) voice.
+    judge_tts = elevenlabs.TTS(
+        model=config.ELEVENLABS_MODEL,
+        voice_id=config.JUDGE_VOICE_ID,
+        api_key=config.ELEVENLABS_API_KEY,
+    )
+
     session = AgentSession(
         # Silero VAD needs no API key. STT/TTS keys are passed EXPLICITLY from our own config
         # (config.py) rather than relying on each plugin's implicit env-var lookup — ElevenLabs
@@ -165,20 +174,72 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             json.dumps(event).encode("utf-8"), reliable=True, topic="objection"
         )
 
+    async def _judge_say(text: str) -> None:
+        # Speak as the Judge: synthesize on the judge's distinct voice and play it through the
+        # session's speech queue (queued behind any in-flight OC line, so ordering is natural).
+        # Not interruptible — you don't talk over the judge, and the line is 1-2s.
+        async def frames():
+            async for synthesized in judge_tts.synthesize(text):
+                yield synthesized.frame
+
+        handle = session.say(text, audio=frames(), allow_interruptions=False)
+        await handle
+
+    async def judge_rule(objection, fragment: str) -> None:
+        # Inline ruling (§6.5): fast-model call → apply to the ledger IMMEDIATELY → judge speaks
+        # "Sustained/Overruled — <reason>" right after OC's objection line. Fail-safe: on any
+        # error/timeout the judge stays SILENT and the objection stays PENDING — the end-of-session
+        # assessment rules it (never fabricate a penalty). The classifier is on hold() while this
+        # runs (voice_interrupt), so no new objection can fire over the judge; the timeout below
+        # bounds how long that hold can last if the model call hangs.
+        try:
+            ruling, reason = await asyncio.wait_for(
+                asyncio.to_thread(judge.quick_ruling, state, objection, fragment), timeout=10.0
+            )
+        except Exception:
+            logger.warning("inline ruling unavailable — objection stays pending")
+            return
+        try:
+            state.rule_on_objection(objection, ruling)
+        except ValueError:
+            return  # already resolved (e.g. session finalized concurrently) — don't speak stale
+        spoken = f"{ruling.capitalize()}. {reason}" if reason else f"{ruling.capitalize()}."
+        state.add_turn("judge", spoken)
+        try:
+            await _judge_say(spoken)
+        except Exception:
+            logger.exception("inline ruling could not be spoken (ledger already updated)")
+        try:
+            event = {"type": "ruling", "ruling": ruling, "reason": reason}
+            await ctx.room.local_participant.publish_data(
+                json.dumps(event).encode("utf-8"), reliable=True, topic="objection"
+            )
+        except Exception:
+            pass
+
     @session.on("user_input_transcribed")
     def _on_user_transcript(event) -> None:
         # Every interim/final fragment feeds the objection classifier; a fire barges in via the
-        # tested voice_interrupt glue (the classifier debounces so a growing fragment won't refire).
-        # The attorney's *turn* is recorded separately in the agent's on_user_turn_completed hook
-        # (one coherent turn), so we do NOT add per-fragment turns here.
-        coro = handle_interim(session, classifier, event.transcript, publish_objection)
+        # tested voice_interrupt glue (debounce + cooldown ensure one objection per utterance,
+        # and the ruling hold keeps OC from objecting over the judge). The attorney's *turn* is
+        # recorded separately in the agent's on_user_turn_completed hook (one coherent turn),
+        # so we do NOT add per-fragment turns here.
+        coro = handle_interim(session, classifier, event.transcript, publish_objection, judge_rule)
         asyncio.create_task(coro)
 
-    async def _persist_at_end() -> None:
-        # Session end: the judge assesses the whole session in one call — rules on every pending
-        # objection (→ score + weaknesses), extracts the facts the attorney established
-        # (→ strengths), and gives a closing ruling — then ONE batch write persists the transcript +
-        # scorecard via the scoped agent token. Skip entirely if the attorney never spoke.
+    finalized = {"done": False}
+
+    async def _finalize_session(speak: bool) -> None:
+        # End of session, run exactly once: the judge assesses the whole session in one call — rules
+        # every pending objection (→ score + weaknesses), extracts the facts the attorney
+        # established (→ strengths), gives a closing ruling. If `speak` (the attorney is still in
+        # the room, having clicked "End session"), the judge DELIVERS it aloud. Then a batch
+        # write persists the transcript + scorecard, and we signal the frontend that it can show the
+        # scorecard. Idempotent so the end-session event, participant-disconnect, and shutdown
+        # backstops can't double-run the (expensive) judge call.
+        if finalized["done"]:
+            return
+        finalized["done"] = True
         if not any(turn.speaker == "attorney" for turn in state.transcript):
             return
         assessment = await asyncio.to_thread(judge.assess_session, state)
@@ -191,6 +252,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             state.add_established_fact(fact)
         ruling = assessment["closing_ruling"]
         state.add_turn("judge", ruling)
+        if speak:
+            try:
+                await _judge_say(ruling)  # the judge delivers it aloud, in the judge's voice
+            except Exception:
+                logger.exception("judge closing ruling could not be spoken")
         payload = scorecard_builder.build_session_end_payload(state, ruling)
         turn_count = len(state.transcript)
         try:
@@ -198,9 +264,37 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             await asyncio.to_thread(backend_client.write_scorecard, session_id, payload)
             logger.info("Persisted session %s (scorecard + %d turns)", session_id, turn_count)
         except Exception:
-            logger.exception("Failed to persist session %s at shutdown", session_id)
+            logger.exception("Failed to persist session %s", session_id)
+        # Tell the frontend the ruling is delivered + the scorecard is written, so it can navigate.
+        try:
+            done = json.dumps({"type": "end_complete"}).encode("utf-8")
+            await ctx.room.local_participant.publish_data(done, reliable=True, topic="control")
+        except Exception:
+            pass
 
-    ctx.add_shutdown_callback(_persist_at_end)
+    @ctx.room.on("data_received")
+    def _on_data(packet) -> None:
+        # The attorney clicked "End session": deliver the judge's spoken ruling + persist, then the
+        # frontend waits for our end_complete before navigating to the scorecard.
+        if packet.topic != "control":
+            return
+        try:
+            message = json.loads(packet.data.decode("utf-8"))
+        except Exception:
+            return
+        if message.get("type") == "end_session":
+            asyncio.create_task(_finalize_session(speak=True))
+
+    @ctx.room.on("participant_disconnected")
+    def _on_participant_left(participant) -> None:
+        # Backstop: the attorney closed the tab without clicking End — finalize now (no one to hear
+        # the ruling) instead of waiting for the room's empty-timeout, so the scorecard still lands.
+        asyncio.create_task(_finalize_session(speak=False))
+
+    async def _on_shutdown() -> None:
+        await _finalize_session(speak=False)  # last-resort backstop
+
+    ctx.add_shutdown_callback(_on_shutdown)
 
     await session.start(agent=OpposingCounselAgent(state), room=ctx.room)
 

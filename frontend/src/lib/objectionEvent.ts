@@ -1,12 +1,14 @@
 /**
  * File: src/lib/objectionEvent.ts
- * Purpose: Pure helpers for the objection data-channel event (Gap 3) — parse the JSON the agent
- *   publishes ({type:"objection", objection_type, reason, timestamp}) and map it to a Transcript so
- *   it renders through the EXISTING TranscriptLine with the same `wasInterruption` treatment (no new
- *   component). Kept pure/livekit-free so it is unit-tested; the hook wires it to RoomEvent.DataReceived.
+ * Purpose: Pure helpers for the agent's data-channel events — parse the JSON the agent publishes
+ *   ({type:"objection", …} at the barge-in moment, {type:"ruling", …} when the judge rules inline)
+ *   and map each to a Transcript so it renders through the EXISTING TranscriptLine (objections get
+ *   the `wasInterruption` treatment; rulings render as judge lines — no new component). Kept
+ *   pure/livekit-free so it is unit-tested; the hook wires it to RoomEvent.DataReceived.
  * Depends on: lib/types.ts
- * Related: hooks/useSparringRoom.ts, components/TranscriptLine.tsx, agents/voice_interrupt.py
- * Security notes: Operates on live objection text (work product) for in-session render only.
+ * Related: hooks/useSparringRoom.ts, components/TranscriptLine.tsx, agents/voice_interrupt.py,
+ *   agents/main.py (judge_rule publishes the ruling event)
+ * Security notes: Operates on live objection/ruling text (work product) for in-session render only.
  */
 
 import type { Transcript } from '@/lib/types';
@@ -46,5 +48,40 @@ export function objectionEventToLine(event: ObjectionEvent, sessionId: string): 
     content,
     wasInterruption: true,
     spokenAt: new Date(event.timestamp).toISOString(),
+  };
+}
+
+export interface RulingEvent {
+  ruling: 'sustained' | 'overruled';
+  reason: string;
+}
+
+/** Parse a data-channel payload; returns null for anything that isn't a well-formed ruling event. */
+export function parseRulingData(text: string): RulingEvent | null {
+  try {
+    const data = JSON.parse(text);
+    if (data?.type !== 'ruling' || (data.ruling !== 'sustained' && data.ruling !== 'overruled')) {
+      return null;
+    }
+    return {
+      ruling: data.ruling,
+      reason: typeof data.reason === 'string' ? data.reason : '',
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Map an inline ruling onto a Transcript so TranscriptLine renders it as a judge line. */
+export function rulingEventToLine(event: RulingEvent, sessionId: string): Transcript {
+  const label = event.ruling.charAt(0).toUpperCase() + event.ruling.slice(1);
+  const content = event.reason ? `${label}. ${event.reason}` : `${label}.`;
+  return {
+    id: `ruling-${Date.now()}-${crypto.randomUUID()}`,
+    sessionId,
+    speaker: 'judge',
+    content,
+    wasInterruption: false,
+    spokenAt: new Date().toISOString(),
   };
 }

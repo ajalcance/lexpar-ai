@@ -84,6 +84,10 @@ ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5")  # low-lat
 # is a legacy/library voice: free-tier API calls to it fail 402 "paid_plan_required" at synthesis
 # time even with a valid key. Verify a voice with a real synthesis call, not just key validity.
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb")
+# The Judge speaks with a DISTINCT voice from Opposing Counsel — a user should tell who's speaking
+# by voice alone, like a real courtroom. Default: "Daniel" (premade, free-tier-verified alongside
+# George/Sarah).
+JUDGE_VOICE_ID = os.getenv("JUDGE_VOICE_ID", "onwK4e9ZLuTAKqWW03F9")
 
 # Backend persistence (Gap 4): the worker completes the session + writes the scorecard/transcript
 # at session end, authenticating with the scoped agent service token (NOT a user login).

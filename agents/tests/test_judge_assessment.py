@@ -118,3 +118,60 @@ def test_assess_session_fails_safe_on_error(monkeypatch):
     result = judge_mod.assess_session(_seeded_state())
     assert result["rulings"] == []
     assert result["closing_ruling"] == judge_mod._FALLBACK_CLOSING
+
+
+# --- quick_ruling (inline judge ruling, model call monkeypatched) -----------------------------
+
+def _pending_objection(state: SessionState):
+    return state.pending_objections()[0]
+
+
+def test_quick_ruling_messages_include_objection_and_fragment():
+    state = _seeded_state()
+    messages = judge_mod._build_quick_ruling_messages(
+        state, _pending_objection(state), "He told me it was red."
+    )
+    user = messages[-1]["content"]
+    assert "hearsay" in user
+    assert "He told me it was red." in user
+    assert "SESSION RECORD:" in user
+
+
+def test_parse_quick_ruling_valid():
+    ruling, reason = judge_mod._parse_quick_ruling(
+        '{"ruling": "Sustained", "reason": "classic hearsay"}'
+    )
+    assert ruling == "sustained"
+    assert reason == "classic hearsay"
+
+
+def test_parse_quick_ruling_rejects_unknown_ruling():
+    with pytest.raises(ValueError):
+        judge_mod._parse_quick_ruling('{"ruling": "maybe", "reason": "unsure"}')
+
+
+def test_parse_quick_ruling_rejects_non_json():
+    with pytest.raises(ValueError):
+        judge_mod._parse_quick_ruling("the model rambled")
+
+
+def test_quick_ruling_returns_parsed_pair(monkeypatch):
+    monkeypatch.setattr(
+        judge_mod, "chat", lambda *a, **k: '{"ruling": "overruled", "reason": "goes to weight"}'
+    )
+    state = _seeded_state()
+    ruling, reason = judge_mod.quick_ruling(state, _pending_objection(state), "fragment")
+    assert (ruling, reason) == ("overruled", "goes to weight")
+
+
+def test_quick_ruling_raises_so_caller_fails_safe(monkeypatch):
+    # quick_ruling propagates errors; the caller (main.judge_rule) stays silent and leaves the
+    # objection PENDING for the end-of-session assessment — never a fabricated spoken ruling.
+    def boom(*a, **k):
+        raise RuntimeError("timeout")
+
+    monkeypatch.setattr(judge_mod, "chat", boom)
+    state = _seeded_state()
+    with pytest.raises(RuntimeError):
+        judge_mod.quick_ruling(state, _pending_objection(state), "fragment")
+    assert _pending_objection(state).ruling == "pending"  # ledger untouched on failure

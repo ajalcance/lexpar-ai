@@ -16,7 +16,12 @@ import { ConnectionState, RoomEvent, Track } from 'livekit-client';
 import type { Participant, RemoteTrack, Room } from 'livekit-client';
 import * as api from '@/lib/api';
 import { connectToRoom, disconnectFromRoom } from '@/lib/livekit';
-import { objectionEventToLine, parseObjectionData } from '@/lib/objectionEvent';
+import {
+  objectionEventToLine,
+  parseObjectionData,
+  parseRulingData,
+  rulingEventToLine,
+} from '@/lib/objectionEvent';
 import type { Transcript } from '@/lib/types';
 
 export type SparringMode = 'connecting' | 'live' | 'fallback';
@@ -28,6 +33,10 @@ const AGENT_JOIN_TIMEOUT_MS = 5000;
 
 /** Force a fallback if the connection neither connects nor fails within this window (stalled ICE). */
 const CONNECT_TIMEOUT_MS = 8000;
+
+/** Max wait for the agent to deliver the judge's ruling + write the scorecard before navigating
+ *  anyway (covers the judge LLM call + spoken ruling + persistence, or a missing agent). */
+const END_SESSION_TIMEOUT_MS = 30000;
 
 function mapConnectionState(state: ConnectionState): ConnStatus {
   switch (state) {
@@ -52,6 +61,9 @@ export function useSparringRoom(sessionId: string) {
   const [audioBlocked, setAudioBlocked] = useState(false);
   const [objections, setObjections] = useState<Transcript[]>([]);
   const roomRef = useRef<Room | null>(null);
+  // Resolves the endSession() promise when the agent's `end_complete` arrives (ruling delivered +
+  // scorecard written), so the page navigates only after the judge has spoken.
+  const endResolverRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     setObjections([]); // clear any prior session's objection events
@@ -133,11 +145,29 @@ export function useSparringRoom(sessionId: string) {
           if (!cancelled) setAudioBlocked(!room.canPlaybackAudio);
         });
         room.on(RoomEvent.DataReceived, (payload) => {
-          // Gap 3: an objection event from the agent → render it via the existing TranscriptLine.
           if (cancelled) return;
-          const event = parseObjectionData(new TextDecoder().decode(payload));
+          const text = new TextDecoder().decode(payload);
+          // Gap 3: an objection event from the agent → render it via the existing TranscriptLine.
+          const event = parseObjectionData(text);
           if (event) {
             setObjections((prev) => [...prev, objectionEventToLine(event, sessionId)]);
+            return;
+          }
+          // Inline judge ruling ("Sustained/Overruled — <reason>") → render as a judge line.
+          const ruling = parseRulingData(text);
+          if (ruling) {
+            setObjections((prev) => [...prev, rulingEventToLine(ruling, sessionId)]);
+            return;
+          }
+          // Control channel: the agent finished delivering the judge's ruling + wrote the scorecard.
+          try {
+            const message = JSON.parse(text) as { type?: string };
+            if (message?.type === 'end_complete' && endResolverRef.current) {
+              endResolverRef.current();
+              endResolverRef.current = null;
+            }
+          } catch {
+            /* not a control message */
           }
         });
 
@@ -227,6 +257,28 @@ export function useSparringRoom(sessionId: string) {
     }
   }, []);
 
+  // Ask the agent to wrap up: it delivers the judge's spoken ruling and writes the scorecard, then
+  // replies `end_complete`. Resolves once that arrives (so the caller navigates only after the
+  // ruling is heard) or after a timeout, so a missing/slow agent never hangs the page.
+  const endSession = useCallback(async () => {
+    const room = roomRef.current;
+    if (!room || room.state !== ConnectionState.Connected) return;
+    try {
+      const payload = new TextEncoder().encode(JSON.stringify({ type: 'end_session' }));
+      await room.localParticipant.publishData(payload, { reliable: true, topic: 'control' });
+    } catch (err) {
+      console.warn('[SparringRoom] end-session signal failed', err);
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      endResolverRef.current = resolve;
+      setTimeout(() => {
+        if (endResolverRef.current === resolve) endResolverRef.current = null;
+        resolve();
+      }, END_SESSION_TIMEOUT_MS);
+    });
+  }, []);
+
   return {
     mode,
     connectionState,
@@ -236,6 +288,7 @@ export function useSparringRoom(sessionId: string) {
     audioBlocked,
     toggleMute,
     enableAudio,
+    endSession,
     objections,
   };
 }

@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
 from dataclasses import dataclass
 
 from llm_router import build_endpoint, chat, objection_config
@@ -240,11 +241,34 @@ class DecisionRecord:
     decision: Decision
 
 
+def _normalize(text: str) -> str:
+    """Lowercase, strip everything but alphanumerics, collapse whitespace. STT finals rewrite
+    casing/punctuation relative to interims of the SAME utterance ("i i my client told me" →
+    "I, I, my client told me…"), so continuation must be judged on normalized content, not raw
+    strings — an exact-prefix check re-arms the debounce on the revised final and double-fires."""
+    return " ".join(re.sub(r"[^a-z0-9\s]", "", text.lower()).split())
+
+
+# Default seconds after a fire before the classifier may fire again (a FLOOR — re-arming is also
+# gated on any in-flight inline ruling completing; see hold()/release_hold()).
+DEFAULT_REFIRE_COOLDOWN = 5.0
+
+
 class ObjectionClassifier:
     """
     Stateful wrapper that debounces a growing utterance: once it has objected on an utterance, it
     will not object again until a new utterance begins (a fragment that no longer extends the
-    previous one). `decider` is injectable for deterministic testing.
+    previous one, compared on NORMALIZED text — see `_normalize`). `decider` is injectable for
+    deterministic testing.
+
+    Two additional guards against double-firing (and against objecting over the judge):
+    - **Re-fire cooldown (time floor):** after any fire, no further fire for `refire_cooldown`
+      seconds (injectable `clock` for deterministic tests). Covers transcript rewrites that
+      normalization can't (e.g. "March third" → "March 3").
+    - **Ruling hold:** while an inline judge ruling is in flight, `hold()` keeps the classifier
+      suppressed regardless of elapsed time; `release_hold()` (always called, on success, failure,
+      or timeout) lifts it. Re-arming requires BOTH the floor elapsed AND the hold released, so a
+      slow ruling call (network jitter) can't be objected over.
 
     With `record=True` it keeps a review log so gate-rejected fragments can be inspected separately
     from LLM no-fire decisions (see `gate_rejected()` / `llm_no_fire()`). Off by default because the
@@ -252,14 +276,20 @@ class ObjectionClassifier:
 
     Thread-safe: the voice worker feeds interim transcripts through `consider()` via
     `asyncio.to_thread`, so several fragments can land in parallel threads. A lock serializes the
-    debounce state (`_prev` / `_handled` / `records`) — the decision is inherently sequential (we
-    never want two overlapping classifications racing on the same growing utterance), so serializing
-    it is correct, not merely defensive. The lock is held across the decider's (blocking) call,
-    which naturally queues later interims behind the in-flight one; the debounce then short-circuits
-    them.
+    debounce state — the decision is inherently sequential (we never want two overlapping
+    classifications racing on the same growing utterance), so serializing it is correct, not merely
+    defensive. The lock is held across the decider's (blocking) call, which naturally queues later
+    interims behind the in-flight one; the debounce then short-circuits them.
     """
 
-    def __init__(self, state: SessionState, decider=classify_fragment, record: bool = False):
+    def __init__(
+        self,
+        state: SessionState,
+        decider=classify_fragment,
+        record: bool = False,
+        refire_cooldown: float = DEFAULT_REFIRE_COOLDOWN,
+        clock=time.monotonic,
+    ):
         self.state = state
         self._decide = decider
         self._prev = ""
@@ -267,29 +297,58 @@ class ObjectionClassifier:
         self._record = record
         self.records: list[DecisionRecord] = []
         self._lock = threading.Lock()
+        self._refire_cooldown = refire_cooldown
+        self._clock = clock
+        self._last_fire_at: float | None = None
+        self._held = False
+
+    def hold(self) -> None:
+        """Suppress further fires until release_hold() — an inline judge ruling is in flight."""
+        with self._lock:
+            self._held = True
+
+    def release_hold(self) -> None:
+        """Lift the ruling hold (call on ruling success, failure, OR timeout — always)."""
+        with self._lock:
+            self._held = False
+
+    def _suppressed_reason(self) -> str | None:
+        """Why a fire must be suppressed right now (cooldown floor / ruling hold), or None."""
+        if self._held:
+            return "ruling in progress — no objections over the judge"
+        if self._last_fire_at is not None:
+            elapsed = self._clock() - self._last_fire_at
+            if elapsed < self._refire_cooldown:
+                return "re-fire cooldown after the last objection"
+        return None
 
     def consider(self, fragment: str) -> Decision:
         with self._lock:
             frag = fragment.strip()
             if not self._is_continuation(self._prev, frag):
-                self._handled = False  # a new utterance re-arms the classifier
+                self._handled = False  # a genuinely new utterance re-arms the classifier
             self._prev = frag
             if self._handled:
                 decision = Decision(
                     False, None, "already objected on this utterance", outcome=DEBOUNCED
                 )
+            elif (reason := self._suppressed_reason()) is not None:
+                decision = Decision(False, None, reason, outcome=DEBOUNCED)
             else:
                 decision = self._decide(frag, self.state)
                 if decision.fire:
                     self._handled = True
+                    self._last_fire_at = self._clock()
             if self._record:
                 self.records.append(DecisionRecord(fragment=frag, decision=decision))
             return decision
 
     @staticmethod
     def _is_continuation(prev: str, current: str) -> bool:
-        """True if `current` is the same utterance still growing (extends `prev`)."""
-        return bool(prev) and current.startswith(prev)
+        """True if `current` is the same utterance still growing or a REVISION of it — compared on
+        normalized text, because STT finals are not prefix-stable with their interims."""
+        norm_prev = _normalize(prev)
+        return bool(norm_prev) and _normalize(current).startswith(norm_prev)
 
     def gate_rejected(self) -> list[DecisionRecord]:
         """Fragments the gate filtered out before any LLM judgment — review the recall bias here."""

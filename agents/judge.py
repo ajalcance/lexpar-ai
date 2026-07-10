@@ -20,8 +20,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from llm_router import build_endpoint, chat, judge_config
-from session_state import SessionState
+from llm_router import build_endpoint, chat, judge_config, objection_config
+from session_state import Objection, SessionState
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "judge.md"
 
@@ -32,14 +32,25 @@ _FALLBACK_CLOSING = "The court has considered the arguments. That concludes this
 
 _ASSESSMENT_INSTRUCTION = (
     "Review the full session below. Then, as the presiding judge:\n"
-    "1. For EACH pending objection in the SESSION RECORD, in the order listed, rule 'sustained' or "
-    "'overruled' based on what the transcript shows.\n"
+    "1. For EACH objection still marked [pending] in the SESSION RECORD, in the order listed, rule "
+    "'sustained' or 'overruled' based on what the transcript shows. Objections already marked "
+    "[sustained] or [overruled] were ruled from the bench DURING the session — do NOT re-rule "
+    "them; treat those rulings as final.\n"
     "2. List 2-5 key facts the attorney genuinely established on the record (supported by the "
     "transcript and not undercut by a sustained objection). Omit if none.\n"
-    "3. Give a one- to two-sentence closing ruling from the bench.\n"
+    "3. Give a one- to two-sentence closing ruling from the bench that reflects the session as a "
+    "whole, including a brief acknowledgment of the objections already ruled during the session.\n"
     'Respond ONLY with JSON: {"rulings": ["sustained"|"overruled", ...], "established_facts": '
     '["<fact>", ...], "closing_ruling": "<what you say aloud>"}. The rulings array must have '
-    "exactly one entry per pending objection, in the same order."
+    "exactly one entry per [pending] objection, in the same order (empty array if none are "
+    "pending)."
+)
+
+_QUICK_RULING_SYSTEM = (
+    "You are the presiding judge in a courtroom rehearsal. Opposing Counsel just objected to the "
+    "attorney's in-progress statement. Rule IMMEDIATELY, as from the bench: sustained or "
+    "overruled, with one short reason (a few words, spoken aloud). Respond ONLY with JSON "
+    '{"ruling": "sustained"|"overruled", "reason": "<a few words>"}.'
 )
 
 _SPEAKER_LABELS = {
@@ -137,6 +148,60 @@ def _parse_assessment(content: str) -> dict:
     )
     closing = str(data.get("closing_ruling", "")).strip()
     return {"rulings": rulings, "established_facts": facts, "closing_ruling": closing}
+
+
+def _build_quick_ruling_messages(
+    state: SessionState, objection: Objection, fragment: str
+) -> list[dict[str, str]]:
+    """Assemble the inline-ruling messages (minimal — this sits in the live path). Pure."""
+    user = (
+        f"SESSION RECORD:\n{state.snapshot()}\n\n"
+        f'ATTORNEY (statement objected to): "{fragment}"\n'
+        f"OBJECTION: {objection.grounds} (raised by {objection.raised_by})"
+    )
+    return [
+        {"role": "system", "content": _QUICK_RULING_SYSTEM},
+        {"role": "user", "content": user},
+    ]
+
+
+def _parse_quick_ruling(content: str) -> tuple[str, str]:
+    """Parse {"ruling", "reason"} → (ruling, reason). Pure — raises on non-JSON or an unknown
+    ruling value (the caller fails safe: silent, objection stays pending)."""
+    start = content.find("{")
+    end = content.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        raise ValueError("judge did not return a JSON object")
+    data = json.loads(content[start : end + 1])
+    ruling = str(data.get("ruling", "")).strip().lower()
+    if ruling not in _VALID_RULINGS:
+        raise ValueError(f"unknown ruling {ruling!r}")
+    reason = str(data.get("reason", "")).strip()
+    return ruling, reason
+
+
+def quick_ruling(state: SessionState, objection: Objection, fragment: str) -> tuple[str, str]:
+    """
+    Inline ruling for a just-fired objection — the judge's real-time "Sustained/Overruled" (§6.5).
+    Uses the FAST model (the objection classifier's config, gpt-oss class) because this sits
+    directly in the live conversational path — same latency philosophy as the classifier and
+    verification, NOT the reasoning model. Returns (ruling, reason). Raises on any error or
+    unparseable output — the caller stays silent and leaves the objection pending for the
+    end-of-session assessment (never fabricate a ruling).
+    """
+    endpoint = build_endpoint(objection_config())
+    content = chat(
+        endpoint,
+        _build_quick_ruling_messages(state, objection, fragment),
+        temperature=0.0,
+        # gpt-oss reasons before emitting; 512 was intermittently EMPTY for this prompt (the
+        # session record makes it longer than the classifier's), so give it the same headroom
+        # rule as assess_session: the empty-content floor scales with prompt/task complexity
+        # (docs/LESSONS.md). A larger cap costs nothing when unused.
+        max_tokens=1024,
+        response_format={"type": "json_object"},
+    )
+    return _parse_quick_ruling(content)
 
 
 def assess_session(state: SessionState) -> dict:
