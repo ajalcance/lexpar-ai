@@ -18,6 +18,7 @@ import * as api from '@/lib/api';
 import { connectToRoom, disconnectFromRoom } from '@/lib/livekit';
 import {
   objectionEventToLine,
+  parseJudgeSpeaking,
   parseObjectionData,
   parseRulingData,
   rulingEventToLine,
@@ -59,23 +60,29 @@ export function useSparringRoom(sessionId: string) {
   const [isMuted, setIsMuted] = useState(false);
   const [micBlocked, setMicBlocked] = useState(false);
   const [audioBlocked, setAudioBlocked] = useState(false);
+  const [judgeSpeaking, setJudgeSpeaking] = useState(false);
   const [objections, setObjections] = useState<Transcript[]>([]);
   const roomRef = useRef<Room | null>(null);
   // Resolves the endSession() promise when the agent's `end_complete` arrives (ruling delivered +
   // scorecard written), so the page navigates only after the judge has spoken.
   const endResolverRef = useRef<(() => void) | null>(null);
+  // Dedup keys for data-channel events, shared across effect re-runs (a ref, not per-effect state)
+  // so a double-registered listener / reconnect can't double-render one event. Reset per session.
+  const seenRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     setObjections([]); // clear any prior session's objection events
+    setJudgeSpeaking(false);
     if (!sessionId) {
       return;
     }
-    // Dedup keys for data-channel events (objection/ruling), reset per session. markSeen returns
-    // true the first time a key is seen (render it) and false thereafter (drop the duplicate).
-    const seen = new Set<string>();
+    // Dedup keys for data-channel events (objection/ruling); the set is a ref shared across effect
+    // re-runs, cleared here per session. markSeen returns true the first time a key is seen (render
+    // it) and false thereafter (drop the duplicate).
+    seenRef.current = new Set<string>();
     const markSeen = (key: string): boolean => {
-      if (seen.has(key)) return false;
-      seen.add(key);
+      if (seenRef.current.has(key)) return false;
+      seenRef.current.add(key);
       return true;
     };
     let cancelled = false;
@@ -155,6 +162,13 @@ export function useSparringRoom(sessionId: string) {
         room.on(RoomEvent.DataReceived, (payload) => {
           if (cancelled) return;
           const text = new TextDecoder().decode(payload);
+          // Judge-speaking boundary: the judge shares the OC agent participant, so this is how the
+          // active-speaker label knows the current audio is the Judge, not Opposing Counsel.
+          const speaking = parseJudgeSpeaking(text);
+          if (speaking !== null) {
+            setJudgeSpeaking(speaking);
+            return;
+          }
           // Gap 3: an objection event from the agent → render it via the existing TranscriptLine.
           const event = parseObjectionData(text);
           if (event) {
@@ -297,6 +311,7 @@ export function useSparringRoom(sessionId: string) {
     mode,
     connectionState,
     activeSpeaker,
+    judgeSpeaking,
     isMuted,
     micBlocked,
     audioBlocked,

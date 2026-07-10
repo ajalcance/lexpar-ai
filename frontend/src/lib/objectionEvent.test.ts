@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   objectionEventToLine,
+  parseJudgeSpeaking,
   parseObjectionData,
   parseRulingData,
   rulingEventToLine,
@@ -79,5 +80,24 @@ describe('rulingEventToLine', () => {
   it('omits the reason when empty', () => {
     const line = rulingEventToLine({ ruling: 'sustained', reason: '', timestamp: 1710 }, 's');
     expect(line.content).toBe('Sustained.');
+  });
+});
+
+describe('parseJudgeSpeaking', () => {
+  it('parses a judge_speaking boundary', () => {
+    expect(parseJudgeSpeaking('{"type": "judge_speaking", "speaking": true}')).toBe(true);
+    expect(parseJudgeSpeaking('{"type": "judge_speaking", "speaking": false}')).toBe(false);
+  });
+
+  it('returns null for other events / malformed', () => {
+    expect(parseJudgeSpeaking('{"type": "ruling", "ruling": "sustained"}')).toBeNull();
+    expect(parseJudgeSpeaking('{"type": "judge_speaking"}')).toBeNull(); // no boolean
+    expect(parseJudgeSpeaking('not json')).toBeNull();
+  });
+
+  it('is not mistaken for an objection or ruling line', () => {
+    const payload = '{"type": "judge_speaking", "speaking": true}';
+    expect(parseObjectionData(payload)).toBeNull();
+    expect(parseRulingData(payload)).toBeNull();
   });
 });

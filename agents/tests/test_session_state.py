@@ -69,6 +69,25 @@ def test_double_ruling_raises():
         state.rule_on_objection(objection, "overruled")
 
 
+def test_inline_ruled_objection_is_not_re_ruled_at_session_end():
+    # The "two code paths" the double-Sustained investigation flagged: an objection ruled INLINE
+    # (quick_ruling) must not be ruled again by the end-of-session assessment. The ledger guards
+    # this — a resolved objection drops out of pending_objections(), which is what assess_session
+    # iterates, and a re-rule attempt raises. So it is ruled exactly once.
+    state = SessionState()
+    inline = state.record_objection("leading", "opposing_counsel")
+    still_open = state.record_objection("speculation", "opposing_counsel")
+    state.rule_on_objection(inline, "sustained")  # inline ruling during the session
+
+    # assess_session only ever iterates the still-pending objections:
+    assert state.pending_objections() == [still_open]
+    assert inline not in state.pending_objections()
+    # and the inline one can't be re-ruled (whichever path would try, it raises → callers catch):
+    with pytest.raises(ValueError):
+        state.rule_on_objection(inline, "overruled")
+    assert inline.ruling == "sustained"  # unchanged
+
+
 def test_ruling_on_foreign_objection_raises():
     state = SessionState()
     foreign = Objection(grounds="hearsay", raised_by="opposing_counsel")

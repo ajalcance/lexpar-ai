@@ -74,6 +74,14 @@ async def handle_interim(
             "opposing_counsel", objection_utterance(decision), was_interruption=True
         )
         await session.interrupt()
+        # Start the ruling NOW (concurrently) so quick_ruling generation OVERLAPS the canned line's
+        # playback instead of running after it — otherwise the "Sustained" landed ~2-3s late (canned
+        # playback + generation), after the attorney had resumed. The ruling's own say() enqueues
+        # after the canned line (the SDK serializes the speech queue), so order is preserved.
+        rule_task = None
+        if judge_rule is not None:
+            classifier.hold()
+            rule_task = asyncio.create_task(judge_rule(objection, transcript))
         await session.say(objection_utterance(decision), allow_interruptions=True)
         t_said = time.perf_counter()
         # Immediate-fire latency instrumentation (Issue 3): the gate/classify decision and the
@@ -90,10 +98,9 @@ async def handle_interim(
         )
         if publish is not None:
             await publish(decision)
-        if judge_rule is not None:
-            classifier.hold()
+        if rule_task is not None:
             try:
-                await judge_rule(objection, transcript)
+                await rule_task
             finally:
                 classifier.release_hold()
     return decision
