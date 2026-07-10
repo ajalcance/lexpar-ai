@@ -56,6 +56,7 @@ lexpar-ai/
 │   │   │   └── livekit_token.py  issues LiveKit room access tokens
 │   │   ├── models/               SQLAlchemy models (incl. §12/§13: court, court_rule, ruling_provenance)
 │   │   ├── services/             business logic (case/court knowledge, embeddings, storage, auth)
+│   │   ├── prompts/              prompt_loader.py + *.md (pleading summarizer) — backend twin of agents/prompts.py
 │   │   ├── db.py
 │   │   └── config.py             reads .env
 │   ├── requirements.txt
@@ -69,6 +70,8 @@ lexpar-ai/
 │   ├── case_knowledge.py         pleading retrieval (§12); court_knowledge.py = rules retrieval (§13)
 │   ├── citation_check.py         turn-scoped citation grounding check (§13)
 │   ├── llm_router.py             switches Fireworks <-> self-hosted vLLM per agent
+│   ├── prompts.py                prompt registry: render()/cache for EVERY LLM prompt (DEV §10)
+│   ├── prompts/                  all agent prompt text (personas + sub-task prompts), one *.md each
 │   ├── requirements.txt
 │   └── Dockerfile
 │
@@ -288,6 +291,15 @@ user JWT whose `role == 'admin'`), distinct from both the agent token and an ord
   verbatim — main.py only wires the audio layer around them. Heavy voice deps live in
   `agents/requirements-voice.txt` (out of CI). **The real audio path — room join, mic→STT, TTS
   playback, VAD, barge-in timing — is only verifiable in a live room with a microphone.**
+  - **Prompt registry (`prompts.py`).** Every LLM prompt in the worker — the two personas AND the
+    sub-task system/instruction prompts (objection classifier, quick ruling, session assessment,
+    consistency verifier) — is one `prompts/*.md` file loaded through `prompts.render(name, **vars)`
+    (process-lifetime cache, `warm_cache()` at startup; `string.Template`, not `str.format`, so
+    literal JSON braces survive). The pleading summarizer has a separate backend twin
+    (`backend/app/prompts/`). Constraint sections are immutable by convention — `render()` never
+    takes constraint text as a parameter — so a future prompt-customization layer structurally can't
+    reach a no-fabrication rule; the real enforcement stays code-side (`citation_check`). Full
+    convention + safety boundary: DEVELOPER_GUIDELINES §10.
   - `opposing_counsel.py` — cross-examines, objects, counter-argues.
   - `judge.py` — monitors the session, delivers rulings.
   - `objection_classifier.py` — **the custom, differentiating piece** (implemented). Watches the
