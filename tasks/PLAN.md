@@ -2219,3 +2219,11 @@ during a real barge-in, context resuming on the gesture, no echo/double-playback
 verified. **Flagged tradeoff:** `createAudioAnalyser` opens/closes an `AudioContext` per speaker
 swap; fine at courtroom pacing, but watch for Chrome's "too many AudioContexts" hint under rapid
 flipping (fallback = one persistent context with re-pointed nodes).
+
+**Follow-up (live pass, bars saturated):** first live session showed the equalizer bars pegged at
+full height whenever anyone spoke. Cause: `createAudioAnalyser`'s default dB window (`-100..-80`)
+maps onto 0..255, and speech playback sits well above `-80` dBFS, so every FFT bin clamped to 255 →
+all bars at 1.0. Fix: pass a wider `minDecibels: -85 / maxDecibels: -20` so voice varies visibly
+(the window is tunable for live feel — raise `maxDecibels` toward `-10` if bars still peg, lower
+toward `-30` if too timid). Offline suites unchanged (the hook test asserts via `objectContaining`);
+the varying-bars behavior itself still needs the live pass to confirm.

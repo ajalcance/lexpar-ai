@@ -97,7 +97,15 @@ export function useAudioVisualization({ track, enabled, audioReady, color }: Opt
     if (!track || !enabled) return;
     let handle: AnalyserHandle | null = null;
     try {
-      const a = createAudioAnalyser(track, { fftSize: 1024, smoothingTimeConstant: 0.8 });
+      // minDecibels/maxDecibels set the dynamic range mapped onto 0..255. The plugin default
+      // (-100..-80) is far too low — normal speech playback sits well above -80 dBFS, so every bin
+      // pegs at 255 and all bars max out. Widen it so voice varies visibly (tunable for live feel).
+      const a = createAudioAnalyser(track, {
+        fftSize: 1024,
+        smoothingTimeConstant: 0.8,
+        minDecibels: -85,
+        maxDecibels: -20,
+      });
       handle = {
         analyser: a.analyser,
         context: a.analyser.context as AudioContext,
