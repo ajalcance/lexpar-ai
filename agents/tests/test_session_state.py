@@ -106,3 +106,14 @@ def test_snapshot_contains_facts_and_objections():
     assert "Plaintiff reported a safety violation." in snapshot
     assert "hearsay" in snapshot
     assert "sustained" in snapshot
+
+
+def test_snapshot_includes_case_summary_when_present():
+    from session_state import SessionState
+
+    state = SessionState(case_facts="thin facts", case_summary="PARTIES: A v. B. CLAIM: breach.")
+    snap = state.snapshot()
+    assert "CASE SUMMARY (from the pleading):" in snap
+    assert "PARTIES: A v. B. CLAIM: breach." in snap
+    # absent when there is no pleading summary
+    assert "CASE SUMMARY" not in SessionState(case_facts="x").snapshot()

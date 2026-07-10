@@ -220,6 +220,23 @@ export function useSparringRoom(sessionId: string) {
         }
         if (!cancelled) setAudioBlocked(!room.canPlaybackAudio);
 
+        // Autoplay safety net (the no-audio bug): if the browser blocked playback (we arrived here
+        // by navigation, not a click), unblock it on the FIRST user interaction anywhere on the
+        // page — the one-time listener removes itself and clears the "enable audio" prompt. The
+        // explicit button remains as a visible fallback.
+        if (!room.canPlaybackAudio) {
+          const unblock = () => {
+            room
+              .startAudio()
+              .then(() => {
+                if (!cancelled) setAudioBlocked(!room.canPlaybackAudio);
+              })
+              .catch(() => undefined);
+          };
+          window.addEventListener('pointerdown', unblock, { once: true });
+          window.addEventListener('keydown', unblock, { once: true });
+        }
+
         // Live now if the agent is already here; otherwise show the mock after the timeout while
         // staying connected (a later ParticipantConnected still promotes us to live).
         if (room.remoteParticipants.size > 0) {

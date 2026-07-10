@@ -241,3 +241,14 @@ speaking — generation still overlaps playback, only the audio is gated. Coroll
 makes the judge non-interruptible by construction (`session.interrupt()` can't touch another
 participant's track), which here is a feature — but audit every interruption/ordering assumption
 when relocating audio.
+
+### [Backend/auth] passlib 1.7.4 is broken with bcrypt >= 5.0 — use bcrypt directly
+**Wrong:** Reached for `passlib[bcrypt]` (the usual choice) for password hashing. passlib 1.7.4's
+import-time backend self-test hashes a >72-byte probe string; bcrypt 5.0 now raises
+`ValueError: password cannot be longer than 72 bytes` on it, so EVERY hash/verify blew up
+(`_calc_checksum` → `bcrypt.hashpw`), and passing tests wouldn't have caught it — the failure is at
+runtime with the installed bcrypt.
+**Right:** Use the `bcrypt` library directly (`bcrypt.hashpw` / `bcrypt.checkpw`), truncating the
+password to 72 bytes yourself (bcrypt's inherent limit — standard practice). One thin
+`security_password.py` wrapper, no passlib. When a "convenience" wrapper lib pins an old release,
+check it against the actually-installed backend version before adopting it.

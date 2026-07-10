@@ -6,9 +6,18 @@ Related: app/db.py (Base), alembic/env.py, tests/conftest.py
 """
 
 from app.models.case import Case
+from app.models.case_document import CaseChunk, CaseDocument
 from app.models.scorecard import Scorecard
 from app.models.session import Session
 from app.models.transcript import Transcript
 from app.models.user import User
 
-__all__ = ["User", "Case", "Session", "Transcript", "Scorecard"]
+__all__ = [
+    "User",
+    "Case",
+    "CaseDocument",
+    "CaseChunk",
+    "Session",
+    "Transcript",
+    "Scorecard",
+]

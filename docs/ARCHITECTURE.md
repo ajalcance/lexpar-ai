@@ -761,3 +761,51 @@ update §7's "Model in use now" for Opposing Counsel, and check the §11 box.
       (see cost model discussion — fixed GPU cost only pays off at volume).
 - [ ] Billing integration (Stripe) — not needed until first paying customer.
 - [ ] Data retention / encryption policy written down explicitly before onboarding real attorneys.
+
+---
+
+## 12. Case Knowledge Base (pleading RAG) & real auth
+
+The agents reason far better with the actual filing than with a few sentences of `case_facts`.
+An attorney uploads the pleading (PDF) and every objection/reply/ruling is grounded in it.
+
+### Ingestion pipeline
+1. **Upload** — `POST /api/cases/{id}/documents` (multipart PDF, size-guarded) → object storage
+   (`storage_service.py`, key `cases/{case_id}/{filename}`), a `case_documents` row `status=pending`.
+2. **Ingest** (FastAPI `BackgroundTask`): extract text (`document_service.extract_pdf_text`, pypdf) →
+   chunk into overlapping windows → embed each chunk (`embedding_service`, Fireworks
+   `nomic-embed-text-v1.5`, 768-dim) → persist `case_chunks`. Also **one structured-summary LLM pass**
+   → `cases.case_summary` (parties, claims, key dates, disputed facts, stipulations). Status →
+   `ready` / `failed` (with the error — never silently stuck). Poll via `GET .../documents`.
+3. **Portable vector store:** embeddings are stored as **JSON arrays** and cosine-ranked in Python —
+   so the same models run on Postgres (prod) and SQLite (CI), no infra change; a pleading is ~100
+   chunks so brute-force top-k is <1 ms. **pgvector is the documented scale-up path** (many cases/ANN).
+
+### Hybrid retrieval into the reasoning
+- The **structured summary is always in every agent prompt** via `SessionState.snapshot()` — the
+  case's spine, at zero per-turn cost. Loaded at room join (`GET /sessions/{id}/context` now returns
+  `case_summary`).
+- **Retrieved passages** are added on demand: Opposing Counsel's reply calls
+  `GET /sessions/{id}/knowledge?q=<attorney turn>` (agent-token internal route → `case_knowledge.py`)
+  and injects the top passages (`opposing_counsel.build_messages(..., excerpts)`). Fail-open — a
+  retrieval failure just proceeds on the summary, never blocks the live loop.
+- *Why hybrid, not "dump 30 pages":* the full pleading blows the token budget and dilutes attention;
+  pure RAG misses the big picture. Summary (spine) + retrieval (receipts) grounds both the objection
+  ("that contradicts ¶2") and the ruling.
+
+### Real auth (production)
+`AUTH_MODE=production` replaces the `admin/admin` stub with real credentials: bcrypt hashes in
+`users.password_hash` (`security_password.py`, used directly — passlib 1.7.4 is incompatible with
+bcrypt ≥ 5.0, see LESSONS), `POST /api/auth/register` (self-service, hashed) + login-against-hash
+(email, case-insensitive). The stub path stays gated to `AUTH_MODE=stub` for local dev. This is the
+gate for real work product (§11): a real pleading is real attorney data.
+
+### New env vars (§9)
+`OBJECT_STORAGE_ACCESS_KEY` / `OBJECT_STORAGE_SECRET_KEY` / `OBJECT_STORAGE_REGION` (upload target),
+`EMBEDDING_ENDPOINT` / `EMBEDDING_MODEL` / `EMBEDDING_DIM` / `CASE_SUMMARY_MODEL` (RAG), `MAX_UPLOAD_MB`.
+
+### Follow-ups (production hardening)
+- Server-side encryption at rest on the pleading bucket; explicit retention policy (§11).
+- OCR for scanned/image pleadings (ingest currently marks them `failed` with a clear message).
+- pgvector when case volume justifies ANN over brute-force cosine.
+- Rate-limit uploads; virus/scan the file; per-firm tenancy on real auth.

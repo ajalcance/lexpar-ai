@@ -1671,3 +1671,67 @@ the minted token), real active-speaker attribution during judge audio, audio qua
 AudioSource path, and the no-overlap sequencing under real playout timing.
 
 **Result:** Built on `feat/judge-participant` (main untouched — the interim fix stays the safe baseline). **Agent:** `judge_participant.py` (token minted locally, identity `judge`, publish-only grants; own `rtc.Room` connection; lazy `AudioSource` sized from the first TTS frame; `capture_frame` + `wait_for_playout`; per-line lock; `aclose()` on shutdown) and `judge_voice.py` (livekit-free `JudgeVoice`: primary participant, fallback = the previous session-multiplexed path INCLUDING the `judge_speaking` label events — a LiveKit failure degrades to the old behavior, never a silent judge). `voice_interrupt` gained the `wait_for_clear` gate (asyncio.Event set when the canned say returns) because a second participant has NO shared speech queue — the implicit canned→ruling ordering had to become explicit. `config` exposes LIVEKIT_URL/KEY/SECRET. **Frontend:** pure `lib/activeSpeaker.mapActiveSpeaker` (judge identity → Judge > other remote → OC > local → you); hook uses it; badge shows 'Judge speaking' structurally (synthetic event retained only for the fallback path). **Verified against the real local LiveKit server:** the minted token was ACCEPTED, the judge participant CONNECTED (identity `judge`), and `say()` synthesized real ElevenLabs audio, captured frames into the published track, and awaited playout. (A standalone-script failure was traced to the missing job http-context, not the module — in-worker the same plugin path already works today.) **No SDK limitation found** — every mechanism the design relies on exists and worked. **Ruling-gap honesty:** unchanged as predicted — the ~1.3 s floor is quick_ruling generation (already overlapped with canned playback); this removes only queue-scheduling overhead (~0–0.2 s). The win is attribution + non-interruptibility by construction. **Tests: agents 119 offline + 9 live (new: judge_voice ×5, wait_for_clear gating ×1; FakeJudge signatures updated); frontend 23 (mapActiveSpeaker ×4); ruff + type-check clean.** **Docs:** ARCHITECTURE §6.5 (attribution-by-construction bullet), LESSONS (no-shared-queue sequencing). **⚠️ Needs a live room:** hearing judge audio via the raw AudioSource path (quality/timing), the active-speaker badge showing 'Judge speaking' from the real signal, no-overlap sequencing under real playout, and the fallback engaging cleanly if the participant is refused.
+
+---
+
+### Enterprise: Case Knowledge Base (pleading RAG) + real auth + no-audio — status: done
+
+Full three-phase build approved. Feasibility verified: **Fireworks embeddings work**
+(`nomic-ai/nomic-embed-text-v1.5`, 768-dim) — no new AI vendor; ElevenLabs synthesis is healthy
+(the no-audio is transport, not TTS); the `Case` model already has a `storage_path` placeholder.
+
+**Phase 0 — No-audio (transport, not the brain).** ElevenLabs returns audio fine; the objection/
+ruling *text* rides data events independent of audio, so a silent-but-visible agent is autoplay or
+fallback, not TTS. Fix: call `room.startAudio()` inside the "Start"/"Enable audio" user gesture so
+the browser can't block it, and make live-vs-fallback unmistakable in the UI.
+
+**Phase 2 — Real auth (the gate for real work product).** Replace `admin/admin`: bcrypt password
+hashing (passlib), `users.password_hash` populated, register + login-against-hash, a seeded admin
+for dev, `AUTH_MODE=production` path. Keeps the existing JWT/HTTPBearer verification. Done first
+because a real pleading is real work product (CLAUDE.md gate).
+
+**Phase 1 — Case Knowledge Base (the intelligence).** Upload a pleading → ground every agent
+decision in it.
+- **Storage:** `storage_service.py` (S3/MinIO via boto3) — `cases/{case_id}/{filename}`.
+- **Ingest** (FastAPI BackgroundTask, status pending→ready→failed): extract text (pypdf) → chunk
+  (≈800-token windows, overlap) → embed each chunk (Fireworks nomic) → persist.
+- **Portable vector store (decision):** embeddings stored as JSON on `case_chunks` and cosine ranked
+  in Python — **keeps the SQLite test path working** (a pgvector column can't run on SQLite) and
+  needs no infra change; one pleading ≈ 100 chunks so brute-force top-k is <1 ms. pgvector is the
+  documented scale-up path (many cases/ANN), not needed at this scale.
+- **Structured summary:** one LLM pass at ingest → parties, claims, key dates, stipulations,
+  disputed facts → `cases.case_summary`. **Hybrid context:** the summary is ALWAYS in the agent
+  prompts (the case's spine); retrieval adds the specific passages on demand (the receipts) — better
+  than dumping 30 pages (token blowout) or pure RAG (misses the big picture).
+- **Retrieval into all four reasoning paths:** OC reply, objection classifier, judge ruling,
+  verification — via an agent-authed `GET /api/sessions/{id}/knowledge?q=…` internal route +
+  `agents/case_knowledge.py`.
+- **Frontend:** attach-a-pleading upload on case create/detail + ingestion status.
+
+**Enterprise extras folded in (worth doing for production-ready):** structured request logging with
+the existing request-id; DB indexes on the new FKs; input-size/content-type guards on upload;
+ingestion failure surfaced (status) not swallowed; `# SENSITIVE` tags on document/chunk text; docs
+(ARCHITECTURE new §12 Case Knowledge + §5/§8/§9 updates).
+
+**Portability/test story:** all new models use portable types (JSON embeddings, `Uuid`, Python
+defaults) so CI stays on SQLite; embedding + LLM calls are behind injectable seams so services are
+unit-tested without network; live ingest/retrieval covered by `@pytest.mark.live`.
+
+**⚠️ Needs a live room / live keys:** the no-audio confirmation (autoplay), real end-to-end pleading
+ingest against MinIO, and retrieval quality in a live sparring session.
+
+**Result:** Built on `feat/case-knowledge-and-enterprise`. **Phase 0 (no-audio):** confirmed
+ElevenLabs healthy (audio synthesizes) → the silence is autoplay/transport; hook now unblocks audio
+on the FIRST user interaction anywhere on the page (one-time listener) plus the explicit button.
+**Phase 2 (real auth):** bcrypt via `security_password.py` (used directly — passlib is broken with
+bcrypt 5.0, LESSONS), `POST /api/auth/register` + login-against-hash (email, case-insensitive),
+stub gated to AUTH_MODE=stub. **Phase 1 (Case Knowledge Base):** upload → object storage → background
+ingest (pypdf extract → overlap chunk → Fireworks embed → `case_chunks`) + structured-summary LLM
+pass → `cases.case_summary`; portable JSON embeddings + Python cosine (SQLite-safe, no infra change);
+hybrid context = summary always in every prompt (via `SessionState.snapshot()`) + per-turn passage
+retrieval into Opposing Counsel's reply (agent-authed `GET /sessions/{id}/knowledge`); frontend
+`PleadingUpload` with live ingest status. **Live-proven:** real Fireworks embeddings + real summary
+LLM extracted parties/claims/dates correctly and cosine retrieval returned the relevant passage.
+**Tests: backend 38, agents 122 offline + live smoke, frontend 23; ruff + type-check + build clean.**
+**Docs:** ARCHITECTURE §12 + LESSONS (passlib/bcrypt). **⚠️ Needs live infra:** full upload→MinIO→
+ingest round-trip and retrieval quality in a live sparring session; the no-audio confirmation.

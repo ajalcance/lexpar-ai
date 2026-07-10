@@ -49,6 +49,10 @@ class SessionState:
     """In-memory memory for one session."""
 
     case_facts: str = ""
+    # Structured digest of the uploaded pleading (§12), loaded at room join and kept in every
+    # prompt via snapshot() — this is what lets Opposing Counsel object and the Judge rule with the
+    # real case, not a few sentences. Retrieved pleading passages are added per-reply on top.
+    case_summary: str = ""
     established_facts: list[str] = field(default_factory=list)
     objections: list[Objection] = field(default_factory=list)
     transcript: list[TranscriptTurn] = field(default_factory=list)
@@ -102,7 +106,10 @@ class SessionState:
 
     def snapshot(self) -> str:
         """A compact text view of the state, suitable as verifier/prompt context."""
-        lines = ["CASE FACTS:", self.case_facts or "(none)", "", "ESTABLISHED FACTS:"]
+        lines: list[str] = []
+        if self.case_summary:
+            lines += ["CASE SUMMARY (from the pleading):", self.case_summary, ""]
+        lines += ["CASE FACTS:", self.case_facts or "(none)", "", "ESTABLISHED FACTS:"]
         lines += [f"- {fact}" for fact in self.established_facts] or ["(none)"]
         lines += ["", "OBJECTIONS:"]
         lines += [

@@ -190,6 +190,51 @@ export async function createCase(input: { title: string; caseFacts: string }): P
   return toCase(data);
 }
 
+export interface PleadingStatus {
+  id: string;
+  filename: string;
+  status: 'pending' | 'ready' | 'failed';
+  chunkCount: number;
+  error: string | null;
+}
+
+interface PleadingJson {
+  id: string;
+  filename: string;
+  status: PleadingStatus['status'];
+  chunk_count: number;
+  error: string | null;
+}
+
+const toPleading = (p: PleadingJson): PleadingStatus => ({
+  id: p.id,
+  filename: p.filename,
+  status: p.status,
+  chunkCount: p.chunk_count,
+  error: p.error,
+});
+
+/** Upload a pleading PDF to a case (multipart — its own path, not the JSON `request` helper). */
+export async function uploadPleading(caseId: string, file: File): Promise<PleadingStatus> {
+  const form = new FormData();
+  form.append('file', file);
+  const token = useAuthStore.getState().token;
+  const response = await fetch(`${API_BASE_URL}/api/cases/${caseId}/documents`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  });
+  if (!response.ok) {
+    throw new ApiError(await extractError(response), response.status);
+  }
+  return toPleading((await response.json()) as PleadingJson);
+}
+
+export async function listPleadings(caseId: string): Promise<PleadingStatus[]> {
+  const data = await request<PleadingJson[]>(`/api/cases/${caseId}/documents`);
+  return data.map(toPleading);
+}
+
 export async function createSession(caseId: string): Promise<Session> {
   const data = await request<SessionJson>('/api/sessions', {
     method: 'POST',

@@ -51,3 +51,29 @@ def test_judge_parse_ruling_tolerates_prose_and_raises_on_junk():
     assert judge._parse_ruling('ok: {"ruling": "Overruled."} done') == "Overruled."
     with pytest.raises(ValueError):
         judge._parse_ruling("no json here")
+
+
+def test_opposing_counsel_build_messages_includes_pleading_excerpts():
+    import opposing_counsel
+    from session_state import SessionState
+
+    state = SessionState(case_facts="F")
+    excerpts = "RELEVANT PLEADING EXCERPTS:\n- The report was filed March 3."
+    context = opposing_counsel.build_messages(state, "the attorney turn", excerpts)[1]["content"]
+    assert "RELEVANT PLEADING EXCERPTS:" in context
+    assert "The report was filed March 3." in context
+    # and omitted when there are none
+    plain = opposing_counsel.build_messages(state, "turn")[1]["content"]
+    assert "RELEVANT PLEADING EXCERPTS:" not in plain
+
+
+def test_case_knowledge_passages_block_and_empty_guard():
+    import case_knowledge
+
+    assert case_knowledge.passages_block([]) == ""
+    block = case_knowledge.passages_block(["Fact one.", "Fact two."])
+    assert block.startswith("RELEVANT PLEADING EXCERPTS:")
+    assert "- Fact one." in block and "- Fact two." in block
+    # retrieval short-circuits (no network) for empty inputs
+    assert case_knowledge.retrieve_passages("", "q") == []
+    assert case_knowledge.retrieve_passages("sess", "   ") == []

@@ -33,3 +33,11 @@ class SessionContextOut(BaseModel):
 
     case_facts: str = ""
     case_title: str = ""
+    case_summary: str = ""  # §12: the structured pleading digest, always in agent context
+
+
+class KnowledgeOut(BaseModel):
+    """Case-knowledge retrieval for the agents (§12): the summary + the query-relevant passages."""
+
+    summary: str = ""
+    passages: list[str] = []
