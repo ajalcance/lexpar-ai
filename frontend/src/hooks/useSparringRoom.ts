@@ -14,7 +14,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ConnectionState, RoomEvent, Track } from 'livekit-client';
 import type { Participant, RemoteTrack, Room } from 'livekit-client';
-import { mapActiveSpeaker, type ActiveSpeaker } from '@/lib/activeSpeaker';
+import {
+  JUDGE_IDENTITY,
+  mapActiveSpeaker,
+  mapAudioLevels,
+  type ActiveSpeaker,
+  type AudioLevels,
+} from '@/lib/activeSpeaker';
+import type { VisualizedTrack } from '@/hooks/useAudioVisualization';
 import * as api from '@/lib/api';
 import { connectToRoom, disconnectFromRoom } from '@/lib/livekit';
 import {
@@ -58,6 +65,13 @@ export function useSparringRoom(sessionId: string) {
   const [mode, setMode] = useState<SparringMode>('connecting');
   const [connectionState, setConnectionState] = useState<ConnStatus>('connecting');
   const [activeSpeaker, setActiveSpeaker] = useState<ActiveSpeaker>(null);
+  // The active speaker's audio track (drives the equalizer) + coarse per-role levels (the dots).
+  const [activeTrack, setActiveTrack] = useState<VisualizedTrack | null>(null);
+  const [audioLevels, setAudioLevels] = useState<AudioLevels>({
+    you: 0,
+    opposing_counsel: 0,
+    judge: 0,
+  });
   const [isMuted, setIsMuted] = useState(false);
   const [micBlocked, setMicBlocked] = useState(false);
   const [audioBlocked, setAudioBlocked] = useState(false);
@@ -74,6 +88,8 @@ export function useSparringRoom(sessionId: string) {
   useEffect(() => {
     setObjections([]); // clear any prior session's objection events
     setJudgeSpeaking(false);
+    setActiveTrack(null);
+    setAudioLevels({ you: 0, opposing_counsel: 0, judge: 0 });
     if (!sessionId) {
       return;
     }
@@ -116,7 +132,25 @@ export function useSparringRoom(sessionId: string) {
       if (cancelled) return;
       // Structural attribution: the Judge is a real participant (identity "judge"), so who is
       // speaking comes straight from the participant identities — no synthetic events needed.
-      setActiveSpeaker(mapActiveSpeaker(speakers));
+      const label = mapActiveSpeaker(speakers);
+      setActiveSpeaker(label);
+      // Resolve the active speaker's audio track for the equalizer analyser (the visual reacts to
+      // whoever the badge names), and the coarse per-role levels for the presence dots — both from
+      // the same ActiveSpeakersChanged payload, no extra analyser for the dots.
+      let active: Participant | undefined;
+      if (label === 'judge') {
+        active = speakers.find((p) => !p.isLocal && p.identity === JUDGE_IDENTITY);
+      } else if (label === 'opposing_counsel') {
+        active = speakers.find((p) => !p.isLocal);
+      } else if (label === 'you') {
+        active = speakers.find((p) => p.isLocal);
+      }
+      const publication = active?.audioTrackPublications.values().next().value;
+      // Stable Track reference per participant, so re-emits with the same speaker don't churn the
+      // analyser (React bails on an identical setState value). audioTrackPublications only holds
+      // audio tracks, so the subscribed track is a Local/RemoteAudioTrack.
+      setActiveTrack((publication?.track as VisualizedTrack | undefined) ?? null);
+      setAudioLevels(mapAudioLevels(speakers));
     };
 
     const promoteToLive = () => {
@@ -329,6 +363,8 @@ export function useSparringRoom(sessionId: string) {
     mode,
     connectionState,
     activeSpeaker,
+    activeTrack,
+    audioLevels,
     judgeSpeaking,
     isMuted,
     micBlocked,

@@ -33,3 +33,29 @@ export function mapActiveSpeaker(speakers: SpeakerLike[]): ActiveSpeaker {
   }
   return null;
 }
+
+/** Coarse per-role audio levels (0..1) for the presence dots — no analyser, straight from the
+ *  participants' `audioLevel` that LiveKit already reports via ActiveSpeakersChanged. Absent
+ *  (non-speaking) participants stay at 0; duplicates keep the loudest. */
+export interface AudioLevels {
+  you: number;
+  opposing_counsel: number;
+  judge: number;
+}
+
+interface LevelLike extends SpeakerLike {
+  audioLevel: number;
+}
+
+export function mapAudioLevels(speakers: LevelLike[]): AudioLevels {
+  const levels: AudioLevels = { you: 0, opposing_counsel: 0, judge: 0 };
+  for (const p of speakers) {
+    const role: keyof AudioLevels = p.isLocal
+      ? 'you'
+      : p.identity === JUDGE_IDENTITY
+        ? 'judge'
+        : 'opposing_counsel';
+    levels[role] = Math.max(levels[role], p.audioLevel);
+  }
+  return levels;
+}

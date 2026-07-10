@@ -18,6 +18,7 @@ import { Mic, MicOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Breadcrumbs } from '@/components/Breadcrumbs';
+import { SparringVisualizer } from '@/components/SparringVisualizer';
 import { TranscriptLine } from '@/components/TranscriptLine';
 import { useSparringRoom, type ConnStatus } from '@/hooks/useSparringRoom';
 import { useSparringSession } from '@/hooks/useSparringSession';
@@ -45,6 +46,8 @@ export function SparringRoom() {
     mode,
     connectionState,
     activeSpeaker,
+    activeTrack,
+    audioLevels,
     judgeSpeaking,
     isMuted,
     micBlocked,
@@ -132,6 +135,17 @@ export function SparringRoom() {
       )}
 
       <div className="flex flex-col gap-4 rounded-lg border bg-card/40 p-6">
+        {/* Live-audio visual (additive) — equalizer for the active speaker + presence dots. The
+            text speaker badge above remains the real attribution; this is aria-hidden. In
+            connecting/fallback it shows a neutral idle shimmer rather than looking broken. */}
+        <SparringVisualizer
+          track={activeTrack}
+          activeSpeaker={activeSpeaker}
+          levels={audioLevels}
+          enabled={mode === 'live'}
+          audioReady={!audioBlocked}
+        />
+
         {mode === 'connecting' && (
           <p className="text-sm text-muted-foreground">Connecting to the courtroom…</p>
         )}

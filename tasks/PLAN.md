@@ -2169,3 +2169,53 @@ no change needed** — the admin surface was only re-labeled/re-styled; court se
 indicator, and admin bootstrap are functionally identical. **No live LiveKit / no SparringRoom
 preview** (standing constraint) — verified via the offline suites + type-check + lint, as in Phases
 4–6.
+
+---
+
+### Live voice visualization for the Sparring Room — status: done
+
+The SparringRoom was a text transcript for a voice-native product — no visible sense that the
+room is live, who's speaking, or vocal energy/pacing. Three gated phases (audit → 2–3 design
+directions → implementation), each reviewed.
+
+**Phase 1 (audit):** the active-speaker infra (`mapActiveSpeaker`) is **discrete only** — no
+amplitude signal exists; `participant.audioLevel` (coarse, server-rate) rides along on
+`ActiveSpeakersChanged`. Both LiveKit packages are installed (`livekit-client` 2.20 +
+`@livekit/components-react` 2.9.21); `livekit-client` ships **`createAudioAnalyser`** (a
+non-playing `AnalyserNode` tap — reads `analyser.context` for resume, `cleanup()` closes it,
+default `cloneTrack:false` never stops the shared track). The components-react hooks/`BarVisualizer`
+exist but assume a `RoomContext` provider this app doesn't use (imperative `useSparringRoom`) — so
+`createAudioAnalyser` is the architectural fit. Audio is attached at `attachAudio` on
+`TrackSubscribed`; the visual taps the same `attachedTracks`/local mic, no duplicate pipeline. Room
+layout is purely text — the bordered panel has room for an additive visual above the transcript.
+
+**Phase 2 (design, reviewed):** three directions — (A) single shared active-speaker visual, (B)
+per-participant meters, (C) hybrid. **Chosen: C** — A's single reactive equalizer for the active
+speaker + three always-present presence dots on the free `participant.audioLevel` (no extra
+analyser). **Style: bars** (equalizer), which read as live audio and make objection spikes /
+pre-ruling pauses legible. Additive (never replaces the transcript); idle shimmer between turns +
+neutral grey in connecting/fallback; single rAF + canvas (no per-frame React); `prefers-reduced-
+motion` static; canvas `aria-hidden` (the text badge stays the real attribution).
+
+**Result:** Done, offline suites green after each change; no live LiveKit / no preview (standing
+constraint). **New files:** `lib/audioBars.ts` (pure bin/idle/static/smoothing math),
+`hooks/useAudioVisualization.ts` (analyser lifecycle on the active track — swap = close old
+`AudioContext` + open new; single `requestAnimationFrame`/`<canvas>` draw with levels in a ref;
+context `resume()` off the EXISTING unlock signal `audioReady=!audioBlocked`, not a new gesture;
+reduced-motion → one static frame, no rAF; cleanup on unmount + every swap),
+`components/SparringVisualizer.tsx` (render-only: canvas equalizer + 3 dots). **Modified:**
+`useSparringRoom` derives + exposes `activeTrack` (stable per-participant ref) and `audioLevels`
+from the same `ActiveSpeakersChanged` payload; `lib/activeSpeaker` gained pure `mapAudioLevels`;
+`SparringRoom` places the visual at the top of the transcript panel (enabled only in live mode).
+**No new npm dependency** (Web Audio via `livekit-client`); no new hooks category. **Tests: frontend
+54 (was 35; +19 — audioBars math ×8, mapAudioLevels ×3, useAudioVisualization lifecycle ×8: analyser
+created only for a live active track, cleanup on swap + unmount, resume on audioReady flip,
+reduced-motion static/no-rAF, rAF when motion allowed), type-check + lint clean** (only the two
+pre-existing generated-`ui/` advisories). **Docs:** ARCHITECTURE §4 "Wiring status" (one bullet on
+`SparringVisualizer`); judged a notable Web-Audio-usage pattern worth a line, but not a new hooks
+category / dependency, so no §2/dep-section change. **⚠️ Needs the user's live pass** (same as the
+judge-participant work): the actual audio-reactive feel — bars reacting to real voice, dots lighting
+during a real barge-in, context resuming on the gesture, no echo/double-playback — can't be Vitest-
+verified. **Flagged tradeoff:** `createAudioAnalyser` opens/closes an `AudioContext` per speaker
+swap; fine at courtroom pacing, but watch for Chrome's "too many AudioContexts" hint under rapid
+flipping (fallback = one persistent context with re-pointed nodes).

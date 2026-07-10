@@ -196,6 +196,16 @@ the one thing still absent:
   a session (there is no live STT→LLM→TTS producing turns in real time yet). Starting a session
   still exercises real plumbing: it creates a real `sessions` row (POST /api/sessions) and fetches a
   real LiveKit token (GET /api/livekit/token).
+- **Live-audio visualization (`SparringVisualizer`).** The room renders an equalizer for the current
+  active speaker plus per-participant presence dots — an additive, `aria-hidden` visual above the
+  transcript (the text speaker badge remains the real attribution). The equalizer taps the active
+  speaker's LiveKit track via `createAudioAnalyser` (a non-playing `AnalyserNode` — no duplicate
+  audio pipeline), swapping the analysed track when the speaker changes; analysis + the single
+  `requestAnimationFrame`/`<canvas>` draw loop live in `hooks/useAudioVisualization.ts` (pure math in
+  `lib/audioBars.ts`), the context resuming off the existing audio-unlock signal. The dots ride the
+  coarse `participant.audioLevel` from `ActiveSpeakersChanged` (no extra analyser). No new npm
+  dependency (Web Audio via `livekit-client`); reduced-motion drops to a static frame. Builds on the
+  §6.5 active-speaker attribution.
 - **Completed sessions render real data.** When the agent worker (or `session_end_harness.py`) posts
   `complete` + `scorecard`, the session goes `completed` and the persisted scorecard + transcript are
   written. `Scorecard.tsx` then renders the **real** heuristic score, strengths, weaknesses, and
