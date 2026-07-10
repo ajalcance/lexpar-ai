@@ -371,12 +371,17 @@ When an objection fires and Opposing Counsel's line is spoken, the Judge immedia
 - **Duplicate render guard:** objection/ruling events carry a stable `timestamp`; the frontend
   dedups on `type:timestamp` using a set held in a **ref** (shared across effect re-runs), so a
   redelivered packet or a double-registered listener can't double-render one objection or ruling.
-- **Speaker attribution:** the Judge is voiced through the *same* agent participant as Opposing
-  Counsel, so the active-speaker indicator can't tell them apart from audio alone. `_judge_say`
-  brackets judge audio with a `{"type":"judge_speaking"}` boundary event; the frontend shows
-  "Judge speaking" for it (the audio itself is already the distinct judge voice). Covers inline
-  rulings and the closing ruling. *(A separate judge participant would remove this multiplexing
-  entirely — noted as a larger follow-up.)*
+- **Speaker attribution (by construction):** the Judge is a **real second room participant** —
+  the worker mints a publish-only token locally (identity `judge`, `judge_participant.py`) and
+  joins over its own `rtc.Room` connection, speaking by pushing judge-TTS frames into a published
+  `AudioSource`. The frontend attributes speech **structurally** (`lib/activeSpeaker.ts`: judge
+  identity → Judge, other remote → Opposing Counsel, local → attorney) — no synthetic events.
+  Judge audio bypasses the OC session's speech queue entirely, so `session.interrupt()`/VAD can
+  never cut the judge off (non-interruptibility by construction); ordering vs. the canned
+  objection line is enforced by an explicit `wait_for_clear` gate in `voice_interrupt` (no shared
+  queue = no implicit serialization). **Fallback:** if the judge participant fails to connect or
+  speak, `judge_voice.JudgeVoice` degrades to the previous session-multiplexed path *including*
+  the `{"type":"judge_speaking"}` label events — a LiveKit failure never silences the judge.
 
 ### End-of-session judge assessment (spoken ruling + scorecard)
 

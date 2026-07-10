@@ -1599,3 +1599,75 @@ existing ruling/objection dedup intact. **⚠️ Needs a live room:** whether ~1
 enough, that the double no longer appears, and the "Judge speaking" label during real audio.
 
 **Result:** Done. **S1 (latency):** `handle_interim` starts `judge_rule` as a concurrent task before awaiting the canned line, so `quick_ruling` overlaps its playback; gap ≈ max(canned, ~1.3 s) instead of the sum. **S2 (double):** confirmed NOT a double ledger-rule (verified + regression test `test_inline_ruled_objection_is_not_re_ruled_at_session_end`); it was the ruling-event analog of the double-hearsay, already fixed by PR #5's ruling-`timestamp` dedup — hardened further by hoisting the frontend `seen` set to a shared ref. **S3 (label):** the audio was already the judge voice; only the active-speaker badge was wrong (one agent participant). `_judge_say` now publishes `{type:"judge_speaking"}` boundaries; the hook tracks it and the badge shows "Judge speaking" (inline + closing). **Tests: agents 113 offline + 9 live (+ canned-before-ruling ordering, inline-not-re-ruled); frontend 19 (+ parseJudgeSpeaking); ruff + type-check clean.** **Docs:** ARCHITECTURE §6.5 (concurrency, dedup ref, judge-speaking), LESSONS (say() blocks on playback; attribute multiplexed personas with a signal). **⚠️ Needs a live room:** whether the ~1.3 s ruling gap is tight enough, that the double is gone, and the "Judge speaking" label during real audio.
+
+---
+
+### Judge as a real LiveKit participant (attribution by construction) — status: done (needs live-room confirmation)
+
+**Goal:** give the Judge a genuinely distinct identity in the room, replacing the
+`judge_speaking` data-channel workaround. Speaker attribution should be structural — who is
+talking is known from *which participant's track is playing*, not inferred from a synthetic event.
+
+**Research (verified against the installed SDK — livekit 1.1.12 / livekit-agents 1.6.4 /
+livekit-api 1.1.1; every claim below was import-checked, not assumed):**
+- `livekit.api.AccessToken` mints tokens **locally** (pure JWT, no server call) — the worker already
+  holds `LIVEKIT_API_KEY/SECRET/URL`, so it can mint a `judge` identity itself. Verified offline.
+- A **second independent `rtc.Room` connection** in the same worker process is supported (multiple
+  rooms/connections per process is a normal SDK pattern; `Room.connect(url, token)` verified).
+- Publishing synthesized speech on it: `rtc.AudioSource(sample_rate, num_channels)` +
+  `LocalAudioTrack.create_audio_track` + `publish_track`, pushing the ElevenLabs plugin's
+  `SynthesizedAudio.frame`s via `capture_frame`, and **`wait_for_playout()`** exists for
+  completion. All verified present.
+
+**Options evaluated:**
+1. **Second room participant ("judge") — RECOMMENDED.** Own connection + identity + audio track.
+   Attribution is correct by construction *everywhere*: `ActiveSpeakersChanged` reports the judge
+   participant (the speaking indicator needs zero inference), track attachment just works
+   (frontend already attaches all remote audio), and any future per-speaker feature (live captions,
+   volume, avatar) comes free. Judge audio leaves the OC `AgentSession` speech queue → the judge is
+   non-interruptible **by construction** (session.interrupt()/VAD can't touch it). Complexity:
+   moderate (token mint + one connection + one audio-source pipeline + explicit sequencing, below).
+2. **Second audio track under the existing agent participant.** Less code (no second connection),
+   but **active-speaker detection is per-participant**, so the "who's speaking" indicator still
+   can't distinguish judge from OC — attribution would still be inference (track-name inspection).
+   Fails the "by construction" bar. Rejected.
+3. **Keep the synthetic `judge_speaking` events (status quo).** Works, but attribution is an
+   application-layer claim, ordering-fragile, and invisible to anything that doesn't parse our
+   events. Being replaced; retained ONLY as the fallback path (below).
+
+**Design:**
+- `agents/judge_participant.py` (livekit-dependent, not imported by CI tests):
+  `JudgeParticipant(url, api_key, api_secret, room_name, tts)` — `connect()` mints the token
+  (identity `judge`, publish-only grants) and joins; `say(text)` synthesizes on the judge TTS and
+  `capture_frame`s + `wait_for_playout()`; `aclose()`.
+- `agents/judge_voice.py` (livekit-FREE, CI-tested): `JudgeVoice(primary, fallback)` — try the
+  participant; on ANY failure fall back to the current working path (`session.say(audio=…)` +
+  `judge_speaking` events) and log loudly. **This is the safety requirement:** if LiveKit refuses
+  anything at runtime, the session degrades to exactly today's behavior, never to silence.
+- **Sequencing fix (new, required):** today the ruling's `say` is serialized by the session speech
+  queue behind the canned line. A separate participant has NO shared queue — a fast `quick_ruling`
+  could speak OVER the canned objection. `handle_interim` therefore passes a `wait_for_clear`
+  awaitable (an `asyncio.Event` set when the canned `say` returns, i.e. after playout) and
+  `judge_rule` awaits it between ledger-update and speaking. Generation still overlaps playback.
+- **Frontend:** pure `mapActiveSpeaker(speakers)` helper — identity `judge` → Judge, other remote →
+  Opposing Counsel, local → attorney (priority judge > OC); the badge gets "Judge speaking" from
+  the real active-speaker signal. The `judge_speaking` event handling is KEPT solely to label the
+  fallback path.
+- **Cleanup:** `aclose()` on shutdown; the judge participant joining also (harmlessly) satisfies
+  the frontend's agent-presence promotion.
+
+**Ruling-gap honesty:** the ~1.3 s gap is dominated by `quick_ruling` generation, which already
+overlaps the canned playout (PR #6). This change removes queue-scheduling overhead and any waiting
+behind stray queued OC speech (~0–0.2 s), and starts judge audio exactly at canned-done + TTS TTFB
+(~0.15 s). **It does NOT materially shrink the generation floor** — the win is correctness of
+attribution + non-interruptibility by construction, not latency.
+
+**Tests:** `judge_voice` (primary used; fallback on primary failure; fallback errors surface;
+no-primary → straight to fallback); `voice_interrupt` — judge speak gated on canned-say completion
+(order: canned → ruling) with the existing concurrency preserved; frontend — `mapActiveSpeaker`
+(judge identity wins over OC; remote w/o judge → OC; local only → you; empty → null). Existing
+suites stay green. **⚠️ Needs a live room:** the judge participant actually joining (server accepts
+the minted token), real active-speaker attribution during judge audio, audio quality via the raw
+AudioSource path, and the no-overlap sequencing under real playout timing.
+
+**Result:** Built on `feat/judge-participant` (main untouched — the interim fix stays the safe baseline). **Agent:** `judge_participant.py` (token minted locally, identity `judge`, publish-only grants; own `rtc.Room` connection; lazy `AudioSource` sized from the first TTS frame; `capture_frame` + `wait_for_playout`; per-line lock; `aclose()` on shutdown) and `judge_voice.py` (livekit-free `JudgeVoice`: primary participant, fallback = the previous session-multiplexed path INCLUDING the `judge_speaking` label events — a LiveKit failure degrades to the old behavior, never a silent judge). `voice_interrupt` gained the `wait_for_clear` gate (asyncio.Event set when the canned say returns) because a second participant has NO shared speech queue — the implicit canned→ruling ordering had to become explicit. `config` exposes LIVEKIT_URL/KEY/SECRET. **Frontend:** pure `lib/activeSpeaker.mapActiveSpeaker` (judge identity → Judge > other remote → OC > local → you); hook uses it; badge shows 'Judge speaking' structurally (synthetic event retained only for the fallback path). **Verified against the real local LiveKit server:** the minted token was ACCEPTED, the judge participant CONNECTED (identity `judge`), and `say()` synthesized real ElevenLabs audio, captured frames into the published track, and awaited playout. (A standalone-script failure was traced to the missing job http-context, not the module — in-worker the same plugin path already works today.) **No SDK limitation found** — every mechanism the design relies on exists and worked. **Ruling-gap honesty:** unchanged as predicted — the ~1.3 s floor is quick_ruling generation (already overlapped with canned playback); this removes only queue-scheduling overhead (~0–0.2 s). The win is attribution + non-interruptibility by construction. **Tests: agents 119 offline + 9 live (new: judge_voice ×5, wait_for_clear gating ×1; FakeJudge signatures updated); frontend 23 (mapActiveSpeaker ×4); ruff + type-check clean.** **Docs:** ARCHITECTURE §6.5 (attribution-by-construction bullet), LESSONS (no-shared-queue sequencing). **⚠️ Needs a live room:** hearing judge audio via the raw AudioSource path (quality/timing), the active-speaker badge showing 'Judge speaking' from the real signal, no-overlap sequencing under real playout, and the fallback engaging cleanly if the participant is refused.

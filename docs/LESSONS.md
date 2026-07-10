@@ -227,3 +227,17 @@ though the audio was the correct judge voice.
 publish an explicit boundary signal (`{"type":"judge_speaking", speaking:true/false}` around the
 judge's audio) and drive the label from that. (A separate participant per persona would avoid the
 multiplexing, at more infra cost.)
+
+### [Agents/LiveKit] A second participant means NO shared speech queue — sequence explicitly
+**Wrong:** Assumed moving the Judge to its own room participant kept the old ordering for free. It
+does the opposite: the ordering between the canned "Objection — <type>." and the judge's ruling had
+been *implicitly* guaranteed by the single AgentSession speech queue (both were `session.say`
+calls). On a separate participant the judge plays immediately — a fast `quick_ruling` would talk
+OVER the still-playing objection line.
+**Right:** When speech moves off the session queue, every ordering you relied on must become
+explicit. `handle_interim` passes a `wait_for_clear` awaitable (an `asyncio.Event` set when the
+canned `say()` returns, i.e. after playout) and the judge awaits it between ledger-update and
+speaking — generation still overlaps playback, only the audio is gated. Corollary: the same move
+makes the judge non-interruptible by construction (`session.interrupt()` can't touch another
+participant's track), which here is a feature — but audit every interruption/ordering assumption
+when relocating audio.

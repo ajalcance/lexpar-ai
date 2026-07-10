@@ -119,7 +119,7 @@ class FakeJudge:
         self.calls: list[tuple] = []
         self.raises = raises
 
-    async def __call__(self, objection, fragment):
+    async def __call__(self, objection, fragment, wait_for_clear):
         self.calls.append((objection, fragment))
         if self.raises:
             raise RuntimeError("ruling model down")
@@ -154,12 +154,12 @@ def test_judge_rule_not_called_on_no_fire():
 def test_canned_objection_dispatched_before_ruling_runs():
     # Ordering guarantee behind the concurrency fix: the ruling task runs while/after the canned
     # line is dispatched (so quick_ruling overlaps its playback), and the canned line is always
-    # spoken first — the ruling's say enqueues after it.
+    # spoken first.
     session = FakeSession()
     state = SessionState()
     said_when_judge_ran: dict = {}
 
-    async def judge(objection, fragment):
+    async def judge(objection, fragment, wait_for_clear):
         said_when_judge_ran["said"] = list(session.said)
 
     classifier = ObjectionClassifier(
@@ -167,6 +167,32 @@ def test_canned_objection_dispatched_before_ruling_runs():
     )
     asyncio.run(handle_interim(session, classifier, "Isn't it true you lied?", None, judge))
     assert said_when_judge_ran["said"] == ["Objection — leading."]
+
+
+def test_judge_speak_gated_until_canned_line_completes():
+    # The judge speaks on its OWN participant (no shared speech queue), so the wait_for_clear gate
+    # is the only thing preventing a fast ruling from talking over the canned objection line. A
+    # judge that generates instantly must still not "speak" until the gate opens.
+    state = SessionState()
+    order: list[str] = []
+
+    class SlowSaySession(FakeSession):
+        async def say(self, text, allow_interruptions=True):
+            await asyncio.sleep(0.02)  # simulate the canned line's playback taking time
+            order.append(f"canned:{text}")
+            self.said.append(text)
+
+    async def judge(objection, fragment, wait_for_clear):
+        # generation would happen here (instant in this fake) …
+        await wait_for_clear()  # … but speaking waits for the canned line
+        order.append("ruling:Sustained.")
+
+    session = SlowSaySession()
+    classifier = ObjectionClassifier(
+        state, decider=lambda f, s: Decision(True, "hearsay", "x", outcome="fire")
+    )
+    asyncio.run(handle_interim(session, classifier, "He told me it was red.", None, judge))
+    assert order == ["canned:Objection — hearsay.", "ruling:Sustained."]
 
 
 def test_hold_released_even_when_judge_rule_raises():
