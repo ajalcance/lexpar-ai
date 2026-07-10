@@ -34,10 +34,16 @@ const SPEAKER_BUBBLE: Record<SpeakerRole, string> = {
 
 interface TranscriptLineProps {
   line: Transcript;
+  /** §13: citations flagged as ungrounded in this session's rulings (from RulingProvenance).
+   *  A line whose content carries one gets an "Unverified citation" marker. */
+  flaggedCitations?: string[];
 }
 
-export function TranscriptLine({ line }: TranscriptLineProps) {
+export function TranscriptLine({ line, flaggedCitations = [] }: TranscriptLineProps) {
   const { speaker, content, wasInterruption } = line;
+  const hasFlaggedCitation = flaggedCitations.some((citation) =>
+    content.toLowerCase().includes(citation.toLowerCase()),
+  );
 
   return (
     <div className={cn('flex flex-col gap-1', SPEAKER_ALIGN[speaker])}>
@@ -46,6 +52,7 @@ export function TranscriptLine({ line }: TranscriptLineProps) {
           {SPEAKER_LABEL[speaker]}
         </span>
         {wasInterruption && <Badge variant="destructive">Objection</Badge>}
+        {hasFlaggedCitation && <Badge variant="destructive">Unverified citation</Badge>}
       </div>
       <div
         className={cn(

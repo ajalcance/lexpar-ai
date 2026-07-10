@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session as DbSession
 
 from app.db import get_db
 from app.models.user import User
-from app.schemas.scorecard import ScorecardOut
+from app.schemas.scorecard import ProvenanceOut, ScorecardOut
 from app.security import get_current_user
 from app.services import scorecard_service
 
@@ -29,3 +29,14 @@ def get_scorecard(
     db: DbSession = Depends(get_db),
 ) -> ScorecardOut:
     return scorecard_service.get_scorecard(db, current_user, session_id)
+
+
+@router.get("/{session_id}/provenance", response_model=list[ProvenanceOut])
+def get_provenance(
+    session_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: DbSession = Depends(get_db),
+) -> list[ProvenanceOut]:
+    """§13: the ruling-provenance audit trail for the owning attorney's post-session review —
+    which sources each AI ruling was grounded in, and any citations flagged as ungrounded."""
+    return scorecard_service.get_provenance(db, current_user, session_id)

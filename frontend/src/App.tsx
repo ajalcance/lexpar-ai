@@ -9,6 +9,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppLayout } from '@/components/AppLayout';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
+import { Admin } from '@/pages/Admin';
 import { CaseUpload } from '@/pages/CaseUpload';
 import { Dashboard } from '@/pages/Dashboard';
 import { Login } from '@/pages/Login';
@@ -23,6 +24,7 @@ export default function App() {
         <Route element={<AppLayout />}>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/case/new" element={<CaseUpload />} />
+          <Route path="/admin" element={<Admin />} />
           <Route path="/session/:id" element={<SparringRoom />} />
           <Route path="/session/:id/scorecard" element={<Scorecard />} />
         </Route>

@@ -17,6 +17,7 @@ const fakeUser = {
   id: 'u1',
   email: 'admin@lexpar.ai',
   fullName: 'Demo Attorney',
+  role: 'attorney' as const,
   firmName: 'Solo Practice',
 };
 

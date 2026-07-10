@@ -18,6 +18,7 @@ const CASE = {
   id: 'c1',
   title: 'Doe v. Roe',
   caseFacts: 'A contract dispute.',
+  courtId: null,
   createdAt: '2026-07-07T00:00:00Z',
 };
 

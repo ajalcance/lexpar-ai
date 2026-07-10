@@ -358,3 +358,36 @@ def test_provenance_route_persists_and_validates(client, auth_headers, db_sessio
         client.post(f"/api/sessions/{missing}/provenance", headers=AGENT, json=payload).status_code
         == 404
     )
+
+
+def test_user_reads_provenance_for_own_session(client, auth_headers):
+    session = _session_for_court(client, auth_headers)
+    url = f"/api/sessions/{session['id']}/provenance"
+    # agent writes two rows (the live worker's paths)
+    for ruling_type, flags in (("objection_ruling", ["Rule 99"]), ("final_ruling", [])):
+        assert (
+            client.post(
+                url,
+                headers=AGENT,
+                json={
+                    "ruling_type": ruling_type,
+                    "chunk_ids_used": ["court:x"],
+                    "citation_flags": flags,
+                },
+            ).status_code
+            == 201
+        )
+    # the owning attorney reads them back (oldest first)
+    rows = client.get(url, headers=auth_headers)
+    assert rows.status_code == 200
+    body = rows.json()
+    assert [r["ruling_type"] for r in body] == ["objection_ruling", "final_ruling"]
+    assert body[0]["citation_flags"] == ["Rule 99"]
+    # least privilege both ways: no token → 401; the agent token can't use the USER read route
+    assert client.get(url).status_code == 401
+    assert client.get(url, headers=AGENT).status_code == 401
+    # empty when a session has no rulings
+    other = _session_for_court(client, auth_headers)
+    assert client.get(
+        f"/api/sessions/{other['id']}/provenance", headers=auth_headers
+    ).json() == []

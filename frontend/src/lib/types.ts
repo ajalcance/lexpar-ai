@@ -40,6 +40,8 @@ export interface User {
   email: string;
   fullName: string | null;
   firmName: string | null;
+  /** 'attorney' | 'admin' (§13) — gates the admin UI; the backend enforces the real check. */
+  role: 'attorney' | 'admin';
 }
 
 /** A case an attorney is preparing to argue. Mirrors the `cases` table (API-visible fields). */
@@ -47,6 +49,36 @@ export interface Case {
   id: string;
   title: string;
   caseFacts: string;
+  /** The forum whose procedural rules ground this case's sessions (§13). Null on pre-§13 cases. */
+  courtId: string | null;
+  createdAt: string;
+}
+
+/** A court in the catalog (§13) — the forum whose rules ground a case. */
+export interface Court {
+  id: string;
+  name: string;
+  jurisdictionDescription: string | null;
+  isActive: boolean;
+}
+
+/** Ingestion status of an admin-uploaded court rule document (§13). */
+export interface CourtRuleDocument {
+  id: string;
+  title: string;
+  sourceCitation: string | null;
+  sourceReference: string | null;
+  ingestionStatus: 'pending' | 'ready' | 'failed';
+  chunkCount: number;
+  error: string | null;
+}
+
+/** §13 audit trail for one AI ruling — which sources it was shown, which citations flagged. */
+export interface ProvenanceRecord {
+  id: string;
+  rulingType: 'objection_ruling' | 'final_ruling';
+  chunkIdsUsed: string[];
+  citationFlags: string[];
   createdAt: string;
 }
 

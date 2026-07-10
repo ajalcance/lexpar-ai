@@ -33,3 +33,18 @@ def get_scorecard(db: DbSession, user: User, session_id: uuid.UUID) -> Scorecard
             detail="Scorecard not found for this session.",
         )
     return scorecard
+
+
+def get_provenance(db: DbSession, user: User, session_id: uuid.UUID) -> list:
+    """The session's §13 ruling-provenance rows (oldest first), owner-scoped. Empty list when no
+    rulings were made — the scorecard page simply shows no grounding section."""
+    from app.models.ruling_provenance import RulingProvenance
+
+    session = session_service.get_session(db, user, session_id)  # 404/ownership check
+    return list(
+        db.scalars(
+            select(RulingProvenance)
+            .where(RulingProvenance.session_id == session.id)
+            .order_by(RulingProvenance.created_at)
+        )
+    )

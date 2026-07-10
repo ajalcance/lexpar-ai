@@ -11,7 +11,7 @@
 
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -32,10 +32,17 @@ export function CaseUpload() {
 
   const [title, setTitle] = useState('');
   const [caseFacts, setCaseFacts] = useState('');
+  const [courtId, setCourtId] = useState('');
   const [createdCaseId, setCreatedCaseId] = useState<string | null>(null);
 
+  // §13: the forum whose procedural rules ground this case. REQUIRED when the catalog has
+  // courts; an unseeded instance (no courts yet) may still create cases, with a visible notice
+  // that sessions won't have rules grounding until an admin adds the court.
+  const { data: courts } = useQuery({ queryKey: ['courts'], queryFn: api.getCourts });
+  const courtsAvailable = (courts?.length ?? 0) > 0;
+
   const createCase = useMutation({
-    mutationFn: () => api.createCase({ title, caseFacts }),
+    mutationFn: () => api.createCase({ title, caseFacts, courtId: courtId || null }),
     onSuccess: async (created) => {
       await queryClient.invalidateQueries({ queryKey: ['cases'] });
       // Reveal the pleading-upload step for the new case instead of leaving immediately, so the
@@ -97,6 +104,32 @@ export function CaseUpload() {
               rows={6}
               required
             />
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="court">Court</Label>
+            {courtsAvailable ? (
+              <select
+                id="court"
+                className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                value={courtId}
+                onChange={(event) => setCourtId(event.target.value)}
+                required
+              >
+                <option value="" disabled>
+                  Select the forum…
+                </option>
+                {courts?.map((court) => (
+                  <option key={court.id} value={court.id}>
+                    {court.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                No courts configured yet — the AI will argue without procedural-rules grounding
+                until an administrator adds this case's forum.
+              </p>
+            )}
           </div>
           <p className="text-xs text-muted-foreground">
             After creating the case you'll attach the full pleading (PDF) that the AI argues from.

@@ -15,8 +15,11 @@ import { mockTranscript } from '@/lib/mockData';
 import { useAuthStore } from '@/store/auth';
 import type {
   Case,
+  Court,
+  CourtRuleDocument,
   LiveKitAccess,
   ProceedingType,
+  ProvenanceRecord,
   Scorecard,
   Session,
   Transcript,
@@ -96,11 +99,35 @@ interface UserJson {
   email: string;
   full_name: string | null;
   firm_name: string | null;
+  role: User['role'];
 }
 interface CaseJson {
   id: string;
   title: string;
   case_facts: string | null;
+  court_id: string | null;
+  created_at: string;
+}
+interface CourtJson {
+  id: string;
+  name: string;
+  jurisdiction_description: string | null;
+  is_active: boolean;
+}
+interface CourtRuleDocumentJson {
+  id: string;
+  title: string;
+  source_citation: string | null;
+  source_reference: string | null;
+  ingestion_status: CourtRuleDocument['ingestionStatus'];
+  chunk_count: number;
+  error: string | null;
+}
+interface ProvenanceJson {
+  id: string;
+  ruling_type: ProvenanceRecord['rulingType'];
+  chunk_ids_used: string[];
+  citation_flags: string[];
   created_at: string;
 }
 interface SessionJson {
@@ -137,13 +164,32 @@ const toUser = (j: UserJson): User => ({
   email: j.email,
   fullName: j.full_name,
   firmName: j.firm_name,
+  role: j.role ?? 'attorney',
 });
 
 const toCase = (j: CaseJson): Case => ({
   id: j.id,
   title: j.title,
   caseFacts: j.case_facts ?? '',
+  courtId: j.court_id,
   createdAt: j.created_at,
+});
+
+const toCourt = (j: CourtJson): Court => ({
+  id: j.id,
+  name: j.name,
+  jurisdictionDescription: j.jurisdiction_description,
+  isActive: j.is_active,
+});
+
+const toCourtRuleDocument = (j: CourtRuleDocumentJson): CourtRuleDocument => ({
+  id: j.id,
+  title: j.title,
+  sourceCitation: j.source_citation,
+  sourceReference: j.source_reference,
+  ingestionStatus: j.ingestion_status,
+  chunkCount: j.chunk_count,
+  error: j.error,
 });
 
 const toSession = (j: SessionJson): Session => ({
@@ -192,12 +238,86 @@ export async function getCase(id: string): Promise<Case> {
   return toCase(await request<CaseJson>(`/api/cases/${id}`));
 }
 
-export async function createCase(input: { title: string; caseFacts: string }): Promise<Case> {
+export async function createCase(input: {
+  title: string;
+  caseFacts: string;
+  courtId?: string | null;
+}): Promise<Case> {
   const data = await request<CaseJson>('/api/cases', {
     method: 'POST',
-    body: { title: input.title, case_facts: input.caseFacts },
+    body: {
+      title: input.title,
+      case_facts: input.caseFacts,
+      ...(input.courtId ? { court_id: input.courtId } : {}),
+    },
   });
   return toCase(data);
+}
+
+/** The active-court catalog (§13) — feeds the case-creation Court selector. */
+export async function getCourts(): Promise<Court[]> {
+  const data = await request<CourtJson[]>('/api/courts');
+  return data.map(toCourt);
+}
+
+/** Create a court (admin only — the backend enforces the role). */
+export async function createCourt(input: {
+  name: string;
+  jurisdictionDescription?: string;
+}): Promise<Court> {
+  const data = await request<CourtJson>('/api/courts', {
+    method: 'POST',
+    body: {
+      name: input.name,
+      ...(input.jurisdictionDescription
+        ? { jurisdiction_description: input.jurisdictionDescription }
+        : {}),
+    },
+  });
+  return toCourt(data);
+}
+
+/** Rule-document ingestion statuses for a court (admin only). */
+export async function getCourtRules(courtId: string): Promise<CourtRuleDocument[]> {
+  const data = await request<CourtRuleDocumentJson[]>(`/api/courts/${courtId}/rules`);
+  return data.map(toCourtRuleDocument);
+}
+
+/** Upload an OFFICIAL rule document PDF for a court (admin only; multipart — its own path,
+ *  not the JSON `request` helper). Provenance fields record where the operator says it's from. */
+export async function uploadCourtRule(
+  courtId: string,
+  file: File,
+  meta: { title?: string; sourceCitation?: string; sourceReference?: string } = {},
+): Promise<CourtRuleDocument> {
+  const form = new FormData();
+  form.append('file', file);
+  if (meta.title) form.append('title', meta.title);
+  if (meta.sourceCitation) form.append('source_citation', meta.sourceCitation);
+  if (meta.sourceReference) form.append('source_reference', meta.sourceReference);
+  const token = useAuthStore.getState().token;
+  const response = await fetch(`${API_BASE_URL}/api/courts/${courtId}/rules`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  });
+  if (!response.ok) {
+    throw new ApiError(await extractError(response), response.status);
+  }
+  return toCourtRuleDocument((await response.json()) as CourtRuleDocumentJson);
+}
+
+/** The §13 ruling-provenance audit trail for a session (owner-scoped) — which sources each AI
+ *  ruling was grounded in, and any citations flagged as ungrounded. */
+export async function getSessionProvenance(sessionId: string): Promise<ProvenanceRecord[]> {
+  const data = await request<ProvenanceJson[]>(`/api/sessions/${sessionId}/provenance`);
+  return data.map((j) => ({
+    id: j.id,
+    rulingType: j.ruling_type,
+    chunkIdsUsed: j.chunk_ids_used,
+    citationFlags: j.citation_flags,
+    createdAt: j.created_at,
+  }));
 }
 
 export interface PleadingStatus {

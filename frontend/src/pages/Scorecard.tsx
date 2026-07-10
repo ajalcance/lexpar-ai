@@ -10,6 +10,7 @@
 
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -47,6 +48,15 @@ export function Scorecard() {
     enabled: !!scorecard,
     retry: false,
   });
+  // §13: the ruling-provenance audit trail — which sources each AI ruling was grounded in and
+  // which citations were flagged as ungrounded. Non-blocking: no rows → no grounding section.
+  const { data: provenance } = useQuery({
+    queryKey: ['session-provenance', sessionId],
+    queryFn: () => api.getSessionProvenance(sessionId),
+    enabled: !!scorecard,
+    retry: false,
+  });
+  const allFlaggedCitations = (provenance ?? []).flatMap((record) => record.citationFlags);
 
   if (isLoading) {
     return (
@@ -130,6 +140,38 @@ export function Scorecard() {
         </CardContent>
       </Card>
 
+      {provenance && provenance.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Citation grounding</CardTitle>
+            <CardDescription>
+              What each AI ruling was grounded in — citations not found in the sources the AI was
+              actually shown are flagged, never silently corrected.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            {provenance.map((record) => (
+              <div key={record.id} className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="font-medium">
+                  {record.rulingType === 'final_ruling' ? 'Final ruling' : 'Objection ruling'}
+                </span>
+                <span className="text-muted-foreground">
+                  {record.chunkIdsUsed.length} source
+                  {record.chunkIdsUsed.length === 1 ? '' : 's'} shown
+                </span>
+                {record.citationFlags.length === 0 ? (
+                  <Badge variant="outline">Citations grounded</Badge>
+                ) : (
+                  <Badge variant="destructive">
+                    Unverified: {record.citationFlags.join(', ')}
+                  </Badge>
+                )}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
       {transcript && transcript.length > 0 && (
         <Card>
           <CardHeader>
@@ -137,7 +179,11 @@ export function Scorecard() {
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             {transcript.map((line) => (
-              <TranscriptLine key={line.id} line={line} />
+              <TranscriptLine
+                key={line.id}
+                line={line}
+                flaggedCitations={allFlaggedCitations}
+              />
             ))}
           </CardContent>
         </Card>

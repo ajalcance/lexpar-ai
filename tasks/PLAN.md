@@ -1777,7 +1777,7 @@ and nothing non-obvious surfaced. **Untouched as instructed:** judge-participant
 
 ---
 
-### Court & Procedural Rules Grounding + Enterprise Hardening — status: Phases 1-5 done, Phases 6-8 not started
+### Court & Procedural Rules Grounding + Enterprise Hardening — status: Phases 1-6 done; NEXT: the deliberate LIVE pass (judge-participant + no-audio + citation-grounding), then Phases 7-8
 
 **Why:** the grounding audit (2026-07-10) established the agents have ZERO engineered procedural
 grounding — no rules corpus, no jurisdiction prompt; all grounding is the uploaded pleading.
@@ -2006,3 +2006,39 @@ strengthened judge/dual tests), backend 63 (was 61; +2 provenance/chunk-id route
 main.py compiles. No-fabrication check passed** (fixtures are labeled placeholders; citation
 labels only). ⚠️ Live confirmation (judge-participant + no-audio + citation/provenance) deferred
 to after Phase 6 per instruction.
+
+**Phase 6 Result:** Done, tested, committed — the frontend surface for §13; suites run after each
+meaningful change; no live LiveKit session and no browser preview (both reserved for the user's
+deliberate live pass, next). **Backend (one addition):** owner-scoped
+`GET /api/sessions/{id}/provenance` (`ProvenanceOut` list, oldest-first) via
+`scorecard_service.get_provenance` — same path as the agent POST but method+auth distinct; test
+covers the full matrix (agent writes → owner reads; no-token 401; agent token cannot use the USER
+read route; empty list for ruling-less sessions). **Court selector (case creation):**
+`CaseUpload` fetches `GET /api/courts`; the select is REQUIRED when the catalog has courts;
+an unseeded instance may still create cases with a visible "no courts configured — no
+procedural-rules grounding" notice (JUDGMENT CALL: hard-requiring court_id at the API would brick
+case creation on any fresh instance until an admin exists and seeds a court; backend stays
+optional-but-validated per Phase 1, the UI enforces the requirement once courts exist).
+`createCase` gained `courtId`; `Case.courtId` mapped. **Citation-grounding indicator (Scorecard):**
+new provenance query (non-blocking); "Citation grounding" card — per ruling row: type label,
+"N sources shown", and either an outline "Citations grounded" badge or a destructive
+"Unverified: <citations>" badge; transcript judge lines whose content carries a flagged citation
+get an inline destructive "Unverified citation" badge (`TranscriptLine` gained an optional
+`flaggedCitations` prop — substring match on the provenance flags; no other call sites changed).
+Nothing is rewritten — flags surface exactly as persisted. **Admin UI (`/admin`):** minimal-but-
+functional `Admin.tsx` — create court (name + jurisdiction), per-court rule-document upload
+(PDF + title + source_citation + source_reference provenance fields, official-sources-only copy),
+ingestion-status list with a 2s poll while any document is `pending`; role-gated BOTH ends
+(`user.role === 'admin'` check renders a denial for attorneys — defense in depth; the backend 403
+remains the real control); "Admin" nav link in AppLayout only for admins; `User.role` +
+`getCourts/createCourt/getCourtRules/uploadCourtRule/getSessionProvenance` added to types/api
+(multipart upload mirrors `uploadPleading`). **Tests: frontend 30 Vitest (was 25; CaseUpload
+no-court/with-court ×2, Scorecard grounding flagged-vs-grounded + hidden-when-empty ×2, Admin
+role-denial + admin-create ×2; two fixtures gained the new required User.role/Case.courtId fields
+— caught by type-check), type-check + lint clean; backend 64 (+1 provenance read matrix); agents
+154 unchanged; ruff clean; no-fabrication grep clean.** **NEXT (deliberate, user-run):** the live
+pass — judge-participant audio + attribution, no-audio fix, and now citation-grounding/provenance
+end-to-end (seed the court via `scripts/seed_court.py` with real official PDFs first, or rules
+blocks stay empty and provenance rows carry no chunk ids). Phases 7 (golden-set eval — to be
+informed by observed live flag rates) and 8 (docs incl. ARCHITECTURE §13) NOT started, per
+instruction.

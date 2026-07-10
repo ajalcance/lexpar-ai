@@ -28,9 +28,15 @@ describe('Scorecard', () => {
     vi.restoreAllMocks();
   });
 
+  /** Default: no provenance rows (§13) — most tests don't exercise the grounding section. */
+  function mockProvenance(rows: Awaited<ReturnType<typeof api.getSessionProvenance>> = []) {
+    return vi.spyOn(api, 'getSessionProvenance').mockResolvedValue(rows);
+  }
+
   it('renders the score, sections, and ruling from the API', async () => {
     vi.spyOn(api, 'getScorecard').mockResolvedValue(fakeScorecard);
     vi.spyOn(api, 'getSessionTranscript').mockResolvedValue([]);
+    mockProvenance();
     renderWithProviders(<Scorecard />);
 
     expect(await screen.findByText('78')).toBeInTheDocument();
@@ -41,6 +47,7 @@ describe('Scorecard', () => {
   });
 
   it('preserves the newlines in multi-line strengths (whitespace-pre-line)', async () => {
+    mockProvenance();
     vi.spyOn(api, 'getScorecard').mockResolvedValue({
       ...fakeScorecard,
       strengths: '- Established fact one.\n- Established fact two.',
@@ -55,6 +62,7 @@ describe('Scorecard', () => {
   });
 
   it('renders the real persisted transcript when present', async () => {
+    mockProvenance();
     vi.spyOn(api, 'getScorecard').mockResolvedValue(fakeScorecard);
     vi.spyOn(api, 'getSessionTranscript').mockResolvedValue([
       {
@@ -79,6 +87,57 @@ describe('Scorecard', () => {
     expect(await screen.findByText('Transcript')).toBeInTheDocument();
     expect(screen.getByText('My client acted in good faith.')).toBeInTheDocument();
     expect(screen.getByText('Objection — hearsay.')).toBeInTheDocument();
+  });
+
+  it('renders citation grounding with flagged vs grounded rulings (§13)', async () => {
+    vi.spyOn(api, 'getScorecard').mockResolvedValue(fakeScorecard);
+    vi.spyOn(api, 'getSessionTranscript').mockResolvedValue([
+      {
+        id: 't3',
+        sessionId: 'sess1',
+        speaker: 'judge',
+        content: 'Sustained. Rule 99 controls here.',
+        wasInterruption: false,
+        spokenAt: '2026-07-07T00:00:02Z',
+      },
+    ]);
+    mockProvenance([
+      {
+        id: 'p1',
+        rulingType: 'objection_ruling',
+        chunkIdsUsed: ['court:r1', 'case:c1'],
+        citationFlags: ['Rule 99'],
+        createdAt: '2026-07-07T00:00:02Z',
+      },
+      {
+        id: 'p2',
+        rulingType: 'final_ruling',
+        chunkIdsUsed: ['court:r1'],
+        citationFlags: [],
+        createdAt: '2026-07-07T00:00:03Z',
+      },
+    ]);
+    renderWithProviders(<Scorecard />);
+
+    expect(await screen.findByText('Citation grounding')).toBeInTheDocument();
+    expect(screen.getByText('Objection ruling')).toBeInTheDocument();
+    expect(screen.getByText('2 sources shown')).toBeInTheDocument();
+    expect(screen.getByText(/Unverified: Rule 99/)).toBeInTheDocument();
+    // the grounded final ruling shows the ok badge
+    expect(screen.getByText('Final ruling')).toBeInTheDocument();
+    expect(screen.getByText('Citations grounded')).toBeInTheDocument();
+    // and the judge transcript line carrying the flagged citation gets the marker
+    expect(screen.getByText('Unverified citation')).toBeInTheDocument();
+  });
+
+  it('hides the grounding section when a session has no provenance rows', async () => {
+    vi.spyOn(api, 'getScorecard').mockResolvedValue(fakeScorecard);
+    vi.spyOn(api, 'getSessionTranscript').mockResolvedValue([]);
+    mockProvenance([]);
+    renderWithProviders(<Scorecard />);
+
+    expect(await screen.findByText('78')).toBeInTheDocument();
+    expect(screen.queryByText('Citation grounding')).not.toBeInTheDocument();
   });
 
   it('shows a scoring/polling state while the scorecard is still being written', async () => {

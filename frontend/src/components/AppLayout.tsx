@@ -30,6 +30,11 @@ export function AppLayout() {
             LexPar AI
           </Link>
           <div className="flex items-center gap-4">
+            {user?.role === 'admin' && (
+              <Link to="/admin" className="text-sm text-muted-foreground hover:text-foreground">
+                Admin
+              </Link>
+            )}
             {user && (
               <span className="text-sm text-muted-foreground">{user.email}</span>
             )}
