@@ -357,6 +357,16 @@ When an objection fires and Opposing Counsel's line is spoken, the Judge immedia
   ruling is in flight the classifier is on `hold()` (§6), so OC can't object over the judge either.
 - **Fail-safe:** on any error/timeout (10 s bound) the judge stays **silent** and the objection
   stays **pending** — the end-of-session assessment rules it; a ruling is never fabricated.
+- **No redundant re-argument (object → rule → continue):** on a turn where an objection fired, the
+  end-of-turn full `generate_reply` (`llm_node`) is **skipped** — OC already objected and the judge
+  already ruled, so a second full argument would be redundant, re-object *after* the ruling, and
+  race it through the TTS queue. The full reply still runs on turns with no objection (normal
+  cross-examination). Tracked by a per-turn `objected` flag set on fire, checked/reset in `llm_node`.
+- **Latency:** the canned objection is on the immediate path (gate ≈ 23 µs, ElevenLabs `/stream`
+  first-audio-byte ~0.14 s measured); it fires on an **interim**, so Deepgram endpointing is not in
+  this path. `voice_interrupt` logs the gate-decision + interrupt/say-dispatch times per fire.
+- **Duplicate render guard:** objection/ruling events carry a stable `timestamp`; the frontend
+  dedups on `type:timestamp`, so a redelivered data packet can't double-render one objection.
 
 ### End-of-session judge assessment (spoken ruling + scorecard)
 

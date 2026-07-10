@@ -226,6 +226,27 @@ def test_revised_final_after_pause_does_not_refire():
     assert calls == ["i i my client told me that his supervisor said"]  # LLM never re-consulted
 
 
+def test_two_hearsay_triggers_across_segment_boundary_fire_once():
+    # THE live double-hearsay case: one spoken utterance has two hearsay triggers ("told me" then
+    # "said"), and Deepgram (endpointing_ms=25) splits it into two segments. The second segment is
+    # NOT a continuation of the first (different words), so debounce alone would re-arm — but it
+    # lands inside the re-fire cooldown, so only ONE objection fires.
+    calls: list[str] = []
+    clock = FakeClock()
+    classifier = ObjectionClassifier(
+        SessionState(), decider=always_fire_decider(calls), clock=clock
+    )
+
+    first = classifier.consider("My client told me")
+    clock.advance(0.8)  # brief pause between segments of the same breath
+    second = classifier.consider("that his supervisor said the report wouldn't matter")
+
+    assert first.fire is True
+    assert second.fire is False
+    assert second.outcome == oc.DEBOUNCED
+    assert calls == ["My client told me"]  # the second segment never reached the decider
+
+
 def test_cooldown_suppresses_new_utterance_then_releases():
     # A genuinely NEW objectionable utterance within the cooldown floor is suppressed (no courtroom
     # double-objection seconds after being interrupted); after the floor it fires again.

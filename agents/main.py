@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 
 from livekit import agents
 from livekit.agents import Agent, AgentSession, WorkerOptions, cli, inference
@@ -71,9 +72,10 @@ class OpposingCounselAgent(Agent):
     sentence 1 while sentence 2 is still generating/verifying — instead of a stock completion.
     """
 
-    def __init__(self, state: SessionState):
+    def __init__(self, state: SessionState, turn_flags: dict):
         super().__init__(instructions="You are opposing counsel in a courtroom rehearsal session.")
         self._state = state
+        self._turn_flags = turn_flags  # {"objected": bool} — shared with judge_rule (main.py)
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
         # Record ONE coherent attorney turn per completed utterance. Deepgram emits many `is_final`
@@ -85,6 +87,15 @@ class OpposingCounselAgent(Agent):
             self._state.add_turn("attorney", text)
 
     async def llm_node(self, chat_ctx, tools, model_settings):
+        # Courtroom flow: if an objection already fired on this turn, Opposing Counsel already spoke
+        # ("Objection — <type>.") and the Judge already ruled — so DON'T also deliver a full
+        # end-of-turn argument. It would be redundant, re-object after the ruling, and race the
+        # ruling through the TTS queue. Reset the per-turn flag and stay silent; the full reply
+        # still runs on turns where no objection fired (normal cross-examination).
+        if self._turn_flags.get("objected"):
+            self._turn_flags["objected"] = False
+            logger.info("objection fired this turn — skipping the full OC reply (object → rule)")
+            return
         attorney_turn = _last_user_text(chat_ctx)
         spoken: list[str] = []
         # Blocking generate/verify runs in a worker thread inside the bridge; the event loop stays
@@ -116,6 +127,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     state = SessionState(case_facts=case_facts)
     classifier = ObjectionClassifier(state)
+    # Shared with OpposingCounselAgent.llm_node: set when an objection fires on a turn so the
+    # end-of-turn full reply is skipped (object → rule → continue, no redundant re-argument).
+    turn_flags = {"objected": False}
 
     # ElevenLabs' multi-stream-input websocket (the plugin's default `.stream()` path) returns no
     # audio on our free-tier account — replies were never voiced and the socket closed 1006. Wrap
@@ -192,6 +206,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         # assessment rules it (never fabricate a penalty). The classifier is on hold() while this
         # runs (voice_interrupt), so no new objection can fire over the judge; the timeout below
         # bounds how long that hold can last if the model call hangs.
+        turn_flags["objected"] = True  # skip the redundant end-of-turn OC reply (Issue 1)
         try:
             ruling, reason = await asyncio.wait_for(
                 asyncio.to_thread(judge.quick_ruling, state, objection, fragment), timeout=10.0
@@ -210,7 +225,14 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         except Exception:
             logger.exception("inline ruling could not be spoken (ledger already updated)")
         try:
-            event = {"type": "ruling", "ruling": ruling, "reason": reason}
+            # timestamp is a stable id the frontend dedups on (Issue 2) — a redelivered packet
+            # can't double-render the judge line.
+            event = {
+                "type": "ruling",
+                "ruling": ruling,
+                "reason": reason,
+                "timestamp": int(time.time() * 1000),
+            }
             await ctx.room.local_participant.publish_data(
                 json.dumps(event).encode("utf-8"), reliable=True, topic="objection"
             )
@@ -296,7 +318,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     ctx.add_shutdown_callback(_on_shutdown)
 
-    await session.start(agent=OpposingCounselAgent(state), room=ctx.room)
+    await session.start(agent=OpposingCounselAgent(state, turn_flags), room=ctx.room)
 
 
 if __name__ == "__main__":
