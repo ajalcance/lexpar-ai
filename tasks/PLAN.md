@@ -2359,3 +2359,32 @@ plain-text summarizer). Committed separately, behavior-change-flagged; **NOT pus
 a live session against it first. **⚠️ Live confirmation warranted** here (unlike Step 1): R1/R2 change
 what the models are told, so a live sparring pass should sanity-check objection firing (R1) and the
 Judge's citation behavior + benign-flag rate (R2) before this reaches origin/main.
+
+---
+
+### TTS expressiveness (monotone → performance-like) — Track A: voice_settings tuning — status: done
+
+**Audit (Phase 1):** OC + Judge both on `eleven_flash_v2_5` via the HTTP `synthesize()`/ChunkedStream
+path (POST `/text-to-speech/{voice}/stream`), voices George/Daniel — and `voice_settings` was
+**NOT passed for either voice**, so ElevenLabs used flat per-voice defaults (`style`≈0): the main
+monotone cause, an entirely untouched lever. Plugin `livekit-plugins-elevenlabs 1.6.4` accepts
+`voice_settings` + an arbitrary `model` str and lists `eleven_v3` in its `TTSModels` Literal, so v3
+is a code-level drop-in on the same HTTP path (one unknown: whether ElevenLabs serves v3 on the
+`/stream` variant — needs a live call). Latency map confirmed: OC live replies + Judge `quick_ruling`
+have NO slack; the **final ruling has genuine slack** (spoken after the SessionFinale deliberation
+wave, no barge-in). Websocket (`multi-stream-input`, the free-tier-broken path) is used nowhere.
+
+**Design (Phase 2, approved):** Track A = config-driven `voice_settings` on the current fast model
+for OC + Judge, ships regardless of v3. Track B = v3 + audio-tag hybrid for the final ruling only
+(gated on the live v3-on-`/stream` smoke test), with clean/stripped text as the source of truth and
+tagged text used ONLY as v3 TTS input.
+
+**Track A Result:** Done. `config.py` gained `_getfloat`/`_getbool` + `OC_VOICE_SETTINGS` /
+`JUDGE_VOICE_SETTINGS` dicts (config stays livekit-free; `main.py` builds `elevenlabs.VoiceSettings`
+from them and passes into both TTS instances). Defaults = the approved Phase-2 starting values (OC
+stability .40 / sim .75 / style .30 / speaker-boost off — modest on the latency-critical path; Judge
+.42 / .80 / .38 / on). All exposed via `.env` (`OC_VOICE_STYLE=0` reverts to the old flat delivery).
+**Tests: agents 168 (+5 — env-parse helpers, dict shape/defaults, style>0 anti-regression); ruff
+clean; main.py compiles.** Backend/frontend untouched. Committed on its own (Track A independent of
+Track B). **⚠️ Real verification is the live pass** — offline proves wiring/shape only; whether it
+SOUNDS more expressive (and whether OC's `style` adds perceptible lag) is ear-only.

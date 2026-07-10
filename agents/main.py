@@ -169,9 +169,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     # audio on our free-tier account — replies were never voiced and the socket closed 1006. Wrap
     # the TTS in StreamAdapter, which synthesizes sentence-by-sentence over the HTTP `/stream`
     # endpoint (verified working on this account) instead of the websocket. See docs/LESSONS.md.
+    # voice_settings drive expressiveness (Track A) — previously UNSET, so ElevenLabs used flat
+    # per-voice defaults (the monotone cause). Values come from config (tune by ear via .env).
     eleven_tts = elevenlabs.TTS(
         model=config.ELEVENLABS_MODEL,
         voice_id=config.ELEVENLABS_VOICE_ID,
+        voice_settings=elevenlabs.VoiceSettings(**config.OC_VOICE_SETTINGS),
         api_key=config.ELEVENLABS_API_KEY,
     )
 
@@ -181,6 +184,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     judge_tts = elevenlabs.TTS(
         model=config.ELEVENLABS_MODEL,
         voice_id=config.JUDGE_VOICE_ID,
+        voice_settings=elevenlabs.VoiceSettings(**config.JUDGE_VOICE_SETTINGS),
         api_key=config.ELEVENLABS_API_KEY,
     )
 

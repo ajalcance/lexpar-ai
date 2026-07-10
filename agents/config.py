@@ -89,6 +89,47 @@ ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb")
 # George/Sarah).
 JUDGE_VOICE_ID = os.getenv("JUDGE_VOICE_ID", "onwK4e9ZLuTAKqWW03F9")
 
+
+def _getfloat(name: str, default: float) -> float:
+    """Parse a float env var, falling back to the default on missing/malformed input."""
+    try:
+        return float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _getbool(name: str, default: bool) -> bool:
+    """Parse a boolean env var (1/true/yes/on = True); default when unset."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+# ElevenLabs voice_settings (expressiveness). These were previously UNSET, so ElevenLabs used each
+# voice's flat dashboard defaults — the main cause of monotone delivery. `style` is the primary
+# expressiveness dial (0 = flat/old behavior; higher = more expressive but adds inference latency);
+# lower `stability` = more emotive but less consistent turn-to-turn. Kept in config so they are
+# tuned by ear via .env in a live pass (this feature is fundamentally about how it SOUNDS) — set
+# OC_VOICE_STYLE=0 to revert exactly to the old flat delivery. main.py builds the plugin's
+# VoiceSettings from these dicts (config.py stays livekit-free for CI).
+OC_VOICE_SETTINGS = {
+    # OC is on the latency-critical streaming/interruption path — style kept modest, speaker-boost
+    # off, so the expressiveness bump doesn't add perceptible lag. Drop OC_VOICE_STYLE if it does.
+    "stability": _getfloat("OC_VOICE_STABILITY", 0.40),
+    "similarity_boost": _getfloat("OC_VOICE_SIMILARITY_BOOST", 0.75),
+    "style": _getfloat("OC_VOICE_STYLE", 0.30),
+    "use_speaker_boost": _getbool("OC_VOICE_USE_SPEAKER_BOOST", False),
+}
+JUDGE_VOICE_SETTINGS = {
+    # Judge (quick + final ruling, same fast instance in Track A) — a touch more gravitas/authority
+    # (speaker-boost on). quick_ruling is FAST_TIMEOUT-bound; lower JUDGE_VOICE_STYLE if it lags.
+    "stability": _getfloat("JUDGE_VOICE_STABILITY", 0.42),
+    "similarity_boost": _getfloat("JUDGE_VOICE_SIMILARITY_BOOST", 0.80),
+    "style": _getfloat("JUDGE_VOICE_STYLE", 0.38),
+    "use_speaker_boost": _getbool("JUDGE_VOICE_USE_SPEAKER_BOOST", True),
+}
+
 # Backend persistence (Gap 4): the worker completes the session + writes the scorecard/transcript
 # at session end, authenticating with the scoped agent service token (NOT a user login).
 AGENT_BACKEND_URL = os.getenv("AGENT_BACKEND_URL", "http://localhost:8000")
