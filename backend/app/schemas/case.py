@@ -23,5 +23,16 @@ class CaseOut(BaseModel):
     id: uuid.UUID
     title: str
     case_facts: str | None = None
+    case_summary: str | None = None
     storage_path: str | None = None
     created_at: datetime
+
+
+class CaseDocumentOut(BaseModel):
+    """Ingestion status of an uploaded pleading (§12)."""
+
+    id: str
+    filename: str
+    status: str  # 'pending' | 'ready' | 'failed'
+    chunk_count: int
+    error: str | None = None

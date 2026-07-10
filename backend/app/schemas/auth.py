@@ -9,12 +9,19 @@ Security notes: UserOut deliberately omits password_hash. Never widen it to expo
 
 import uuid
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str = Field(min_length=8)  # basic strength floor; enforce more in production
+    full_name: str | None = None
+    firm_name: str | None = None
 
 
 class TokenResponse(BaseModel):

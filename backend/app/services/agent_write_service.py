@@ -32,7 +32,19 @@ def get_session_context(db: DbSession, session_id: uuid.UUID) -> SessionContextO
     return SessionContextOut(
         case_facts=(case.case_facts if case and case.case_facts else ""),
         case_title=(case.title if case else ""),
+        case_summary=(case.case_summary if case and case.case_summary else ""),
     )
+
+
+def get_session_knowledge(db: DbSession, session_id: uuid.UUID, query: str, k: int = 5):
+    """Case-knowledge retrieval for a session (§12): the pleading summary + query-relevant passages.
+    Imported lazily to keep the write service free of embedding/knowledge deps at import."""
+    from app.schemas.agent import KnowledgeOut
+    from app.services import case_knowledge_service
+
+    session = session_service.get_session_by_id(db, session_id)
+    payload = case_knowledge_service.context_payload(db, session.case_id, query, k)
+    return KnowledgeOut(**payload)
 
 
 def complete_session(db: DbSession, session_id: uuid.UUID) -> Session:

@@ -35,6 +35,16 @@ class Settings(BaseSettings):
     # Object storage (S3-compatible: MinIO locally, DO Spaces in prod)
     object_storage_endpoint: str = "http://localhost:9000"
     object_storage_bucket: str = "lexpar-case-files"
+    object_storage_access_key: str = "minioadmin"
+    object_storage_secret_key: str = "minioadmin"
+    object_storage_region: str = "us-east-1"
+
+    # Case-knowledge RAG (§12): Fireworks embeddings (OpenAI-compatible) + pleading upload limits.
+    embedding_endpoint: str = "https://api.fireworks.ai/inference/v1"
+    embedding_model: str = "nomic-ai/nomic-embed-text-v1.5"
+    embedding_dim: int = 768
+    case_summary_model: str = "accounts/fireworks/models/gpt-oss-120b"
+    max_upload_mb: int = 25  # a 15-30 page pleading is well under this; reject larger uploads
 
     # LiveKit real-time voice layer
     livekit_url: str = "ws://localhost:7880"

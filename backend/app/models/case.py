@@ -25,6 +25,8 @@ class Case(Base):
     title: Mapped[str] = mapped_column(String, nullable=False)
     # SENSITIVE: attorney work product — never log in plaintext.
     case_facts: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # SENSITIVE: the LLM-extracted structured digest of the pleading (§12), always in agent context.
+    case_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     storage_path: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)

@@ -42,6 +42,7 @@ from livekit.plugins import deepgram, elevenlabs, openai, silero
 import backend_client
 import config
 import judge
+import opposing_counsel
 import scorecard_builder
 from judge_participant import JudgeParticipant
 from judge_voice import JudgeVoice
@@ -74,10 +75,11 @@ class OpposingCounselAgent(Agent):
     sentence 1 while sentence 2 is still generating/verifying — instead of a stock completion.
     """
 
-    def __init__(self, state: SessionState, turn_flags: dict):
+    def __init__(self, state: SessionState, turn_flags: dict, session_id: str = ""):
         super().__init__(instructions="You are opposing counsel in a courtroom rehearsal session.")
         self._state = state
         self._turn_flags = turn_flags  # {"objected": bool} — shared with judge_rule (main.py)
+        self._session_id = session_id  # for per-turn pleading retrieval (§12)
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
         # Record ONE coherent attorney turn per completed utterance. Deepgram emits many `is_final`
@@ -100,10 +102,18 @@ class OpposingCounselAgent(Agent):
             return
         attorney_turn = _last_user_text(chat_ctx)
         spoken: list[str] = []
-        # Blocking generate/verify runs in a worker thread inside the bridge; the event loop stays
-        # responsive. On a mid-stream verification failure the pipeline repairs once, else truncates
-        # (Option B) — either way every yielded sentence has already passed verification.
-        async for sentence in astream_verified_reply(self._state, attorney_turn):
+        # Ground the reply in the pleading: retrieve the passages relevant to this turn (§12) via
+        # the session-bound generator. Blocking generate/verify runs in a worker thread inside the
+        # bridge; the event loop stays responsive. On a mid-stream verification failure the pipeline
+        # repairs once, else truncates (Option B) — every yielded sentence has passed verification.
+        session_id = self._session_id
+
+        def _generate(state, turn):
+            return opposing_counsel.stream_reply(state, turn, session_id)
+
+        async for sentence in astream_verified_reply(
+            self._state, attorney_turn, generate=_generate
+        ):
             spoken.append(sentence)
             yield sentence + " "  # trailing space so TTS never jams two sentences together
         if spoken:
@@ -118,16 +128,19 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     session_id = _session_id_from_room(ctx.room)
 
-    # Load the session's case facts from the backend (agent-authed) so verification + the judge
-    # reason with the real case. Non-fatal: if it fails, start with empty facts rather than crash.
+    # Load the case context from the backend (agent-authed) so verification + the judge reason with
+    # the real case: the raw facts AND the structured pleading summary (§12), which goes into every
+    # prompt via SessionState.snapshot(). Non-fatal: if it fails, start empty rather than crash.
     case_facts = ""
+    case_summary = ""
     try:
         context = await asyncio.to_thread(backend_client.get_session_context, session_id)
         case_facts = context.get("case_facts", "")
+        case_summary = context.get("case_summary", "")
     except Exception:
         logger.warning("could not load case context for %s; starting with empty facts", session_id)
 
-    state = SessionState(case_facts=case_facts)
+    state = SessionState(case_facts=case_facts, case_summary=case_summary)
     classifier = ObjectionClassifier(state)
     # Shared with OpposingCounselAgent.llm_node: set when an objection fires on a turn so the
     # end-of-turn full reply is skipped (object → rule → continue, no redundant re-argument).
@@ -360,7 +373,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     ctx.add_shutdown_callback(_on_shutdown)
 
-    await session.start(agent=OpposingCounselAgent(state, turn_flags), room=ctx.room)
+    await session.start(
+        agent=OpposingCounselAgent(state, turn_flags, session_id), room=ctx.room
+    )
 
 
 if __name__ == "__main__":

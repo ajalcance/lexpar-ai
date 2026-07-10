@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session as DbSession
 
 from app.db import get_db
-from app.schemas.agent import ScorecardWriteIn, SessionContextOut
+from app.schemas.agent import KnowledgeOut, ScorecardWriteIn, SessionContextOut
 from app.schemas.scorecard import ScorecardOut
 from app.schemas.session import SessionOut
 from app.security_agent import require_agent_service
@@ -34,6 +34,18 @@ def get_session_context(
     db: DbSession = Depends(get_db),
 ) -> SessionContextOut:
     return agent_write_service.get_session_context(db, session_id)
+
+
+@router.get("/{session_id}/knowledge", response_model=KnowledgeOut)
+def get_session_knowledge(
+    session_id: uuid.UUID,
+    q: str = "",
+    k: int = 5,
+    db: DbSession = Depends(get_db),
+) -> KnowledgeOut:
+    # §12: the agents retrieve pleading passages relevant to the attorney's current statement to
+    # ground objections/rulings. Agent-token scoped, same as the other internal routes.
+    return agent_write_service.get_session_knowledge(db, session_id, q, k)
 
 
 @router.post("/{session_id}/complete", response_model=SessionOut)

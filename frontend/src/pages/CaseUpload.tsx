@@ -23,6 +23,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { PleadingUpload } from '@/components/PleadingUpload';
 import * as api from '@/lib/api';
 
 export function CaseUpload() {
@@ -31,12 +32,15 @@ export function CaseUpload() {
 
   const [title, setTitle] = useState('');
   const [caseFacts, setCaseFacts] = useState('');
+  const [createdCaseId, setCreatedCaseId] = useState<string | null>(null);
 
   const createCase = useMutation({
     mutationFn: () => api.createCase({ title, caseFacts }),
-    onSuccess: async () => {
+    onSuccess: async (created) => {
       await queryClient.invalidateQueries({ queryKey: ['cases'] });
-      navigate('/dashboard');
+      // Reveal the pleading-upload step for the new case instead of leaving immediately, so the
+      // attorney can attach the full filing that grounds the AI (§12).
+      setCreatedCaseId(created.id);
     },
   });
 
@@ -44,6 +48,24 @@ export function CaseUpload() {
     event.preventDefault();
     createCase.mutate();
   };
+
+  if (createdCaseId) {
+    return (
+      <Card className="mx-auto max-w-2xl">
+        <CardHeader>
+          <CardTitle>Case created — attach the pleading</CardTitle>
+          <CardDescription>
+            Upload the full complaint/pleading so Opposing Counsel and the Judge reason from the
+            real filing. You can also skip and do this later.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-6">
+          <PleadingUpload caseId={createdCaseId} />
+          <Button onClick={() => navigate('/dashboard')}>Done — go to dashboard</Button>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card className="mx-auto max-w-2xl">
@@ -76,13 +98,9 @@ export function CaseUpload() {
               required
             />
           </div>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="documents">Supporting documents (optional)</Label>
-            <Input id="documents" type="file" multiple disabled />
-            <p className="text-xs text-muted-foreground">
-              Uploads are wired up once the backend lands.
-            </p>
-          </div>
+          <p className="text-xs text-muted-foreground">
+            After creating the case you'll attach the full pleading (PDF) that the AI argues from.
+          </p>
           {createCase.isError && (
             <p className="text-sm text-destructive">
               Could not create the case. Try again.
