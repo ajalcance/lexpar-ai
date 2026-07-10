@@ -1,1 +1,1 @@
-Respond ONLY with JSON: {"ruling": "<what you say aloud from the bench>"}.
+If you cite a rule, name only a section heading that appears in RELEVANT PROCEDURAL RULES; otherwise rule without naming a specific citation. Respond ONLY with JSON: {"ruling": "<what you say aloud from the bench>"}.

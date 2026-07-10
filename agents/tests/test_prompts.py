@@ -20,6 +20,8 @@ STATIC_GOLDENS = {
         "aloud in the courtroom — no analysis, headings, quotation marks, or preamble."
     ),
     "judge_ruling_instruction": (
+        "If you cite a rule, name only a section heading that appears in RELEVANT PROCEDURAL "
+        "RULES; otherwise rule without naming a specific citation. "
         'Respond ONLY with JSON: {"ruling": "<what you say aloud from the bench>"}.'
     ),
     "judge_assessment": (
@@ -29,10 +31,11 @@ STATIC_GOLDENS = {
         "marked [sustained] or [overruled] were ruled from the bench DURING the session — do NOT "
         "re-rule them; treat those rulings as final.\n"
         "2. List 2-5 key facts the attorney genuinely established on the record (supported by the "
-        "transcript and not undercut by a sustained objection). Omit if none.\n"
+        "transcript and not undercut by a sustained objection). Return an empty array if none.\n"
         "3. Give a one- to two-sentence closing ruling from the bench that reflects the session as "
         "a whole, including a brief acknowledgment of the objections already ruled during the "
-        "session.\n"
+        "session. If you cite a rule, name only a section heading that appears in RELEVANT "
+        "PROCEDURAL RULES; otherwise rule without naming a specific citation.\n"
         'Respond ONLY with JSON: {"rulings": ["sustained"|"overruled", ...], "established_facts": '
         '["<fact>", ...], "closing_ruling": "<what you say aloud>"}. The rulings array must have '
         "exactly one entry per [pending] objection, in the same order (empty array if none are "
@@ -41,14 +44,16 @@ STATIC_GOLDENS = {
     "judge_quick_ruling": (
         "You are the presiding judge in a courtroom rehearsal. Opposing Counsel just objected to "
         "the attorney's in-progress statement. Rule IMMEDIATELY, as from the bench: sustained or "
-        "overruled, with one short reason (a few words, spoken aloud). Respond ONLY with JSON "
-        '{"ruling": "sustained"|"overruled", "reason": "<a few words>"}.'
+        "overruled, with one short reason (a few words, spoken aloud). If you cite a rule, name "
+        "only a section heading that appears in RELEVANT PROCEDURAL RULES; otherwise rule without "
+        'naming a specific citation. Respond ONLY with JSON: {"ruling": "sustained"|"overruled", '
+        '"reason": "<a few words>"}.'
     ),
     "consistency_verifier": (
         "You are a verification model in a courtroom rehearsal system. You check a DRAFT REPLY "
         "only for factual consistency with the SESSION RECORD — not style, tone, or "
         "persuasiveness. Flag any statement in the draft that contradicts the case facts, an "
-        "established fact, or a sustained objection ruling. Respond ONLY with JSON of the form "
+        "established fact, or a sustained objection ruling. Respond ONLY with JSON: "
         '{"consistent": boolean, "contradictions": [string, ...]}. If nothing in the draft '
         "contradicts the record, return consistent=true and an empty contradictions list."
     ),
@@ -68,9 +73,10 @@ def test_classifier_prompt_renders_byte_identical_with_eligible_grounds():
         "in-progress statement with an objection. Follow the rule: object ONLY when the phrasing "
         "genuinely invites one — NOT on every turn. Most fragments should not trigger an "
         "objection. Use the SESSION RECORD to avoid objecting on grounds already ruled. Valid "
-        "objection types: leading, hearsay. Respond ONLY with JSON {\"fire\": boolean, "
-        '"objection_type": <one type or null>, "reason": "<a few words>"}. Set fire=false and '
-        "objection_type=null unless there is a clear, well-founded objection."
+        "objection types: leading, hearsay. objection_type MUST be one of these or null. Respond "
+        'ONLY with JSON: {"fire": boolean, "objection_type": <one type or null>, "reason": '
+        '"<a few words>"}. Set fire=false and objection_type=null unless there is a clear, '
+        "well-founded objection."
     )
     assert (
         prompts.render("objection_classifier_system", eligible="leading, hearsay") == expected
@@ -78,9 +84,9 @@ def test_classifier_prompt_renders_byte_identical_with_eligible_grounds():
 
 
 def test_classifier_prompt_empty_eligible_matches_old_empty_join():
-    # ", ".join(()) == "" — the old function produced "Valid objection types: . Respond ..."
+    # ", ".join(()) == "" — an empty eligible list substitutes to an empty string in place.
     rendered = prompts.render("objection_classifier_system", eligible="")
-    assert "Valid objection types: . Respond ONLY with JSON" in rendered
+    assert "Valid objection types: . objection_type MUST be one of these or null." in rendered
 
 
 def test_oc_continuation_renders_byte_identical():

@@ -1,5 +1,5 @@
 Review the full session below. Then, as the presiding judge:
 1. For EACH objection still marked [pending] in the SESSION RECORD, in the order listed, rule 'sustained' or 'overruled' based on what the transcript shows. Objections already marked [sustained] or [overruled] were ruled from the bench DURING the session — do NOT re-rule them; treat those rulings as final.
-2. List 2-5 key facts the attorney genuinely established on the record (supported by the transcript and not undercut by a sustained objection). Omit if none.
-3. Give a one- to two-sentence closing ruling from the bench that reflects the session as a whole, including a brief acknowledgment of the objections already ruled during the session.
+2. List 2-5 key facts the attorney genuinely established on the record (supported by the transcript and not undercut by a sustained objection). Return an empty array if none.
+3. Give a one- to two-sentence closing ruling from the bench that reflects the session as a whole, including a brief acknowledgment of the objections already ruled during the session. If you cite a rule, name only a section heading that appears in RELEVANT PROCEDURAL RULES; otherwise rule without naming a specific citation.
 Respond ONLY with JSON: {"rulings": ["sustained"|"overruled", ...], "established_facts": ["<fact>", ...], "closing_ruling": "<what you say aloud>"}. The rulings array must have exactly one entry per [pending] objection, in the same order (empty array if none are pending).

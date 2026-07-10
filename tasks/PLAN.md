@@ -2339,5 +2339,23 @@ frozen golden string (the exact pre-migration text) — a one-byte drift fails C
 sync, warm_cache, and JSON-braces-survive-templating. **Suites: agents 163 (+9), backend 74 (+2),
 ruff clean, main.py compiles;** frontend untouched (agents/backend only). **Docs:** DEV_GUIDELINES
 §10 (full convention + safety boundary) + §11; LESSONS ([Agents/prompts] customization must be
-structurally unable to reach a safety constraint). Committed on its own (structural-only). Step 2
-(prompt-improvement recommendations) is proposal-only, awaiting per-item approval.
+structurally unable to reach a safety constraint). Committed on its own (structural-only, pushed as
+deead44). Step 2 (prompt-improvement recommendations) is proposal-only, awaiting per-item approval.
+
+**Step 2 Result (behavior-affecting — DISTINCT from Step 1's structural move):** All four approved
+recommendations applied to the prompt files, golden tests updated alongside each (the deliberate
+"behavior is changing on purpose" signal). **R1** — classifier system prompt now states
+`objection_type MUST be one of these or null` (fewer wasted/suppressed fires vs the Phase-4
+post-parse guard). **R2** — the Judge's three ruling prompts (quick_ruling, assessment step 3,
+ruling_instruction) now say "if you cite a rule, name only a section heading that appears in RELEVANT
+PROCEDURAL RULES; otherwise rule without naming a specific citation" — targets the §13 Phase-5
+benign-citation-flag open question (citations echoed from the summary/attorney speech, not the
+retrieved chunks, still flag), constraint-reinforcing, does NOT touch the immutable no-fabrication
+sections. **R3** — assessment `established_facts` "Omit if none" → "Return an empty array if none"
+(consistency with the rulings array; avoids a dropped key). **R4** — standardized the JSON-contract
+phrasing to "Respond ONLY with JSON: {…}" across quick_ruling / classifier / consistency (cosmetic).
+**Suites: agents 163, backend 74, ruff clean** (backend unchanged — R4 doesn't apply to the
+plain-text summarizer). Committed separately, behavior-change-flagged; **NOT pushed** — the user runs
+a live session against it first. **⚠️ Live confirmation warranted** here (unlike Step 1): R1/R2 change
+what the models are told, so a live sparring pass should sanity-check objection firing (R1) and the
+Judge's citation behavior + benign-flag rate (R2) before this reaches origin/main.
