@@ -1777,7 +1777,7 @@ and nothing non-obvious surfaced. **Untouched as instructed:** judge-participant
 
 ---
 
-### Court & Procedural Rules Grounding + Enterprise Hardening — status: Phase 1 done (checkpoint), Phases 2-8 not started
+### Court & Procedural Rules Grounding + Enterprise Hardening — status: Phases 1-2 done, Phases 3-8 not started
 
 **Why:** the grounding audit (2026-07-10) established the agents have ZERO engineered procedural
 grounding — no rules corpus, no jurisdiction prompt; all grounding is the uploaded pleading.
@@ -1869,3 +1869,35 @@ creation in Phase 4 per plan). **Tests: backend 46 (was 38; +8 incl. the two upd
 agents 126 offline (was 122; +4 taxonomy/mapping), ruff clean both.** **No-fabrication check
 passed:** diff greped — no statutory/rule text anywhere; the only citation-shaped string is the
 spec's own `source_citation` field example. Frontend untouched.
+
+**Phase 2 Result:** Done, tested, committed. **Ingestion** —
+`court_knowledge_service.py`: `ingest_rule_document` (extract → chunk → embed → persist
+`CourtRuleChunk` rows with conservative `extract_section_reference` — anchored start-of-chunk
+Section/Sec./Rule + number, else NULL), `retrieve_rule_passages` (cosine, scoped by court_id,
+verbatim text prefixed "[Section N]" when extracted), status/row helpers. **Deliberately NO LLM
+summary pass** (unlike the case pipeline): only verbatim operator text is stored/retrieved — a
+model-written rules digest would inject paraphrased rule content into prompts, violating the §13
+constraint (documented in the file header). Reuse judgment: `document_service.chunk_text` +
+`embedding_service.*` are already standalone shared helpers — called directly, no refactor needed
+(a further shared-ingest abstraction for two callers would be premature). **Admin gating** — new
+`security.require_admin` (composes get_current_user; 401 invalid token, 403 valid non-admin;
+distinct from the agent service credential). Routes (`api/courts.py`, registered in main.py):
+`POST /api/courts` (admin), `GET /api/courts` (any authenticated user; active+non-deleted only),
+`POST /api/courts/{id}/rules` (admin; multipart w/ optional title/source_citation/
+source_reference provenance Form fields; PDF-only, size-capped, stores to
+`courts/{court_id}/{filename}`, background-ingests — mirrors pleading upload),
+`GET /api/courts/{id}/rules` (admin; ingestion status). `court_service.py` holds catalog CRUD.
+**Seed** — `scripts/seed_court.py`: reads operator PDFs from `seed_data/court_rules/`
+(gitignored), optional manifest.json for per-file provenance, idempotent court creation
+(default name = the spec's suggested forum designation, `--name` to override — no case documents
+exist in-repo to derive formal naming from), real ingestion, storage-unreachable fallback records
+the local path, `--promote-admin EMAIL` as the explicit operator promotion path. **FAILS LOUDLY**
+on a missing/empty rules dir, directing the operator to official government sources and
+explicitly forbidding AI-generated/unofficial text — verified by running it (exit 1 + message).
+**Tests: backend 58 (was 46; +12 — gating 401/403/OK, catalog filtering, upload route w/
+monkeypatched storage+background, section-heading extraction incl. not-at-start/no-number
+negatives, ingest persists denormalized court_id + section refs, failure path, retrieval scoped
+by court w/ section prefix), agents 126 unchanged, ruff clean (incl. scripts/).**
+**No-fabrication check passed:** all fixture text is labeled synthetic placeholder prose
+("Placeholder body text… not a real rule"); greped new files for statutory-style language — clean.
+ARCHITECTURE §5/§13 doc updates deferred to Phase 8 per the plan.

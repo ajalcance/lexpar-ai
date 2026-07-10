@@ -13,3 +13,6 @@ venv/
 .ruff_cache/
 *.db
 *.egg-info/
+
+# Operator-supplied official court-rule documents (never committed - see scripts/seed_court.py)
+seed_data/
