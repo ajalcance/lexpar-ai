@@ -1446,7 +1446,7 @@ non-interruptibility feel, cooldown vs. real pacing, and ruling-event rendering.
 
 ---
 
-### Elaboration ordering + residual double-fire + immediate-path latency — status: building
+### Elaboration ordering + residual double-fire + immediate-path latency — status: done
 
 **Issue 1 — OC's full elaboration plays AFTER the judge ruling (traced, not guessed).**
 Two *independent* Opposing-Counsel utterances exist for one objectionable turn, plus the ruling:
