@@ -468,3 +468,31 @@ is audible like the rest. Best-effort and non-fatal: a prime failure just degrad
 first-ruling-clip behavior. General rule: any media track that must play a latency-sensitive line
 should be published and primed at join time, never lazily on the first real utterance — the
 first-published-track subscribe/attach/autoplay window will otherwise swallow that utterance.
+
+### [Agents/Judge] Live oral-argument run came back ALL sustained — the judge ruled blind to the proceeding
+**Wrong:** The inline quick-ruling prompt (`judge_quick_ruling.md`) received the objection's ground +
+the statement but **not the proceeding type** (`SessionState.snapshot()` never included it), and it
+gave no instruction to test the objection's merit — just "Opposing Counsel objected; rule sustained
+or overruled." Handed an already-raised objection with no lens and no mandate to push back, the model
+**anchored and sustained every time**, back-filling a mismatched reason (sustained an `assumes_facts`
+objection with reason "argumentative"). In oral argument that is a category error: no witness is
+testifying, so counsel arguing the law and characterizing the record ("this mortgage is ultra vires
+as a matter of law," "demand upon the board would have been futile") is *proper* — those are not
+statements that "assume facts not in the record." Result: a script written for a sustained/overruled
+MIX produced 5/5 sustained, all labeled `assumes_facts`. Tell in the transcript: every `judge` turn
+"Sustained. <reason>" with the reason not matching the objection's ground. (The classifier was
+already proceeding-aware for RESTRAINT — but proceeding-awareness on the fire side is wasted if the
+ruling side rubber-stamps whatever slips through.)
+**Right:** Give the judge the same lens the classifier has, on BOTH ruling paths. (1) Inject
+`PROCEEDING TYPE` into the inline `quick_ruling` context AND the end-of-session `assess_session`
+context (not just the classifier). (2) Both judge prompts now rule **on the merits**: an objection
+being raised is not itself grounds to sustain; in an argument proceeding, arguing the law / drawing
+inferences / characterizing the record is proper, so `assumes_facts` / `calls_for_legal_conclusion` /
+`argumentative` objections are OVERRULED unless the statement genuinely misstates an established fact
+or strays from the issues; witness examinations apply ordinary evidentiary grounds. No hard-coded
+ruling bias ever existed (the parsers already fail attorney-favorable: quick-ruling raises → stays
+pending, assessment defaults unknown → overruled) — the skew was purely the missing lens +
+anchoring. Prompt changes are made prompt-and-golden-together (`tests/test_prompts.py` byte-goldens),
+never silently. General rule: any LLM handed a decision another component already "pre-approved"
+(here: an objection the classifier fired) will anchor toward ratifying it unless explicitly told to
+re-adjudicate on the merits with the same context that component used.

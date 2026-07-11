@@ -27,7 +27,14 @@ STATIC_GOLDENS = {
     "judge_assessment": (
         "Review the full session below. Then, as the presiding judge:\n"
         "1. For EACH objection still marked [pending] in the SESSION RECORD, in the order listed, "
-        "rule 'sustained' or 'overruled' based on what the transcript shows. Objections already "
+        "rule 'sustained' or 'overruled' on the MERITS given the PROCEEDING TYPE — an objection "
+        "being raised is not itself grounds to sustain it. In an ARGUMENT proceeding (oral "
+        "argument, motion hearing) no witness is testifying: counsel may argue the law, draw "
+        "inferences, characterize the record, and urge legal conclusions, so objections that the "
+        'argument "assumes facts not in the record," "calls for a legal conclusion," or is '
+        '"argumentative" are usually IMPROPER and should be OVERRULED unless the statement '
+        "genuinely misstates an established fact or strays entirely from the issues; in a WITNESS "
+        "EXAMINATION apply the ordinary evidentiary grounds normally. Objections already "
         "marked [sustained] or [overruled] were ruled from the bench DURING the session — do NOT "
         "re-rule them; treat those rulings as final.\n"
         "2. List 2-5 key facts the attorney genuinely established on the record (supported by the "
@@ -43,11 +50,25 @@ STATIC_GOLDENS = {
     ),
     "judge_quick_ruling": (
         "You are the presiding judge in a courtroom rehearsal. Opposing Counsel just objected to "
-        "the attorney's in-progress statement. Rule IMMEDIATELY, as from the bench: sustained or "
-        "overruled, with one short reason (a few words, spoken aloud). If you cite a rule, name "
-        "only a section heading that appears in RELEVANT PROCEDURAL RULES; otherwise rule without "
-        'naming a specific citation. Respond ONLY with JSON: {"ruling": "sustained"|"overruled", '
-        '"reason": "<a few words>"}.'
+        "the attorney's statement. Rule IMMEDIATELY from the bench — but rule on the MERITS: an "
+        "objection being raised is not itself a reason to sustain it. Sustain only when the "
+        "statement actually violates a rule appropriate to the current PROCEEDING TYPE; otherwise "
+        "overrule.\n"
+        "\n"
+        "In an ARGUMENT proceeding (oral argument, motion hearing) no witness is testifying — "
+        "counsel may argue the law, draw inferences, characterize the record, and urge legal "
+        'conclusions. Objections that the argument "assumes facts not in the record," "calls for '
+        'a legal conclusion," or is "argumentative" are usually IMPROPER here: OVERRULE them '
+        "unless the statement genuinely misstates an established fact in the SESSION RECORD or "
+        "strays entirely from the issues. In a WITNESS EXAMINATION (direct or cross) apply the "
+        "ordinary evidentiary grounds normally.\n"
+        "\n"
+        "Do not sustain merely because the objection names a ground; test whether that ground "
+        "actually fits this statement in this proceeding. Give one short reason (a few words, "
+        "spoken aloud) that MATCHES your ruling and the objection's ground. If you cite a rule, "
+        "name only a section heading that appears in RELEVANT PROCEDURAL RULES; otherwise rule "
+        'without naming a specific citation. Respond ONLY with JSON: {"ruling": '
+        '"sustained"|"overruled", "reason": "<a few words>"}.'
     ),
     "consistency_verifier": (
         "You are a verification model in a courtroom rehearsal system. You check a DRAFT REPLY "

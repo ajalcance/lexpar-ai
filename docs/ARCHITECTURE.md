@@ -352,6 +352,21 @@ user JWT whose `role == 'admin'`), distinct from both the agent token and an ord
     fallback candidates are framed as "usually none does, default to not firing." (The heavier
     comparative reasoning pushed the classifier's `max_tokens` floor up — raised 512 → 1024 to avoid
     the gpt-oss empty-content bug; it's a ceiling, so simple cases still stop early. See LESSONS.)
+
+    **The judge must share that proceeding lens (the ruling side of the same coin).** The classifier
+    being proceeding-aware is not enough: whatever objection *does* fire is handed to the judge, and if
+    the judge rules blind it reflexively **sustains** — a live oral-argument pass came back all-
+    `sustained` because the quick-ruling prompt received no proceeding type and no instruction to test
+    merit, so proper argument ("ultra vires as a matter of law," "demand futility") was objected as
+    `assumes_facts` and rubber-stamped. Fix: the proceeding type is now injected into **both** judge
+    context builders (inline `quick_ruling` and end-of-session `assess_session`), and both prompts
+    (`judge_quick_ruling`, `judge_assessment`/`_expressive`) rule **on the merits** — in an argument
+    proceeding, arguing the law / drawing inferences / characterizing the record is *proper*, so
+    `assumes_facts` / `calls_for_legal_conclusion` / `argumentative` objections are **overruled** unless
+    the statement genuinely misstates an established fact or strays from the issues; witness
+    examinations apply the ordinary evidentiary grounds. This is what produces a realistic sustained/
+    overruled **mix** instead of an all-sustained bench. See LESSONS.
+
     `ObjectionClassifier` adds **per-utterance debounce** (compared on **normalized** text — STT
     finals rewrite casing/punctuation relative to their interims, so an exact-prefix check re-arms
     on the revised final and double-fires; see LESSONS), a **re-fire cooldown** (time floor ~5 s,
