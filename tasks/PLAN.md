@@ -2409,3 +2409,31 @@ live pass:** whether ElevenLabs serves v3 on the plugin's `/stream` HTTP path (P
 offline-unresolvable unknown) and whether v3 + tags actually sound better — turn `JUDGE_EXPRESSIVE_
 FINAL_RULING=true` only after that live confirmation. Both tracks committed, unpushed, ready for the
 live pass.
+
+---
+
+### Retrieval accuracy for court-rule grounding — Storage minimal scope (done) + retrieval audit — status: storage done; retrieval Phase 1 done, Phase 2 pending
+
+**Storage minimal scope (implemented + tested, committed on its own):** (1) `max_upload_mb` 25→50
+(admin/attorney-gated, infrequent; a text statute is ~5-15 MB; still bounds in-RAM read; env
+`MAX_UPLOAD_MB`). (2) Admin upload UI surfaces the real backend detail (`error.message`, e.g. "File
+exceeds the 50 MB limit") instead of a generic string. (3) Empty AND near-empty extraction
+(`< MIN_EXTRACTED_CHARS=20`) fails ingest with an actionable "scanned/image PDF — supply a text-based
+official copy" message, both corpora. Tests: near-empty ingest (court+case) + a deterministic
+413-detail contract test; a flaky full-flow frontend upload-error test was dropped (jsdom
+react-query/conditional-form races) in favor of the backend contract test + the trivially-correct
+display change. Backend 77, frontend 64, ruff/type-check/lint clean.
+
+**Retrieval Phase 1 audit (the real task):** three confirmed accuracy gaps. (1) **Chunking is NOT
+section-aware** — `document_service.chunk_text` is fixed 3200-char windows (400 overlap) with generic
+paragraph/sentence backoff, zero heading awareness → a section >3200 chars splits across chunks, and
+chunks routinely hold half a provision / span a section boundary; `section_reference` is only set
+when a chunk OPENS with a heading (mid-section chunks are NULL). (2) **No exact-citation lookup** —
+`section_reference` is stored but retrieval is purely cosine (`top_k`, no threshold); the field is
+descriptive/prefix-only, never a retrieval key, so "Section 73" can't be fetched directly. (3)
+**citation_check verifies SHOWN, not CORRECT** — it confirms a cited section was in the turn's
+retrieved chunks, but nothing scores relevance and `top_k` always returns the k=4 nearest however
+tenuous; queries use the raw utterance (+ objection grounds), never the case's legal theory from
+`case_summary`. k=4 uniform at all call sites (OC stream_reply, judge ×3, classifier tier-3);
+embeddings nomic-embed-text-v1.5, brute-force cosine. Phase 2 (proposal) next — section-aware
+chunking, hybrid exact+semantic retrieval, query enrichment, relevance floor / return-fewer-than-k.

@@ -64,11 +64,12 @@ def ingest_document(
     status to 'ready' or 'failed' (with the error) — never leaves it silently 'pending'."""
     try:
         text = document_service.extract_pdf_text(raw_bytes)
-        chunks = document_service.chunk_text(text)
-        if not chunks:
+        if len(text.strip()) < document_service.MIN_EXTRACTED_CHARS:
             raise ValueError(
-                "no extractable text (a scanned/image PDF needs OCR — see §12 follow-ups)"
+                "No extractable text found — this may be a scanned/image PDF. Please provide a "
+                "text-based PDF from an official source."
             )
+        chunks = document_service.chunk_text(text)
         vectors = embedder(chunks)
         if len(vectors) != len(chunks):
             raise ValueError("embedding count did not match chunk count")

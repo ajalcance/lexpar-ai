@@ -44,7 +44,13 @@ class Settings(BaseSettings):
     embedding_model: str = "nomic-ai/nomic-embed-text-v1.5"
     embedding_dim: int = 768
     case_summary_model: str = "accounts/fireworks/models/gpt-oss-120b"
-    max_upload_mb: int = 25  # a 15-30 page pleading is well under this; reject larger uploads
+    # Upload cap for pleadings (§12) and official rule documents (§13). Raised to 50: a large
+    # text-based statute (hundreds of pages) runs ~5-15 MB, so 50 gives comfortable headroom while
+    # still bounding memory (the route reads the whole file into RAM) and abuse. Not unbounded —
+    # uploads are admin/attorney-gated and infrequent, not a public endpoint. Override via env
+    # MAX_UPLOAD_MB. (Scanned/image PDFs are rejected at ingest for lacking extractable text, not by
+    # size — a 30 MB scan and a 3 MB text copy of the same statute are handled very differently.)
+    max_upload_mb: int = 50
 
     # LiveKit real-time voice layer
     livekit_url: str = "ws://localhost:7880"

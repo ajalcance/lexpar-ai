@@ -228,7 +228,13 @@ export function Admin() {
                   />
                 </div>
                 {uploadRule.isError && (
-                  <p className="text-sm text-destructive">Upload failed. Try again.</p>
+                  // Surface the backend's actual detail (e.g. "File exceeds the 50 MB limit") from
+                  // the ApiError message, not a generic string — so the admin knows what to fix.
+                  <p className="text-sm text-destructive">
+                    {uploadRule.error instanceof Error
+                      ? uploadRule.error.message
+                      : 'Upload failed. Try again.'}
+                  </p>
                 )}
                 <Button type="submit" disabled={uploadRule.isPending || !ruleFile}>
                   {uploadRule.isPending ? 'Uploading…' : 'Upload rules'}

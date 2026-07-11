@@ -131,6 +131,24 @@ def test_rule_upload_creates_pending_document(client, admin_headers, db_session,
     assert [d["id"] for d in listed] == [body["id"]]
 
 
+def test_rule_upload_rejects_oversize_with_actionable_detail(
+    client, admin_headers, db_session, monkeypatch
+):
+    # Over the size cap → 413 with a specific, surfaceable detail (the frontend shows this message,
+    # not a generic "Upload failed"). Patch the cap to 0 so any non-empty file trips it.
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "max_upload_mb", 0)
+    court = _court(db_session)
+    resp = client.post(
+        f"/api/courts/{court.id}/rules",
+        headers=admin_headers,
+        files={"file": ("big.pdf", b"%PDF-1.4 some bytes", "application/pdf")},
+    )
+    assert resp.status_code == 413
+    assert "exceeds" in resp.json()["detail"].lower()
+
+
 def test_rule_upload_rejects_non_pdf(client, admin_headers, db_session):
     court = _court(db_session)
     resp = client.post(
@@ -197,6 +215,25 @@ def test_ingest_rule_document_persists_chunks_with_sections(db_session, monkeypa
     assert chunks[0].section_reference == "Section 12"  # first chunk opens with the heading
 
 
+def test_ingest_rule_document_fails_on_near_empty_text(db_session, monkeypatch):
+    # A scanned/image rule PDF (no or near-no extractable text) fails ingest with an actionable
+    # message pointing at a text-based official copy — never leaves the document silently pending.
+    from app.services import document_service
+
+    court = _court(db_session)
+    document = court_knowledge_service.create_rule_document_row(
+        db_session, court.id, "Scanned Rules", "courts/x/scan.pdf"
+    )
+    monkeypatch.setattr(document_service, "extract_pdf_text", lambda data: "  RA 11232  ")
+    court_knowledge_service.ingest_rule_document(
+        db_session, document, b"%PDF", embedder=lambda t: []
+    )
+    db_session.refresh(document)
+    assert document.ingestion_status == "failed"
+    assert document.chunk_count == 0
+    assert "text-based PDF" in (document.error or "")
+
+
 def test_ingest_rule_document_marks_failed_on_no_text(db_session, monkeypatch):
     from app.services import document_service
 
@@ -210,7 +247,7 @@ def test_ingest_rule_document_marks_failed_on_no_text(db_session, monkeypatch):
     )
     db_session.refresh(document)
     assert document.ingestion_status == "failed"
-    assert "OCR" in (document.error or "")
+    assert "scanned" in (document.error or "").lower()
 
 
 def test_retrieve_rule_passages_scoped_to_court_with_section_prefix(db_session, monkeypatch):

@@ -19,6 +19,12 @@ import re
 CHUNK_CHARS = 3200
 CHUNK_OVERLAP = 400
 
+# Below this many extracted characters a PDF is treated as having no usable text (empty OR
+# near-empty — e.g. a scanned/image PDF where pypdf recovers only a few header/watermark chars).
+# Deliberately low so a legitimately short document is never false-failed; any real rule/pleading
+# has far more text than this.
+MIN_EXTRACTED_CHARS = 20
+
 
 def extract_pdf_text(data: bytes) -> str:
     """Extract text from a PDF's bytes. Empty string if it has no extractable text (scanned/image

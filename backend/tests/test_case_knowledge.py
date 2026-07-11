@@ -98,7 +98,20 @@ def test_ingest_marks_failed_on_no_text(monkeypatch, db_session):
     case_knowledge_service.ingest_document(db_session, document, b"%PDF", embedder=lambda t: [])
     db_session.refresh(document)
     assert document.status == "failed"
-    assert "OCR" in (document.error or "")
+    assert "scanned" in (document.error or "").lower()  # actionable, not generic
+
+
+def test_ingest_marks_failed_on_near_empty_text(monkeypatch, db_session):
+    # A scanned PDF yielding only a few header/watermark chars is still treated as no usable text.
+    case = _seed_case(db_session)
+    document = case_knowledge_service.create_document_row(
+        db_session, case.id, "scan.pdf", "cases/x/scan.pdf", "application/pdf", 10
+    )
+    monkeypatch.setattr(document_service, "extract_pdf_text", lambda data: "  Page 1  ")
+    case_knowledge_service.ingest_document(db_session, document, b"%PDF", embedder=lambda t: [])
+    db_session.refresh(document)
+    assert document.status == "failed"
+    assert "scanned" in (document.error or "").lower()
 
 
 def test_retrieve_ranks_relevant_passages(monkeypatch, db_session):
