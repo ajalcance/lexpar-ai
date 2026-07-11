@@ -355,3 +355,43 @@ otherwise voice a literal `[sighs]`. General rule: when one generated string fee
 separate derived value, never the shared one. (Separate, quieter gotcha from the same task: leaving
 ElevenLabs `voice_settings` unset makes the plugin omit it entirely, so the API uses each voice's flat
 default — `style`≈0 — which reads as monotone; pass explicit `voice_settings` to get expressiveness.)
+
+### [Backend/RAG] Retrieval accuracy for citable law: section-aware chunks + exact lookup + a relevance floor that can return nothing
+**Wrong:** Chunk statutes with the same fixed-size character windows used for pleadings, store
+`section_reference` as descriptive metadata only, and rank purely by cosine with a top-k that ALWAYS
+returns k. Three failures compound: (1) a window cuts mid-section, so retrieval hands the model half a
+provision missing its proviso/exception, and mid-section chunks aren't even labeled; (2) a query that
+literally names "Section 73" depends on embedding rank to surface §73 — there's no direct lookup even
+though the section number is known; (3) the 4th-nearest chunk is returned however tenuous (cosine
+~0.1), so a weak/irrelevant provision gets shown and can be cited, and the citation check (which only
+verifies *shown*) passes it. "Grounded" silently drifts from "correct."
+**Right:** Three matched fixes. (A) **Section-aware chunking for the rules corpus** (not pleadings):
+split at detected headings so a chunk is a complete provision; an oversized section → windowed
+sub-chunks EACH stamped with the parent heading (labeled, not NULL); a no-heading span degrades to
+generic windowing (never fails). (B) **Hybrid exact-citation lookup**: canonicalize the query's
+section refs (`Section 12`==`Sec. 12`==`§12`) and fetch those chunks by `section_reference`
+deterministically, ahead of semantic top-k — a named section no longer depends on embedding rank, and
+(with A) returns the whole provision. (D) **Relevance floor with return-fewer-than-k**: drop matches
+below τ, so retrieval returns fewer than k — including ZERO. The non-obvious key: returning zero is
+SAFER than padding, and it costs nothing to build because it **reuses the existing fail-open
+empty-block path** (a below-threshold result is indistinguishable from a retrieval failure, which the
+pipeline already handles by proceeding on the case summary with no rules block). "Return nothing
+rather than a weak match" beats "always return the best-k-however-tenuous" for citation accuracy.
+Permanent boundary to state honestly, not paper over: none of this makes "grounded" equal "legally
+correct" — a strong-cosine-but-wrong provision still passes. Semantic similarity ≠ legal relevance;
+closing that needs a reranker / labeled eval (the deferred Phase-7 golden set).
+
+### [Backend/testing] A monkeypatched module attribute does NOT reach a def-time default argument
+**Wrong:** `def retrieve(..., embedder=embedding_service.embed_text)` — the default is bound to the
+function object ONCE at def time. A test's `monkeypatch.setattr(embedding_service, "embed_text", fake)`
+replaces the module attribute but NOT the already-bound default, so the function keeps calling the
+real (network) embedder. This stayed invisible for months because the old no-floor `top_k` returned
+the top-k regardless of a garbage cosine (real 768-dim query vector vs a 3-dim test-embedded chunk →
+`len` mismatch → cosine 0.0 → still returned as "top 1"). Adding a relevance floor exposed it: the
+0.0-cosine result was now correctly dropped, and the test that "passed" was revealed to have never
+used its injected embedder at all.
+**Right:** Resolve injectable seams at CALL time, not as a def-time default: `embedder=None` then
+`embedder = embedder or embedding_service.embed_text` inside. Now a monkeypatched module attribute is
+picked up. General rule: a default of `module.attr` freezes the value; if a test needs to swap it,
+either pass it explicitly or resolve it inside the function. And when a "passing" test survives a
+change that should have broken it, suspect the test was never exercising the path it claims to.

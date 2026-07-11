@@ -52,6 +52,13 @@ class Settings(BaseSettings):
     # size — a 30 MB scan and a 3 MB text copy of the same statute are handled very differently.)
     max_upload_mb: int = 50
 
+    # Court-rule retrieval relevance floor (§13): cosine below this is treated as "not genuinely
+    # relevant" and dropped — so retrieval returns FEWER than k, or zero, rather than padding in a
+    # tenuous match (zero → the existing fail-open no-rules-block path). Start at 0.35 for
+    # nomic-embed; tune on real data via RULE_RETRIEVAL_MIN_SCORE (unrelated text scores well below,
+    # on-point rule text well above). Court rules only; pleading retrieval keeps no floor.
+    rule_retrieval_min_score: float = 0.35
+
     # LiveKit real-time voice layer
     livekit_url: str = "ws://localhost:7880"
     livekit_api_key: str = "devkey"

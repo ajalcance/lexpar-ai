@@ -33,10 +33,12 @@ def extract_pdf_text(data: bytes) -> str:
 
     reader = PdfReader(io.BytesIO(data))
     pages = [(page.extract_text() or "") for page in reader.pages]
-    return _normalize("\n\n".join(pages))
+    return normalize_text("\n\n".join(pages))
 
 
-def _normalize(text: str) -> str:
+def normalize_text(text: str) -> str:
+    """Collapse runs of spaces/tabs and 3+ newlines; strip. Public so the section-aware rule
+    chunker can normalize before splitting on headings. Pure."""
     text = text.replace("\x00", " ")
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
@@ -48,7 +50,7 @@ def chunk_text(
 ) -> list[str]:
     """Split text into overlapping windows, preferring to break at paragraph/sentence boundaries.
     Pure and deterministic."""
-    cleaned = _normalize(text)
+    cleaned = normalize_text(text)
     if not cleaned:
         return []
     chunks: list[str] = []

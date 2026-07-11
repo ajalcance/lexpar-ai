@@ -998,6 +998,28 @@ summary (§12) still grounds the reasoning, and the live loop never blocks.
 default empty `session_id`, so retrieval is skipped entirely with **no monkeypatching** — the whole
 existing test suite stays hermetic without touching the network. (See LESSONS.)
 
+**Retrieval accuracy (how the right provision is found).** Three design choices make the court-rules
+side accurate, not just present:
+
+- **Section-aware chunking** (`court_knowledge_service.chunk_rule_text`): the rules corpus is split
+  at detected section headings so a chunk is a **complete provision** where possible — a section that
+  fits is one chunk; an oversized section becomes windowed sub-chunks **each stamped with the parent
+  heading** (so mid-section pieces aren't unlabeled); a no-heading span degrades to generic
+  windowing. This avoids handing the model half a provision missing its proviso. (The pleading corpus
+  keeps the generic char-window chunker — pleadings aren't section-structured.) **Re-ingest** a
+  court's documents for this to take effect on already-ingested corpora.
+- **Hybrid exact-citation lookup + semantic** (`retrieve_rule_refs`): when the query names a section
+  (`_section_keys` canonicalizes `Section 12`==`Sec. 12`==`§12`), that section's chunk(s) are fetched
+  **deterministically by `section_reference`** — the whole provision — independent of embedding rank,
+  then semantic top-k fills the rest.
+- **Relevance floor / return-fewer-than-k** (`embedding_service.top_k(..., min_score)`, τ =
+  `rule_retrieval_min_score`, default 0.35): cosine below τ is dropped, so retrieval returns **fewer
+  than k, or zero**, rather than padding in a tenuous match. Zero flows into the **existing fail-open
+  no-rules-block path** — no new failure mode; "return nothing rather than a weak match" is safer for
+  citation accuracy than always injecting the best-k-however-weak. `k` = 4 on the live-critical paths;
+  **`k` = 8 for `assess_session`** (its post-deliberation-wave slack), safe because with the floor
+  `k` is a cap, not a floor.
+
 **Why dynamic retrieval, not a static objection→rule mapping table.** A hand-maintained
 "objection type → governing rule" lookup was rejected: (1) it would encode a **paraphrased/authored**
 association between a ground and a rule — the no-fabrication constraint forbids exactly that
@@ -1039,6 +1061,18 @@ model echoes from those shown-but-not-verbatim-corpus inputs still flags. This i
 citation traceable only to a paraphrase or a party's assertion is arguably correctly flagged as
 ungrounded-in-source); if live data shows a high benign rate, widening `shown_text` is a one-line
 change.
+
+**"Grounded" ≠ "legally correct" — a permanent boundary of this design (not a bug, not something the
+relevance floor fixes).** `citation_check` verifies a cited section was **shown** to the model that
+turn; it does **not** verify the retrieved provision was the **legally correct** one for the point
+argued. The retrieval-accuracy work above *reduces* the gap — exact-citation lookup makes a named
+section deterministic, and the relevance floor drops tenuous matches rather than passing them through
+— but it cannot *close* it: a chunk that is strongly cosine-similar yet legally wrong for the argument
+can still be retrieved, shown, and cited, and it will pass the grounding check. Semantic similarity is
+not legal relevance. Closing that gap needs reranking / a labeled evaluation, which is out of scope
+here and is **exactly what the deferred Phase-7 golden-set legal-reasoning eval exists to measure**
+(precision/recall of "did retrieval surface the provision competent counsel would actually rely on").
+Until then, the honest guarantee is **grounded-in-what-was-shown**, not legally-correct.
 
 ### Admin bootstrap (UI-native) & operator workflow
 

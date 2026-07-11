@@ -271,8 +271,11 @@ def assess_session(state: SessionState, *, expressive: bool = False) -> dict:
     last_turn = next(
         (t.content for t in reversed(state.transcript) if t.speaker == "attorney"), ""
     )
+    # k=8 here (vs the default 4 elsewhere): the end-of-session ruling has confirmed latency slack
+    # (spoken after the SessionFinale deliberation-wave), and with the §13 relevance floor a higher
+    # k is a CAP not a floor — it can only surface MORE genuinely-relevant provisions, never pad.
     retrieval = court_knowledge.dual_retrieval(
-        state.session_id, f"{pending} {last_turn}".strip()
+        state.session_id, f"{pending} {last_turn}".strip(), k=8
     )
     excerpts, rules = retrieval.blocks()
     endpoint = build_endpoint(judge_config())

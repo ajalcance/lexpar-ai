@@ -318,3 +318,37 @@ def test_oc_stream_reply_no_flags_no_log(monkeypatch, caplog):
     with caplog.at_level(logging.WARNING, logger="lexpar.agents.oc"):
         "".join(oc_mod.stream_reply(SessionState(case_facts="F"), "turn", "sess-9"))
     assert not [r for r in caplog.records if "flagged=true" in r.message]
+
+
+# --- turn-scoped shown_text invariant (retrieval-accuracy changes must not break §13 grounding) --
+
+def test_shown_text_is_exactly_the_retrieved_blocks_and_nothing_more():
+    import case_knowledge
+    from court_knowledge import Retrieval, rules_block
+
+    # section-aware + exact-lookup passages flow through unchanged: shown_text (what citation_check
+    # compares against) is EXACTLY the two blocks — every retrieved passage present, nothing else.
+    passages = ["[Section 73] the squeeze-out provision text", "[Section 5] definitions text"]
+    r = Retrieval(
+        excerpts_block=case_knowledge.passages_block(["a pleading passage"]),
+        rules_block=rules_block(passages),
+        chunk_ids=["court:1", "court:2"],
+    )
+    assert r.shown_text == f"{r.excerpts_block}\n{r.rules_block}".strip()
+    for passage in passages:
+        assert passage in r.shown_text
+
+
+def test_floor_zero_result_yields_no_rules_block_in_shown_text():
+    import case_knowledge
+    from court_knowledge import Retrieval, rules_block
+
+    # D returning zero rule passages → empty rules block → shown_text carries only the excerpts
+    # (the fail-open no-block path); citation_check then has no rule text to wrongly match against.
+    r = Retrieval(
+        excerpts_block=case_knowledge.passages_block(["a pleading passage"]),
+        rules_block=rules_block([]),
+        chunk_ids=[],
+    )
+    assert "RELEVANT PROCEDURAL RULES" not in r.shown_text
+    assert r.shown_text == r.excerpts_block

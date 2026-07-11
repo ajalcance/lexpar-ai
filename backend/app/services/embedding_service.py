@@ -44,9 +44,19 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     return dot / (na * nb)
 
 
-def top_k(query: list[float], candidates: list[tuple[str, list[float]]], k: int) -> list[str]:
-    """Return the `k` candidate texts whose embeddings are most cosine-similar to `query`. Pure —
-    brute force is trivial at case scale (~100 chunks); pgvector is the scale-up path (§12)."""
+def top_k(
+    query: list[float],
+    candidates: list[tuple[str, list[float]]],
+    k: int,
+    *,
+    min_score: float = 0.0,
+) -> list[str]:
+    """Return the up-to-`k` candidate texts most cosine-similar to `query`. With `min_score` > 0 a
+    RELEVANCE FLOOR is applied: candidates below the threshold are dropped, so this can return
+    FEWER than k — including ZERO when nothing clears the bar (court-rule retrieval uses this so a
+    tenuous match is never padded in; the empty result flows into the existing fail-open no-block
+    path). Pure — brute force is trivial at corpus scale; pgvector is the scale-up path (§12)."""
     scored = [(cosine_similarity(query, emb), text) for text, emb in candidates]
+    scored = [pair for pair in scored if pair[0] >= min_score]
     scored.sort(key=lambda pair: pair[0], reverse=True)
     return [text for _score, text in scored[:k]]

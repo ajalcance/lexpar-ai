@@ -440,3 +440,91 @@ def test_user_reads_provenance_for_own_session(client, auth_headers):
     assert client.get(
         f"/api/sessions/{other['id']}/provenance", headers=auth_headers
     ).json() == []
+
+
+# --- Retrieval accuracy: section-aware chunking (A), exact lookup (B), relevance floor (D) -------
+
+def test_chunk_rule_text_keeps_short_sections_whole_and_labels_oversized_subchunks():
+    from app.services import document_service
+
+    filler = "filler clause number here. " * ((document_service.CHUNK_CHARS // 27) + 50)
+    doc = (
+        "Preliminary title, not a section, appearing before the first heading.\n\n"
+        "Section 1. A short and complete provision that fits in one chunk.\n\n"
+        f"Section 2. {filler} final proviso clause.\n\n"
+        "Section 3. Another short provision whose concluding exception must stay intact."
+    )
+    by_ref: dict = {}
+    for text, ref in court_knowledge_service.chunk_rule_text(doc):
+        by_ref.setdefault(ref, []).append(text)
+    # short sections → exactly one complete chunk each (the tail/exception is not lost)
+    assert len(by_ref["Section 1"]) == 1
+    assert "one chunk" in by_ref["Section 1"][0]
+    assert len(by_ref["Section 3"]) == 1
+    assert "concluding exception must stay intact" in by_ref["Section 3"][0]
+    # oversized section → multiple sub-chunks, ALL labeled Section 2 (no NULL mid-section chunks)
+    assert len(by_ref["Section 2"]) >= 2
+    # the no-heading preamble degrades to an unlabeled windowed chunk, never fails
+    assert None in by_ref and any("Preliminary title" in t for t in by_ref[None])
+
+
+def test_chunk_rule_text_no_headings_degrades_to_windowed_unlabeled():
+    doc = "Rule prose with no detectable section headings anywhere in it. " * 5
+    pairs = court_knowledge_service.chunk_rule_text(doc)
+    assert pairs
+    assert all(ref is None for _t, ref in pairs)
+
+
+def _add_rule_chunk(db, court, doc_id, idx, text, ref, emb):
+    from app.models.court_rule import CourtRuleChunk
+
+    db.add(
+        CourtRuleChunk(
+            court_rule_document_id=doc_id,
+            court_id=court.id,
+            chunk_index=idx,
+            chunk_text=text,
+            embedding=emb,
+            section_reference=ref,
+        )
+    )
+    db.commit()
+
+
+def test_exact_citation_lookup_bypasses_semantic_rank_and_floor(db_session):
+    court = _court(db_session)
+    doc = court_knowledge_service.create_rule_document_row(db_session, court.id, "R", "p")
+    _add_rule_chunk(db_session, court, doc.id, 0, "Section 73. Squeeze-out.", "Section 73", [0, 1])
+    _add_rule_chunk(db_session, court, doc.id, 1, "Section 5. Definitions.", "Section 5", [1, 0])
+    # query embeds near Section 5 (cosine 1) and ORTHOGONAL to Section 73 (cosine 0 < floor)
+    refs = court_knowledge_service.retrieve_rule_refs(
+        db_session, court.id, "Is a Section 73 squeeze-out valid?", k=1,
+        embedder=lambda q: [1.0, 0.0], min_score=0.35,
+    )
+    texts = [t for _id, t in refs]
+    # Section 73 is returned FIRST via exact lookup despite being below the relevance floor
+    assert texts[0].startswith("[Section 73]")
+    # invariant: every returned passage is exactly a stored chunk's text (nothing fabricated)
+    assert all(t.startswith("[Section 73]") or t.startswith("[Section 5]") for t in texts)
+
+
+def test_relevance_floor_returns_fewer_and_zero_without_padding(db_session):
+    court = _court(db_session)
+    doc = court_knowledge_service.create_rule_document_row(db_session, court.id, "R", "p")
+    _add_rule_chunk(db_session, court, doc.id, 0, "Section 1. On point.", "Section 1", [1.0, 0.0])
+    _add_rule_chunk(db_session, court, doc.id, 1, "Section 2. Off topic.", "Section 2", [0.0, 1.0])
+    # near Section 1 only → Section 2 (cosine 0) dropped by the floor → FEWER than k
+    near = court_knowledge_service.retrieve_rule_refs(
+        db_session, court.id, "unrelated words", k=4, embedder=lambda q: [1.0, 0.0], min_score=0.35,
+    )
+    assert len(near) == 1 and near[0][1].startswith("[Section 1]")
+    # orthogonal to everything, no citation → ZERO (fail-open no-block), not padded to k
+    zero = court_knowledge_service.retrieve_rule_refs(
+        db_session, court.id, "totally unrelated", k=4, embedder=lambda q: [0.0, 0], min_score=0.35,
+    )
+    assert zero == []
+    # WITHOUT the floor, the same weak query pads out to the available chunks (contrast)
+    padded = court_knowledge_service.retrieve_rule_refs(
+        db_session, court.id, "unrelated words", k=4, embedder=lambda q: [1.0, 0.0], min_score=0.0,
+    )
+    assert len(padded) == 2

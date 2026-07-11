@@ -2437,3 +2437,30 @@ tenuous; queries use the raw utterance (+ objection grounds), never the case's l
 `case_summary`. k=4 uniform at all call sites (OC stream_reply, judge ×3, classifier tier-3);
 embeddings nomic-embed-text-v1.5, brute-force cosine. Phase 2 (proposal) next — section-aware
 chunking, hybrid exact+semantic retrieval, query enrichment, relevance floor / return-fewer-than-k.
+
+**Retrieval Phase 2 approved + Phase 3 done (A+B+D+k-bump; C deferred):**
+- **A — section-aware chunking** (`court_knowledge_service.chunk_rule_text`): split at detected
+  headings → complete provisions; oversized section → windowed sub-chunks EACH stamped with the
+  parent heading (mid-section pieces labeled, not NULL); no-heading span degrades to generic
+  windowing. Pleading corpus unchanged. (`normalize_text` made public in document_service.)
+- **B — hybrid exact-citation lookup** (`retrieve_rule_refs`): `_section_keys` canonicalizes
+  Section/Sec./§ → fetch cited sections by `section_reference` deterministically, ahead of semantic
+  top-k; with A, returns the whole provision.
+- **D — relevance floor** (`embedding_service.top_k(min_score=)`, τ=`rule_retrieval_min_score` 0.35
+  env-configurable): drop < τ → return fewer/zero, reusing the existing fail-open no-block path (no
+  new failure mode). Court rules only; pleading keeps no floor.
+- **k-bump:** `assess_session` → k=8 (post-deliberation-wave slack; the floor makes k a cap not a
+  floor); k=4 unchanged on live-critical paths.
+- **Surfaced + fixed a latent bug:** `retrieve_rule_refs`'s `embedder=embedding_service.embed_text`
+  def-time default meant a monkeypatched embedder never reached it (the query was silently
+  real-embedded); the old no-floor top_k masked it (returned the cosine-0 dim-mismatch result
+  anyway), the floor exposed it. Resolved the embedder at call time. LESSONS entry added.
+- **Docs:** ARCHITECTURE §13 (retrieval-accuracy design + the permanent "grounded ≠ legally correct"
+  boundary, noting Phase-7 golden-set eval is what measures it); LESSONS (chunking/exact/floor
+  design + the def-time-default gotcha).
+- **Tests: backend 81 (+4 — chunking whole/oversized/no-heading, exact-lookup-bypasses-rank+floor,
+  floor-fewer/zero/contrast), agents 181 (+2 shown_text invariant incl. zero case), frontend 64;
+  ruff/type-check clean.** Fully offline-verifiable with synthetic fixtures (no live LiveKit).
+- **⚠️ RE-INGESTION REQUIRED (distinct from code done):** section-aware chunking only affects
+  NEWLY-ingested documents. The seeded Court's already-ingested rule PDFs must be **re-uploaded via
+  /admin** for A/B to take effect on them; τ tuning is a real-data judgment, env-configurable.
