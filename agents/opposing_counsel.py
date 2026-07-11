@@ -28,6 +28,11 @@ from session_state import SessionState
 
 logger = logging.getLogger("lexpar.agents.oc")
 
+# OC replies are fast verbal sparring — one or two punchy sentences, not a brief. A tight token
+# ceiling keeps them short (the "OC talks too long" complaint) AND cuts generation + TTS playout
+# time; the oc_reply_style prompt is the primary brevity lever, this is the hard cap behind it.
+_OC_REPLY_MAX_TOKENS = 140
+
 
 def build_messages(
     state: SessionState, attorney_turn: str, excerpts: str = "", rules: str = ""
@@ -79,7 +84,7 @@ def generate_reply(state: SessionState, attorney_turn: str) -> str:
     """Generate Opposing Counsel's next reply (blocking, full completion). Makes a live API call."""
     endpoint = build_endpoint(opposing_counsel_config())
     messages = build_messages(state, attorney_turn)
-    return chat(endpoint, messages, temperature=0.7, max_tokens=400).strip()
+    return chat(endpoint, messages, temperature=0.7, max_tokens=_OC_REPLY_MAX_TOKENS).strip()
 
 
 def stream_reply(
@@ -105,7 +110,7 @@ def stream_reply(
         endpoint,
         build_messages(state, attorney_turn, excerpts, rules),
         temperature=0.7,
-        max_tokens=400,
+        max_tokens=_OC_REPLY_MAX_TOKENS,
     ):
         spoken.append(delta)
         yield delta
@@ -128,4 +133,4 @@ def stream_continuation(
     """Stream the repair continuation after a mid-stream verification failure. Live API call."""
     endpoint = build_endpoint(opposing_counsel_config())
     messages = build_continuation_messages(state, attorney_turn, spoken_prefix, failure_reason)
-    yield from chat_stream(endpoint, messages, temperature=0.7, max_tokens=400)
+    yield from chat_stream(endpoint, messages, temperature=0.7, max_tokens=_OC_REPLY_MAX_TOKENS)

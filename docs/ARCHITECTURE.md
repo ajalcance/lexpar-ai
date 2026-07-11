@@ -636,6 +636,14 @@ over repeated runs. The remaining first-audio cost is deepseek's time-to-first-s
 plus one short verify (~1.3 s) — the next lever is a faster/streaming-friendlier Opposing Counsel
 model once self-hosted on the MI300X, plus the co-located verifier (§6.5 co-location).
 
+**OC brevity (2026-07-12).** A live pass showed OC replies too long *and* slow to finish. OC is now
+capped at `_OC_REPLY_MAX_TOKENS = 140` (down from 400) and the `oc_reply_style` prompt demands ONE
+or TWO punchy sentences — fast verbal sparring, not a brief. Shorter replies cut both the
+generation and TTS-playout time and stop OC monologuing. Note the *objection* path is separate: in
+argument proceedings every ground is LLM-judged (`decide` ~3 s, the comparative fallback), so
+objections there are inherently slower than a witness examination, where `leading`/`hearsay` fire at
+the ~23 µs regex gate with no model call — direct/cross is the snappier objection showcase.
+
 **Objection-classifier benchmark (2026-07-08).** All account chat models were timed on the
 classifier's actual task (short structured JSON, temp 0, N=7): `gpt-oss-120b` med **1.26 s** (7/7
 `stop`, parseable) — the fastest *and* most reliable. deepseek-v4-pro 3.42 s; glm-5p1 7.86 s;

@@ -16,9 +16,10 @@ import prompts
 # Static prompts — returned verbatim (no substitution).
 STATIC_GOLDENS = {
     "oc_reply_style": (
-        "Respond as opposing counsel in a few spoken sentences. Output only the words you say "
-        "aloud in the courtroom — no analysis, headings, quotation marks, or preamble. Argue the "
-        "merits as direct counter-argument — do NOT lodge an objection or use the words "
+        "Respond as opposing counsel in ONE or TWO short, punchy sentences — this is fast verbal "
+        "sparring, never a speech. Output only the words you say aloud in the courtroom — no "
+        "analysis, headings, quotation marks, or preamble. Argue the merits as direct "
+        "counter-argument — do NOT lodge an objection or use the words "
         '"objection" or "I object"; state the point as argument instead (e.g. "The record does '
         'not support that…").'
     ),
