@@ -289,6 +289,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         expressive_tts=judge_v3_tts,
     )
     judge_connected = await judge_participant.connect()
+    if judge_connected:
+        # Publish the judge track + a silent priming frame immediately, so the browser subscribes
+        # and autoplay-unlocks it during the join window. Otherwise the FIRST ruling publishes a
+        # brand-new track and its audio is lost before the browser finishes subscribing — the
+        # objection #1 "no audible ruling" race (judge_participant.prime / docs/LESSONS.md).
+        await judge_participant.prime()
 
     async def _publish_judge_speaking(speaking: bool) -> None:
         # FALLBACK-ONLY label signal: when the judge participant is unavailable and the judge is

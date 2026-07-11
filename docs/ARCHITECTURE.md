@@ -518,6 +518,12 @@ When an objection fires and Opposing Counsel's line is spoken, the Judge immedia
   queue = no implicit serialization). **Fallback:** if the judge participant fails to connect or
   speak, `judge_voice.JudgeVoice` degrades to the previous session-multiplexed path *including*
   the `{"type":"judge_speaking"}` label events — a LiveKit failure never silences the judge.
+- **Track warm-up (`judge_participant.prime`):** the judge track is published and given a ~200 ms
+  silent frame **at connect**, not lazily on the first ruling. Otherwise the first objection
+  publishes a brand-new track and its audio is lost before the browser finishes subscribing +
+  autoplay-unlocking it — the ledger/transcript still record the ruling, so the symptom is
+  "objection #1 had no *audible* ruling, later ones fine." Priming during the join window makes the
+  first ruling audible like the rest (docs/LESSONS.md).
 
 ### End-of-session judge assessment (spoken ruling + scorecard)
 

@@ -85,6 +85,29 @@ class JudgeParticipant:
             self._room = None
             return False
 
+    async def prime(self) -> None:
+        """Publish the judge audio track NOW (right after connect) and push a short silent frame,
+        so the browser subscribes, attaches its <audio> element, and clears autoplay for the judge
+        during the join window — well before the first real ruling. Without this the FIRST ruling
+        is emitted into a track the browser hasn't finished subscribing to yet, and its audio is
+        lost while the ledger/transcript still record the ruling (the "first objection had no
+        audible ruling, later ones fine" race — docs/LESSONS.md). Sized from the TTS's own
+        sample_rate/num_channels, identical to what synthesize() yields, so the pre-published
+        source never mis-rates the real ruling frames. Best-effort: any failure just means the
+        first ruling may clip, exactly as before — never fatal to the session."""
+        if self._room is None:
+            return
+        try:
+            sample_rate = int(getattr(self._tts, "sample_rate", 22050) or 22050)
+            num_channels = int(getattr(self._tts, "num_channels", 1) or 1)
+            source = await self._ensure_track(sample_rate, num_channels)
+            # ~200 ms of silence: enough to open the subscribe/attach/unlock path, inaudible.
+            frame = rtc.AudioFrame.create(sample_rate, num_channels, sample_rate // 5)
+            await source.capture_frame(frame)
+            logger.info("judge track primed (%d Hz, %d ch)", sample_rate, num_channels)
+        except Exception:
+            logger.exception("judge track prime failed — first ruling may be clipped")
+
     async def _ensure_track(self, sample_rate: int, num_channels: int) -> rtc.AudioSource:
         """Publish the judge audio track lazily, sized from the first synthesized frame."""
         if self._source is not None:

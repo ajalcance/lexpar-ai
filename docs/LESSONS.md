@@ -445,3 +445,26 @@ tombstones and the display (counts) degrades gracefully instead of erroring; ref
 neuter it for its main use (test/mistake uploads, usually cited only by test sessions). Load-bearing
 regression: rig an archived chunk to WIN both ranking mechanisms and assert it can never be
 retrieved, at every entry point, on both corpora.
+
+### [Agents/Voice] The judge's FIRST bench ruling was inaudible — track published lazily on first say()
+**Wrong:** `JudgeParticipant.connect()` only joined the room; the judge's audio track was published
+LAZILY inside `_ensure_track()`, i.e. on the *first* `say()` — which is the first objection ruling,
+often minutes into the session. Publishing a brand-new track mid-session means the browser must
+still receive the track-published event, subscribe, attach a fresh `<audio>` element, and clear
+autoplay (scoped per element — the OC track being unlocked does NOT unlock the judge's new one). The
+worker pushed the ~2–4 s ruling into the track and completed `wait_for_playout()` (publisher side)
+before the browser was ready, so objection #1's audio went nowhere while the ledger, transcript, and
+the reliable data-channel `ruling` event all still recorded it. Diagnostic tell: the agent log shows
+the `objection dispatch` line and **no** `inline ruling unavailable` / `falling back` / `could not be
+spoken` warning — the ruling was generated and "spoken", just into a track nobody was subscribed to
+yet. Every subsequent ruling reused the now-live, unlocked track and was heard — hence the exact
+signature "first objection had no ruling, the next 5 did." (NOT a model cold-start: `quick_ruling`'s
+10 s timeout never tripped.)
+**Right:** Warm the track at session start. `JudgeParticipant.prime()` publishes the track and pushes
+a ~200 ms silent frame right after `connect()`, sized from the TTS's own `sample_rate`/`num_channels`
+(identical to what `synthesize()` yields, so the pre-published source never mis-rates the real ruling
+frames). The browser subscribes + autoplay-unlocks during the join window, so the first real ruling
+is audible like the rest. Best-effort and non-fatal: a prime failure just degrades to the old
+first-ruling-clip behavior. General rule: any media track that must play a latency-sensitive line
+should be published and primed at join time, never lazily on the first real utterance — the
+first-published-track subscribe/attach/autoplay window will otherwise swallow that utterance.
