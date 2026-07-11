@@ -175,10 +175,10 @@ def _build_quick_ruling_messages(
     """Assemble the inline-ruling messages (minimal — this sits in the live path). Pure."""
     user = (
         f"{_grounded_context(state, excerpts, rules)}\n\n"
-        # The judge MUST know the proceeding to apply the right lens — "assumes facts" / "calls for a
-        # legal conclusion" are proper objections at a witness examination but usually improper
-        # against oral argument, where counsel argues the law and characterizes the record (§13).
-        # Without this the judge ruled blind and reflexively sustained argument-objections.
+        # The judge MUST know the proceeding to apply the right lens — "assumes facts" / "calls
+        # for a legal conclusion" are proper objections at a witness examination but usually
+        # improper against oral argument, where counsel argues the law and characterizes the
+        # record (§13). Without this the judge ruled blind and reflexively sustained arguments.
         f"PROCEEDING TYPE: {state.proceeding_type or 'unspecified'}\n"
         f'ATTORNEY (statement objected to): "{fragment}"\n'
         f"OBJECTION: {objection.grounds} (raised by {objection.raised_by})"
