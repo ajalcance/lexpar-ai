@@ -2734,3 +2734,38 @@ agent is caught sooner by the room Disconnected event). Frontend-only, one const
 happens only when `endSession()` resolves (confirmed — no other timer). **Frontend type-check + lint
 + 65 Vitest pass.** Tune `END_SESSION_TIMEOUT_MS` higher only if a genuinely longer deliberation
 appears. Needs a live confirm (a long ruling now plays fully before the scorecard).
+
+---
+
+### Report transcript quality: OC/Judge properly captured (ordering, interrupt-safe replies, fragment merge, objection reasons) — status: fixed + tested, pushed
+
+**Trigger:** review found OC and Judge "not properly captured, especially in the report." Evidenced
+against real persisted sessions (DB): objections/rulings appeared BEFORE the statement they respond
+to; OC appeared only as objections (its substantive replies were missing); attorney turns fragmented
+("You" / "Your honor?"); persisted objections dropped their reason.
+
+**Two surfaces clarified:** the LIVE frontend transcript shows only OC objections + judge rulings
+(data-channel events) — the user considers that fine; the fixes target the **report** (persisted
+`SessionState.transcript` → scorecard). Four enterprise-grade fixes, at the right layers:
+- **Ordering (capture):** attorney turns are now timestamped at **speech START** (captured from the
+  `user_state → speaking` signal via a shared `turn_timing` dict), not turn-end. Objections fire
+  mid-utterance and are recorded then; start-time stamping keeps them ordered AFTER the statement.
+- **OC reply capture (capture):** `llm_node` records the reply in a `finally`, so a reply
+  interrupted mid-stream (VAD / `session.interrupt`) still lands on the record (the verified
+  sentences that were actually voiced) instead of vanishing — the main reason OC looked absent.
+- **Fragment merge + ordering (report):** new `scorecard_builder.coalesce_transcript` sorts by
+  `spoken_at` and merges consecutive same-speaker fragments into one coherent turn; discrete
+  barge-ins (`was_interruption`) are never merged (each objection stays its own line). Pure, operates
+  on copies (raw `state.transcript` untouched). Backend persists in that order + re-sorts by
+  `spoken_at` on read (`Session.transcripts` relationship).
+- **Objection reason (capture):** the transcript line now carries the ground's reason
+  (`objection_transcript` → "Objection — hearsay: <reason>") while the SPOKEN barge-in stays terse.
+
+**Tests: agents 201 offline pass (+7: coalesce ordering/merge/discrete-objections/no-mutation +
+build_transcript, objection_transcript with/without reason; voice_interrupt transcript assertion
+updated), backend 91, ruff clean.** The `llm_node`/`on_user_turn_completed`/`user_state` observer
+pieces live in main.py (not unit-imported) and are fallback-safe (missing start-time → turn-end, as
+before) — verified by compile + the live-facing design; ARCHITECTURE §6.5 updated. **Live re-test to
+confirm:** run a session with a couple of objections + a normal OC reply, End session, then check the
+scorecard transcript reads in order (statement → objection+reason → ruling), OC's replies appear, and
+attorney fragments are merged.

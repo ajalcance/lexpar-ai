@@ -36,6 +36,16 @@ def objection_utterance(decision: Decision) -> str:
     return "Objection."
 
 
+def objection_transcript(decision: Decision) -> str:
+    """The objection line as recorded in the transcript/report — the terse spoken line PLUS the
+    ground's reason (the spoken audio stays short for latency; the written record carries the fuller
+    context, matching what the frontend renders live from the structured event)."""
+    line = objection_utterance(decision)
+    if line and decision.reason:
+        return f"{line[:-1]}: {decision.reason}."  # drop the trailing "." then append the reason
+    return line
+
+
 def build_objection_event(decision: Decision) -> dict:
     """The structured event published on the data channel so the frontend can render it (Gap 3)."""
     return {
@@ -87,7 +97,7 @@ async def handle_interim(
             grounds=decision.objection_type or "objection", raised_by="opposing_counsel"
         )
         classifier.state.add_turn(
-            "opposing_counsel", objection_utterance(decision), was_interruption=True
+            "opposing_counsel", objection_transcript(decision), was_interruption=True
         )
         await session.interrupt()
         # Start the ruling NOW (concurrently) so quick_ruling generation OVERLAPS the canned line's

@@ -81,3 +81,66 @@ def test_payload_transcript_shape():
     assert turn["content"] == "Hello."
     assert turn["was_interruption"] is False
     assert isinstance(turn["spoken_at"], str)  # ISO timestamp
+
+
+# --- Report transcript: order by spoken time + merge fragments (coalesce_transcript) -------------
+
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+from scorecard_builder import coalesce_transcript  # noqa: E402
+
+
+def _dt(offset_s: float) -> datetime:
+    return datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc) + timedelta(seconds=offset_s)
+
+
+def test_coalesce_orders_by_spoken_time_not_insertion():
+    # The real ordering problem: an objection fires mid-utterance and is recorded FIRST (at +10),
+    # while the attorney turn is committed later but timestamped at its START (+2). Ordering by
+    # spoken_at puts the attorney's statement BEFORE the objection that responds to it.
+    state = SessionState()
+    state.add_turn(
+        "opposing_counsel", "Objection — hearsay.", was_interruption=True, spoken_at=_dt(10)
+    )
+    state.add_turn("attorney", "My neighbor told me it was red.", spoken_at=_dt(2))
+    state.add_turn("judge", "Sustained.", spoken_at=_dt(12))
+    out = coalesce_transcript(state.transcript)
+    assert [t.speaker for t in out] == ["attorney", "opposing_counsel", "judge"]
+
+
+def test_coalesce_merges_same_speaker_fragments():
+    state = SessionState()
+    state.add_turn("attorney", "Your honor,", spoken_at=_dt(1))
+    state.add_turn("attorney", "this case concerns the mortgage.", spoken_at=_dt(2))
+    out = coalesce_transcript(state.transcript)
+    assert len(out) == 1
+    assert out[0].content == "Your honor, this case concerns the mortgage."
+    assert out[0].spoken_at == _dt(1)  # keeps the earliest
+
+
+def test_coalesce_keeps_objections_discrete():
+    # Two barge-ins in a row are NOT merged — each objection stays its own line.
+    state = SessionState()
+    state.add_turn("opposing_counsel", "Objection — leading.", True, _dt(1))
+    state.add_turn("opposing_counsel", "Objection — hearsay.", True, _dt(2))
+    out = coalesce_transcript(state.transcript)
+    assert len(out) == 2
+
+
+def test_coalesce_does_not_mutate_state_transcript():
+    state = SessionState()
+    state.add_turn("attorney", "A", spoken_at=_dt(1))
+    state.add_turn("attorney", "B", spoken_at=_dt(2))
+    coalesce_transcript(state.transcript)
+    assert [t.content for t in state.transcript] == ["A", "B"]  # raw capture untouched
+
+
+def test_build_transcript_is_ordered_and_merged():
+    state = SessionState()
+    state.add_turn("opposing_counsel", "Objection.", was_interruption=True, spoken_at=_dt(5))
+    state.add_turn("attorney", "Hello", spoken_at=_dt(1))
+    state.add_turn("attorney", "world.", spoken_at=_dt(2))
+    payload = build_session_end_payload(state, "ruling")
+    rows = payload["transcript"]
+    assert [r["speaker"] for r in rows] == ["attorney", "opposing_counsel"]
+    assert rows[0]["content"] == "Hello world."

@@ -441,11 +441,28 @@ session runs:
 - **Case facts** are loaded at room join from `GET /api/sessions/{id}/context` (§5) so `SessionState`
   starts with the real case, not empty.
 - **Objections** — when the classifier fires (§6), `voice_interrupt.handle_interim` both
-  `record_objection(...)` (pending) and adds a `was_interruption` transcript turn, so a spoken
-  objection actually lands on the record.
+  `record_objection(...)` (pending) and adds a `was_interruption` transcript turn. The turn carries
+  the ground's **reason** (`objection_transcript`), so the written record reads "Objection —
+  hearsay: out-of-court statement" even though the spoken barge-in stays terse ("Objection —
+  hearsay.") for latency.
 - **Attorney turns** are committed **once per completed utterance** (the agent's
   `on_user_turn_completed` hook), not once per Deepgram `is_final` — otherwise a single spoken turn
-  shreds into a dozen transcript fragments. The classifier still sees every interim.
+  shreds into a dozen transcript fragments. The classifier still sees every interim. Each turn is
+  **timestamped at the instant the attorney STARTED speaking** (captured from the `user_state →
+  speaking` signal), not at turn-end — because an objection fires *mid*-utterance and is recorded
+  then, so timestamping the attorney turn at turn-end would sort the objection/ruling *before* the
+  statement they respond to.
+- **Opposing Counsel replies** are recorded in a `finally` around the streamed reply, so a reply
+  that gets **interrupted mid-stream** still lands on the record (exactly the verified sentences
+  that were voiced) rather than vanishing — the reason OC used to look absent from the transcript.
+
+**Report assembly (`scorecard_builder.coalesce_transcript`).** The raw `SessionState.transcript` is
+kept as captured; the end-of-session **report** transcript is derived from it: (1) **ordered by
+`spoken_at`** so objections/rulings sit after the statement they respond to (the start-time stamping
+above is what makes this correct), and (2) **consecutive same-speaker fragments merged** into one
+coherent turn (STT/turn-detection splits one spoken stretch into several) — while discrete barge-ins
+(`was_interruption`) are never merged, so each objection stays its own line. The backend persists in
+that order and its `transcripts` relationship re-sorts by `spoken_at` on read.
 
 ### Inline judge rulings (real courtroom sequence)
 

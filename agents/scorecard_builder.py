@@ -13,7 +13,9 @@ Security notes: The payload carries transcript content (work product) — built 
 
 from __future__ import annotations
 
-from session_state import SessionState
+from dataclasses import replace
+
+from session_state import SessionState, TranscriptTurn
 
 SCORE_START = 100
 SUSTAINED_PENALTY = 8
@@ -41,8 +43,37 @@ def _weaknesses(state: SessionState) -> str:
     return "\n".join(f"- Sustained objection: {grounds}" for grounds in unique_grounds)
 
 
+def coalesce_transcript(turns: list[TranscriptTurn]) -> list[TranscriptTurn]:
+    """Turn the raw captured turns into a clean, readable RECORD for the report:
+      1. ORDER by when each turn was actually spoken (spoken_at). Objections and rulings are
+         recorded the instant they fire — mid-utterance, on an interim — while an attorney turn is
+         committed at turn-end; ordering by spoken_at (attorney turns are timestamped at their
+         START, see main.on_user_turn_completed) puts the objection/ruling AFTER the statement it
+         responds to, not before it.
+      2. MERGE consecutive fragments of continuous speech from the same speaker into one turn — STT
+         + turn detection split one spoken stretch into several ("You" / "Your honor…"). Discrete
+         barge-ins (was_interruption) are never merged: each objection stays its own line.
+    Pure; operates on copies so `state.transcript` is untouched (it stays the raw capture)."""
+    ordered = sorted(turns, key=lambda t: t.spoken_at)
+    merged: list[TranscriptTurn] = []
+    for turn in ordered:
+        prev = merged[-1] if merged else None
+        can_merge = (
+            prev is not None
+            and prev.speaker == turn.speaker
+            and not prev.was_interruption
+            and not turn.was_interruption
+        )
+        if can_merge:
+            prev.content = f"{prev.content} {turn.content}".strip()
+        else:
+            merged.append(replace(turn))
+    return merged
+
+
 def build_transcript(state: SessionState) -> list[dict]:
-    """The transcript batch, in order, shaped for the backend's TranscriptTurnIn."""
+    """The transcript batch for the report — ordered + fragment-merged (coalesce_transcript),
+    shaped for the backend's TranscriptTurnIn."""
     return [
         {
             "speaker": turn.speaker,
@@ -50,7 +81,7 @@ def build_transcript(state: SessionState) -> list[dict]:
             "was_interruption": turn.was_interruption,
             "spoken_at": turn.spoken_at.isoformat(),
         }
-        for turn in state.transcript
+        for turn in coalesce_transcript(state.transcript)
     ]
 
 

@@ -11,7 +11,26 @@ import asyncio
 
 from objection_classifier import Decision, ObjectionClassifier
 from session_state import SessionState
-from voice_interrupt import build_objection_event, handle_interim, objection_utterance
+from voice_interrupt import (
+    build_objection_event,
+    handle_interim,
+    objection_transcript,
+    objection_utterance,
+)
+
+
+def test_objection_transcript_includes_reason_but_spoken_stays_terse():
+    d = Decision(True, "hearsay", "out-of-court statement offered for truth", outcome="fire")
+    # spoken line: terse (low-latency barge-in); record line: adds the reason.
+    assert objection_utterance(d) == "Objection — hearsay."
+    assert objection_transcript(d) == (
+        "Objection — hearsay: out-of-court statement offered for truth."
+    )
+
+
+def test_objection_transcript_without_reason_matches_spoken():
+    d = Decision(True, "leading", "", outcome="fire")
+    assert objection_transcript(d) == "Objection — leading."
 
 
 class FakeSession:
@@ -79,7 +98,9 @@ def test_handle_interim_barges_in_and_publishes_on_fire():
     assert len(state.transcript) == 1
     assert state.transcript[0].speaker == "opposing_counsel"
     assert state.transcript[0].was_interruption is True
-    assert state.transcript[0].content == "Objection — leading."
+    # The RECORD carries the ground's reason (the spoken line stayed terse — asserted above via
+    # session.said); the decider's reason here is "x".
+    assert state.transcript[0].content == "Objection — leading: x."
 
 
 def test_handle_interim_silent_and_no_publish_on_no_fire():

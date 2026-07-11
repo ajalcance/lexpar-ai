@@ -34,6 +34,7 @@ import asyncio
 import json
 import logging
 import time
+from datetime import datetime, timezone
 
 from livekit import agents
 from livekit.agents import Agent, AgentSession, WorkerOptions, cli, inference
@@ -78,10 +79,19 @@ class OpposingCounselAgent(Agent):
     sentence 1 while sentence 2 is still generating/verifying — instead of a stock completion.
     """
 
-    def __init__(self, state: SessionState, turn_flags: dict, session_id: str = ""):
+    def __init__(
+        self,
+        state: SessionState,
+        turn_flags: dict,
+        turn_timing: dict,
+        session_id: str = "",
+    ):
         super().__init__(instructions="You are opposing counsel in a courtroom rehearsal session.")
         self._state = state
         self._turn_flags = turn_flags  # {"objected": bool} — shared with judge_rule (main.py)
+        # {"attorney_started_at": datetime|None} — set on the user_state→speaking signal in
+        # entrypoint so the committed attorney turn is timestamped at its START, not turn-end.
+        self._turn_timing = turn_timing
         self._session_id = session_id  # for per-turn pleading retrieval (§12)
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
@@ -91,7 +101,13 @@ class OpposingCounselAgent(Agent):
         # interim via the separate user_input_transcribed handler.
         text = (getattr(new_message, "text_content", "") or "").strip()
         if text:
-            self._state.add_turn("attorney", text)
+            # Timestamp the turn at the moment the attorney STARTED speaking, not now (turn-end).
+            # Objections/rulings fire mid-utterance (on an interim) and are recorded then; if the
+            # attorney turn were timestamped at turn-end it would sort AFTER them, so the report
+            # would show the objection before the statement it objects to. Start-time keeps order.
+            self._state.add_turn(
+                "attorney", text, spoken_at=self._turn_timing.get("attorney_started_at")
+            )
 
     async def llm_node(self, chat_ctx, tools, model_settings):
         # Courtroom flow: if an objection already fired on this turn, Opposing Counsel already spoke
@@ -114,16 +130,21 @@ class OpposingCounselAgent(Agent):
         def _generate(state, turn):
             return opposing_counsel.stream_reply(state, turn, session_id)
 
-        async for sentence in astream_verified_reply(
-            self._state, attorney_turn, generate=_generate
-        ):
-            spoken.append(sentence)
-            yield sentence + " "  # trailing space so TTS never jams two sentences together
-        if spoken:
-            # Accumulate exactly what was spoken (post-verification) for the end-of-session batch.
-            self._state.add_turn("opposing_counsel", " ".join(spoken))
-        else:
-            logger.warning("no verified sentences this turn — staying silent (fail closed)")
+        try:
+            async for sentence in astream_verified_reply(
+                self._state, attorney_turn, generate=_generate
+            ):
+                spoken.append(sentence)
+                yield sentence + " "  # trailing space so TTS never jams two sentences together
+        finally:
+            # In a `finally` so the reply is recorded EVEN IF it's interrupted mid-stream — VAD /
+            # session.interrupt() closes this async generator, and without this a cut-off OC reply
+            # would leave NO trace in the transcript (the reason OC looked absent from the record).
+            # `spoken` holds exactly the verified sentences that were actually voiced.
+            if spoken:
+                self._state.add_turn("opposing_counsel", " ".join(spoken))
+            else:
+                logger.warning("no verified sentences this turn — staying silent (fail closed)")
 
 
 async def entrypoint(ctx: agents.JobContext) -> None:
@@ -164,6 +185,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     # Shared with OpposingCounselAgent.llm_node: set when an objection fires on a turn so the
     # end-of-turn full reply is skipped (object → rule → continue, no redundant re-argument).
     turn_flags = {"objected": False}
+    # Shared with OpposingCounselAgent.on_user_turn_completed: the wall-clock instant the attorney
+    # began the current utterance, captured from the user_state→speaking signal below, so the
+    # committed attorney turn is ordered by speech START (keeps mid-utterance objections/rulings
+    # after the statement they respond to — see the transcript-ordering fix).
+    turn_timing: dict = {"attorney_started_at": None}
 
     # ElevenLabs' multi-stream-input websocket (the plugin's default `.stream()` path) returns no
     # audio on our free-tier account — replies were never voiced and the socket closed 1006. Wrap
@@ -385,6 +411,14 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             ev.resumed,
         )
 
+    @session.on("user_state_changed")
+    def _track_attorney_turn_start(ev) -> None:
+        # Record when the attorney starts speaking so the turn committed in on_user_turn_completed
+        # can be timestamped at its START (transcript-ordering fix). Overwritten each new utterance;
+        # the most recent start applies to the next committed turn.
+        if ev.new_state == "speaking":
+            turn_timing["attorney_started_at"] = datetime.now(timezone.utc)
+
     finalized = {"done": False}
 
     async def _finalize_session(speak: bool) -> None:
@@ -475,7 +509,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     ctx.add_shutdown_callback(_on_shutdown)
 
     await session.start(
-        agent=OpposingCounselAgent(state, turn_flags, session_id), room=ctx.room
+        agent=OpposingCounselAgent(state, turn_flags, turn_timing, session_id), room=ctx.room
     )
 
 
