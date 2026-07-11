@@ -186,10 +186,11 @@ def test_superseded_pleading_chunks_never_retrievable(db_session):
     assert str(old_chunk.id) not in ids
     assert not any("OLD stale" in t for _id, t in refs)
     assert any("NEW corrected" in t for _id, t in refs)
-    # context_payload (the agent-facing bundle) inherits the same exclusion.
-    payload = case_knowledge_service.context_payload(db_session, case.id, "the pleading", k=50)
-    # (embedder not injectable here — but with only the NEW chunk eligible, any embedding still
-    # cannot return the OLD one; guard on ids to stay deterministic without a live embedder.)
+    # context_payload (the agent-facing bundle) inherits the same exclusion. Inject the fake
+    # embedder so the test stays offline (no Fireworks/OpenAI key needed in CI).
+    payload = case_knowledge_service.context_payload(
+        db_session, case.id, "the pleading", k=50, embedder=lambda q: QUERY_VEC
+    )
     assert str(old_chunk.id) not in payload["chunk_ids"]
 
 

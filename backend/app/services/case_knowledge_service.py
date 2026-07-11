@@ -128,12 +128,16 @@ def retrieve_refs(
     query: str,
     k: int = DEFAULT_TOP_K,
     *,
-    embedder=embedding_service.embed_text,
+    embedder=None,
 ) -> list[tuple[str, str]]:
     """Top-k (chunk_id, passage) pairs most relevant to `query` for a case. The chunk ids feed the
     §13 provenance trail (which chunks were actually shown to the model on a given turn).
     Archived/superseded documents' chunks are STRUCTURALLY excluded (poison-pill guard) — only
-    chunks whose parent document is non-deleted are candidates; the rows stay for provenance."""
+    chunks whose parent document is non-deleted are candidates; the rows stay for provenance.
+    `embedder` resolves at CALL time (not a def-time default) so a monkeypatched/injected one is
+    actually used (see docs/LESSONS.md)."""
+    if embedder is None:
+        embedder = embedding_service.embed_text
     active_doc_ids = select(CaseDocument.id).where(
         CaseDocument.case_id == case_id,
         CaseDocument.deleted_at.is_(None),
@@ -157,7 +161,7 @@ def retrieve(
     query: str,
     k: int = DEFAULT_TOP_K,
     *,
-    embedder=embedding_service.embed_text,
+    embedder=None,
 ) -> list[str]:
     """Return the top-k pleading passages most relevant to `query` for a case (cosine over the
     stored chunk embeddings). Empty list if the case has no ingested chunks."""
@@ -230,10 +234,18 @@ def create_document_row(
     return document
 
 
-def context_payload(db: DbSession, case_id: uuid.UUID, query: str, k: int = DEFAULT_TOP_K) -> dict:
+def context_payload(
+    db: DbSession,
+    case_id: uuid.UUID,
+    query: str,
+    k: int = DEFAULT_TOP_K,
+    *,
+    embedder=None,
+) -> dict:
     """The agent-facing knowledge bundle: the always-in-context summary + the retrieved passages,
-    with the chunk ids that produced them (§13 provenance)."""
-    refs = retrieve_refs(db, case_id, query, k)
+    with the chunk ids that produced them (§13 provenance). `embedder` is forwarded to
+    `retrieve_refs` (resolved at call time) so tests can inject a fake and stay offline."""
+    refs = retrieve_refs(db, case_id, query, k, embedder=embedder)
     return {
         "summary": summary_for(db, case_id),
         "passages": [text for _chunk_id, text in refs],
