@@ -2715,3 +2715,22 @@ confirm `grep -c "TTS node COMPLETE" ~/session.log` > 0 and cancellations drop; 
 `INTERRUPTION_MIN_DURATION` up (1.5-2.0) if OC is still cut off. **Separate open item:** "can't hear
 the Judge" after plugging in headphones is a browser audio-OUTPUT-DEVICE / autoplay issue (the VAD
 bug can't silence the judge), to check at runtime — not this code change.
+
+---
+
+### Judge closing ruling cut off on long decisions — status: fixed (frontend timeout), pushed
+
+**Symptom (live):** when the end-of-session "decision making" ran long, the judge's spoken closing
+ruling got cut off. **Cause (not the worker):** the worker speaks the full ruling and only THEN
+publishes `end_complete`; the frontend `endSession()` waits for `end_complete` OR a
+`END_SESSION_TIMEOUT_MS` safety net — which was **30s**. On a long session the `assess_session` LLM
+(reasons over the whole transcript — rule every objection + extract facts + compose the verdict,
+`max_tokens=1536`, ~15-25s) PLUS the spoken ruling crossed 30s, so the timeout fired mid-ruling,
+`SparringRoom` navigated to the scorecard, unmounted, disconnected the room, and cut the judge off
+(the worker has no ruling timeout; the closing-ruling prompt already bounds it to 1-2 sentences, so
+length isn't the issue — the assess latency is). **Fix:** raised `END_SESSION_TIMEOUT_MS` 30s → 90s
+(it's a safety net for a broken agent, not the normal path — that's `end_complete`; a truly-dead
+agent is caught sooner by the room Disconnected event). Frontend-only, one constant. Navigation
+happens only when `endSession()` resolves (confirmed — no other timer). **Frontend type-check + lint
++ 65 Vitest pass.** Tune `END_SESSION_TIMEOUT_MS` higher only if a genuinely longer deliberation
+appears. Needs a live confirm (a long ruling now plays fully before the scorecard).

@@ -44,8 +44,14 @@ const AGENT_JOIN_TIMEOUT_MS = 5000;
 const CONNECT_TIMEOUT_MS = 8000;
 
 /** Max wait for the agent to deliver the judge's ruling + write the scorecard before navigating
- *  anyway (covers the judge LLM call + spoken ruling + persistence, or a missing agent). */
-const END_SESSION_TIMEOUT_MS = 30000;
+ *  anyway. This is a SAFETY NET for a missing/broken agent, NOT the normal path (that's the
+ *  `end_complete` signal) — so it must comfortably exceed the longest real end-of-session:
+ *  the `assess_session` LLM call (reasons over the whole transcript — can be 15-25s on a long
+ *  session) PLUS the spoken closing ruling PLUS persistence. At 30s it fired mid-ruling on long
+ *  sessions and navigated away, cutting the judge off. 90s covers a long deliberation + ruling;
+ *  a truly-dead agent is caught sooner by the room's Disconnected event, so the long wait only
+ *  applies to the rare hung-but-connected case. */
+const END_SESSION_TIMEOUT_MS = 90000;
 
 function mapConnectionState(state: ConnectionState): ConnStatus {
   switch (state) {
