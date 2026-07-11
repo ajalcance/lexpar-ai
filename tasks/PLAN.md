@@ -2571,6 +2571,18 @@ cleaner, safer end state. A leftover `AUTH_MODE=` in any `.env` is silently igno
 ruff + type-check + lint clean.** Backend suite verified with NO Fireworks/OPENAI key present
 (mirrors CI). admin/admin now 401s (unknown email); the hash check has no bypass.
 
-**Step 3 (register the first real user) — PENDING:** a runtime action against the live backend/DB,
-needs the operator's real email + password. Not a code change (no commit). To be done once the user
-supplies credentials, then confirm login end-to-end and that admin/admin authenticates nowhere.
+**Step 3 (register the first real user) — DONE (runtime action; no code commit).**
+- **Migration drift found + fixed:** the live Postgres was at `0004_ruling_provenance` while code head
+  is `0005_supersede_lineage` — the two-tier-deletion migration (f766c30) was never applied, so any
+  `case_documents` query (incl. a pleading upload) would 500 on the missing `superseded_by_id`
+  column. Ran `alembic upgrade head` (→ 0005). **This unblocks the upcoming pleading upload too.**
+- **Stale stub row removed:** the DB held one user — `admin@lexpar.ai`, role=admin, password-less
+  (a prior stub artifact). It could never log in AND, as an active admin, would have blocked the
+  first real registrant from bootstrapping. Per the operator's choice, hard-deleted it + its owned
+  test cruft (1 case, 13 sessions, 93 transcripts, 9 scorecards, 2 provenance). The one seeded court
+  rule it had uploaded (`A.M. No. 01-2-04-SC`) was KEPT, with `uploaded_by_user_id` set NULL
+  (nullable by design) — corpus preserved, FK satisfied.
+- **First real user registered:** `counsel@lexpar.ai` via `POST /api/auth/register` → 201; as the
+  sole/first registrant it auto-bootstrapped to **admin** (verified in DB: role=admin,
+  has_password=True; `/me` confirms). Login with the new creds → 200; `admin`/`admin` → 401. The
+  deployment now has exactly one user, a real admin, with no bypass.
