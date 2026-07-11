@@ -549,6 +549,12 @@ When an objection fires and Opposing Counsel's line is spoken, the Judge immedia
   autoplay-unlocking it — the ledger/transcript still record the ruling, so the symptom is
   "objection #1 had no *audible* ruling, later ones fine." Priming during the join window makes the
   first ruling audible like the rest (docs/LESSONS.md).
+- **Speaking floor (`judge_idle` Event):** the flip side of "judge bypasses the session queue" is
+  that nothing stops the judge (own track) and OC (session track) from speaking at once. A shared
+  `asyncio.Event` (SET = judge idle) closes that gap: `judge_rule` and the closing ruling **clear**
+  it around the bench's speech (always released in a `finally`), and OC's `llm_node` **awaits** it
+  before taking the floor. Without it, a ruling on one STT-final and OC's reply to the *next* rapid
+  final collided live. The judge always has priority — it's the court; OC waits.
 
 ### End-of-session judge assessment (spoken ruling + scorecard)
 

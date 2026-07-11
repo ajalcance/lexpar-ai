@@ -85,6 +85,7 @@ class OpposingCounselAgent(Agent):
         turn_flags: dict,
         turn_timing: dict,
         session_id: str = "",
+        judge_idle=None,
     ):
         super().__init__(instructions="You are opposing counsel in a courtroom rehearsal session.")
         self._state = state
@@ -93,6 +94,12 @@ class OpposingCounselAgent(Agent):
         # entrypoint so the committed attorney turn is timestamped at its START, not turn-end.
         self._turn_timing = turn_timing
         self._session_id = session_id  # for per-turn pleading retrieval (§12)
+        # Speaking floor: the judge (its own participant/track) and OC (the session track) are
+        # independent audio outputs with no shared queue, so without this they can talk over each
+        # other — a ruling and OC's reply to the NEXT rapid STT-final collided live. This Event is
+        # SET when the judge is idle; llm_node awaits it before speaking so OC never starts a reply
+        # while the bench is ruling. The judge always has the floor (it's the court).
+        self._judge_idle = judge_idle
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
         # Record ONE coherent attorney turn per completed utterance. Deepgram emits many `is_final`
@@ -121,6 +128,11 @@ class OpposingCounselAgent(Agent):
             self._turn_flags["objected"] = False
             logger.info("objection fired this turn — skipping the full OC reply (object → rule)")
             return
+        # Wait for the bench to finish before OC takes the floor — the judge speaks on its own
+        # track with no shared speech queue, so this is the only thing preventing OC's reply from
+        # overlapping a ruling (e.g. a ruling on one STT-final vs. OC's reply to the next).
+        if self._judge_idle is not None:
+            await self._judge_idle.wait()
         attorney_turn = _last_user_text(chat_ctx)
         spoken: list[str] = []
         # Ground the reply in the pleading: retrieve the passages relevant to this turn (§12) via
@@ -205,6 +217,10 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     # committed attorney turn is ordered by speech START (keeps mid-utterance objections/rulings
     # after the statement they respond to — see the transcript-ordering fix).
     turn_timing: dict = {"attorney_started_at": None}
+    # Speaking floor between the judge (own track) and OC (session track): SET = judge idle. The
+    # judge clears it while ruling; OC's llm_node awaits it, so the two never talk over each other.
+    judge_idle = asyncio.Event()
+    judge_idle.set()
 
     # ElevenLabs' multi-stream-input websocket (the plugin's default `.stream()` path) returns no
     # audio on our free-tier account — replies were never voiced and the socket closed 1006. Wrap
@@ -353,6 +369,16 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         # hold() while this runs (voice_interrupt), so no new objection can fire over the judge;
         # the timeout below bounds how long that hold can last if the model call hangs.
         turn_flags["objected"] = True  # skip the redundant end-of-turn OC reply (Issue 1)
+        # Take the speaking floor from the moment the objection fires until the ruling is fully
+        # spoken, so OC can't reply to a subsequent STT-final while the bench is still ruling. Held
+        # across generation + speech; the finally ALWAYS releases it (timeout, error, or success).
+        judge_idle.clear()
+        try:
+            await _judge_rule_impl(objection, fragment, wait_for_clear)
+        finally:
+            judge_idle.set()
+
+    async def _judge_rule_impl(objection, fragment: str, wait_for_clear) -> None:
         try:
             result = await asyncio.wait_for(
                 asyncio.to_thread(judge.quick_ruling, state, objection, fragment), timeout=10.0
@@ -470,6 +496,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         ruling = assessment["closing_ruling"]  # CLEAN — persisted, displayed, citation-checked
         state.add_turn("judge", ruling)
         if speak:
+            # Hold the speaking floor for the closing ruling too, so a still-streaming OC reply
+            # can't overlap the bench's final word. Released in the finally.
+            judge_idle.clear()
             try:
                 # Track B: the v3 participant speaks the tagged text; a degraded fallback speaks the
                 # clean text (never literal tags on flash). When the flag is off, spoken == clean.
@@ -480,6 +509,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                 )
             except Exception:
                 logger.exception("judge closing ruling could not be spoken")
+            finally:
+                judge_idle.set()
         payload = scorecard_builder.build_session_end_payload(state, ruling)
         turn_count = len(state.transcript)
         try:
@@ -532,7 +563,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     ctx.add_shutdown_callback(_on_shutdown)
 
     await session.start(
-        agent=OpposingCounselAgent(state, turn_flags, turn_timing, session_id), room=ctx.room
+        agent=OpposingCounselAgent(state, turn_flags, turn_timing, session_id, judge_idle),
+        room=ctx.room
     )
 
 

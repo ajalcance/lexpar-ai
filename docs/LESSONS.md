@@ -519,3 +519,21 @@ ruling. General rule: if two components can both emit the same user-visible sign
 objection"), exactly one must own it end-to-end — a second, unwired emitter produces outputs the rest
 of the pipeline silently drops. Also bumped the inline ruling from "a few words" to one crisp
 judicial sentence so the bench reads as authoritative as counsel, not a bare label.
+
+### [Agents/Voice] Judge and OC talked over each other — two audio tracks, no shared floor
+**Wrong:** The judge speaks on its OWN LiveKit participant/track (so it's non-interruptible and
+attribution is correct by construction), which means judge audio deliberately **bypasses the OC
+AgentSession's speech queue**. Great for "VAD can't cut the judge off" — but it also means the two
+outputs have no mutual exclusion. When the attorney's speech fragmented into several rapid STT
+finals, the classifier fired an objection on one final → the judge ruled (on its track), while OC's
+end-of-turn `llm_node` reply to the NEXT final streamed out (on the session track) at the same time.
+The `turn_flags["objected"]` skip only suppresses OC's reply for the SAME turn, so it didn't help the
+cross-turn collision. Result: judge and OC audibly speaking simultaneously. (The longer, one-sentence
+rulings we'd just added widened the collision window.)
+**Right:** A shared speaking floor — an `asyncio.Event` (`judge_idle`, SET = judge idle). `judge_rule`
+and the closing-ruling path CLEAR it around the bench's speech and ALWAYS release it in a `finally`
+(timeout, error, or success); OC's `llm_node` AWAITS it before it starts streaming a reply. The judge
+always has priority (it's the court); OC simply waits its turn. General rule: the moment you give a
+speaker its own audio track to escape a shared queue, you've also opted out of that queue's implicit
+serialization — you must add an explicit floor/mutex back, or independent tracks will overlap exactly
+when timing gets tight.

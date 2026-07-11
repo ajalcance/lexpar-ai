@@ -69,7 +69,8 @@ STATIC_GOLDENS = {
         "Do not sustain merely because the objection names a ground; test whether that ground "
         "actually fits this statement in this proceeding. State one crisp, judicial sentence "
         "(spoken aloud) that gives your reasoning and MATCHES your ruling and the objection's "
-        "ground — authoritative and specific, not a bare label. If you cite a rule, "
+        "ground — authoritative and specific, not a bare label. Do not restate the ruling word "
+        '("Sustained"/"Overruled") inside the reason; it is spoken separately. If you cite a rule, '
         "name only a section heading that appears in RELEVANT PROCEDURAL RULES; otherwise rule "
         'without naming a specific citation. Respond ONLY with JSON: {"ruling": '
         '"sustained"|"overruled", "reason": "<one sentence>"}.'
