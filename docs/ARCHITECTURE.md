@@ -73,20 +73,22 @@ lexpar-ai/
 │   ├── prompts.py                prompt registry: render()/cache for EVERY LLM prompt (DEV §10)
 │   ├── prompts/                  all agent prompt text (personas + sub-task prompts), one *.md each
 │   ├── requirements.txt
-│   └── Dockerfile
+│   └── Dockerfile                (planned — not yet written; only backend/Dockerfile exists today)
 │
 ├── scripts/
 │   └── seed_court.py             OPTIONAL headless court/rules seeding (§13; NOT the operator path)
 │
 ├── infra/
 │   ├── docker-compose.yml        local dev: postgres, minio (local S3), livekit server
-│   ├── docker-compose.prod.yml   AMD Developer Cloud deployment
-│   └── deploy.sh
+│   ├── docker-compose.prod.yml   (planned — AMD Developer Cloud deployment; not yet written)
+│   └── deploy.sh                 (planned — not yet written)
 │
 ├── docs/
-│   └── ARCHITECTURE.md           this file
+│   ├── ARCHITECTURE.md           this file
+│   ├── DEVELOPER_GUIDELINES.md   coding conventions, testing baseline, pre-merge checklist
+│   └── LESSONS.md                append-only log of past mistakes and their fixes
 │
-├── .github/workflows/ci.yml      lint, test, build images on every push
+├── .github/workflows/ci.yml      lint + type-check + test; backend image build as a smoke test
 ├── CLAUDE.md                     points Claude Code here + operational notes
 └── .env.example
 ```
@@ -708,11 +710,14 @@ the backend — see `frontend/.env.example`. Vite only exposes vars prefixed `VI
   of CI). Run it against a live LiveKit server with:
   `pip install -r agents/requirements.txt -r agents/requirements-voice.txt` then
   `python agents/main.py dev`.
-- **Production (AMD Developer Cloud):** `docker-compose.prod.yml` on the droplet. CI builds and
-  tags images on every push; deploy is `docker compose pull && docker compose up -d`.
-- **CI (`.github/workflows/ci.yml`):** lint + type-check + test + build images on every push, so
-  the droplet only ever pulls images that have already passed CI — never building for the first
-  time under deployment pressure.
+- **Production (AMD Developer Cloud) — planned, not yet built:** the intended path is a
+  `docker-compose.prod.yml` on the droplet deployed via `docker compose pull && docker compose up -d`.
+  Neither that compose file nor a `deploy.sh` exists yet, and CI does not push tagged images to a
+  registry — so this is the target shape (see the §10.5 cutover runbook), not a working pipeline today.
+- **CI (`.github/workflows/ci.yml`):** lint + type-check + test on every push, plus a
+  `docker build` of the **backend** image as a smoke test (built and locally tagged `:ci`, never
+  pushed to a registry — frontend/agents images are deferred). A full build-and-push-to-registry
+  pipeline feeding the production pull above is still to be written.
 
 ---
 

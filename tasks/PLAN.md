@@ -2511,3 +2511,23 @@ LESSONS (additive-reupload/atomic-supersede/purge-vs-provenance reasoning). **�
 use the per-document "Replace…" action in /admin** — that is the supersede path (old version stays
 live until the new one is ready, then leaves retrieval atomically). Plain "Upload rules" remains
 for genuinely new documents.
+
+---
+
+### Doc-accuracy cleanup: aspirational infra/CI drift in ARCHITECTURE §2/§10 — status: done
+
+Closes recommendation #3 from the 2026-07-08 status-review audit (PLAN lines ~988–998), which
+flagged these but was never executed. Verified still drifted at f766c30 (`ls infra/` = only
+`docker-compose.yml`; only `backend/Dockerfile` exists) and fixed:
+- **§2 repo tree:** `infra/docker-compose.prod.yml`, `infra/deploy.sh`, and `agents/Dockerfile`
+  annotated `(planned — not yet written)` instead of shown as existing; the `docs/` subtree now
+  also lists `DEVELOPER_GUIDELINES.md` + `LESSONS.md` (were omitted — minor discrepancy #3); the
+  `ci.yml` tree comment corrected from "build images on every push."
+- **§10 Deployment:** the Production bullet now says the prod compose / `deploy.sh` / registry
+  push are the **planned** target shape (per the §10.5 runbook), not a working pipeline; the CI
+  bullet corrected to what CI actually does — lint + type-check + test, plus a local `docker build`
+  of the backend image tagged `:ci` (never pushed; frontend/agents images deferred), verified
+  against `.github/workflows/ci.yml`.
+
+Docs-only; no code or behavior change. Not committed to `main` directly — on a `docs/` branch per
+DEV_GUIDELINES §9.
