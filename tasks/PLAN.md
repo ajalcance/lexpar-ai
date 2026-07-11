@@ -2586,3 +2586,39 @@ ruff + type-check + lint clean.** Backend suite verified with NO Fireworks/OPENA
   sole/first registrant it auto-bootstrapped to **admin** (verified in DB: role=admin,
   has_password=True; `/me` confirms). Login with the new creds → 200; `admin`/`admin` → 401. The
   deployment now has exactly one user, a real admin, with no bypass.
+
+---
+
+### Objection classifier: per-ground reasoning cues (prompt) + comparative-grounds reachability — status: prompt committed (NOT pushed — needs live pass); gate fix awaiting decision
+
+**Trigger:** a live session missed an objection a human would call obvious. Audit finding (the
+structural one): `relevance` / `mischaracterizes_record` / `assumes_facts` have NO tier-1 regex by
+design ("LLM-only"), but `classify_fragment` requires a tier-1 candidate before ANY LLM call — so
+these grounds are reachable only by piggybacking on an unrelated regex hit. In
+oral_argument/motion_hearing (where only these + calls_for_legal_conclusion are eligible), tier-3
+is reachable ONLY via CLC phrasing; a pure irrelevant/record-mischaracterizing statement is
+gate-rejected before the model ever sees it. **Fix options (per-final comparative fallback in
+argument proceedings / cheap pre-filter variant / per-turn check) reported to the operator —
+DECISION PENDING, nothing built** (hard stop, per the Phase-1-schema precedent, because the
+options trade added tier-3 call volume against miss risk).
+
+**Prompt work (done, committed, NOT pushed — the R1-R4 pattern):**
+- `objection_classifier_system.md` gained a per-ground pattern-recognition cue block (all 8
+  grounds; recognition skill only — NEVER a claim about any jurisdiction's law; the court-rules
+  corpus and ingestion pipeline are untouched), an explicit compare-against-the-SESSION-RECORD
+  instruction for the two comparative grounds, and a calibration line ("object when a competent
+  opposing counsel realistically would — not whenever merely arguable"). Cues are explicitly
+  subordinated to the narrowed "Valid objection types: $eligible" offer line, which is unchanged,
+  as are the MUST-be-one-of/JSON-contract lines and all code-side gating.
+- **Test re-scope (deliberate):** the Phase-4 narrowing test asserted whole-prompt absence of
+  ineligible ground NAMES; the static cue block now names all grounds as recognition patterns, so
+  the test now asserts narrowing on the OFFER line itself (exact "Valid objection types: …" text);
+  the post-parse ineligible-fire guard keeps its own test. Golden updated in lockstep (byte-exact).
+- **Harness:** three comparative fragments added — one piggybacks into tier-3 today (record
+  contradiction with a trailing "right?"; fired at ~1.6s live, model reasons echo the new cue
+  vocabulary), two PURE relevance/mischaracterization fragments that today demonstrate the
+  Finding-1 gate rejection live (0.000s, LLM never called) and become the ready-made before/after
+  demo once the gate fix lands. Annotated in-file.
+- **Suites: agents 181 offline pass, ruff clean.** ⚠️ Committed, NOT pushed: changes what the model
+  is told → needs a live sparring pass to sanity-check firing rate (more real catches without
+  over-firing) before origin/main.

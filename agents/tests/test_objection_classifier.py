@@ -440,9 +440,15 @@ def test_eligible_candidates_still_reach_llm_in_oral_argument(monkeypatch):
     )
     assert decision.fire and decision.objection_type == "calls_for_legal_conclusion"
     system = captured["messages"][0]["content"]
-    # the valid-type list offered to the model is NARROWED to the eligible grounds
-    assert "calls_for_legal_conclusion" in system
-    assert "leading" not in system and "hearsay" not in system
+    # The valid-type list OFFERED to the model is narrowed to the eligible grounds. (The prompt's
+    # per-ground reasoning cues deliberately describe ALL grounds — they are recognition patterns,
+    # explicitly subordinated to the Valid-types line — so narrowing is asserted on the offer line
+    # itself, not on whole-prompt name absence; the post-parse guard for a disobedient fire is
+    # covered by test_llm_fire_with_ineligible_type_is_suppressed.)
+    assert (
+        "Valid objection types: relevance, assumes_facts, mischaracterizes_record, "
+        "calls_for_legal_conclusion. objection_type MUST be one of these or null." in system
+    )
     # and the proceeding type is stated in the user content
     assert "PROCEEDING TYPE: oral_argument" in captured["messages"][1]["content"]
 

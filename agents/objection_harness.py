@@ -9,7 +9,11 @@ Purpose: A text-only harness for the objection classifier — no Deepgram / Live
     pre-two-tier behavior — so the barge-in speedup is measured, not assumed (ARCHITECTURE §6).
     Includes the DOUBLE-FIRE REGRESSION sequence (an STT final revised with smart formatting
     arriving after a pause must NOT re-fire) and an inline-ruling demo (fire → judge rules →
-    ledger updated), both deterministic via an injected clock / fake judge.
+    ledger updated), both deterministic via an injected clock / fake judge. Also includes
+    COMPARATIVE-GROUNDS fragments (relevance / mischaracterizes_record): one that piggybacks into
+    tier-3 today via a leading-shaped surface form, and two pure ones that tier-1 GATE-REJECTS
+    today (see the fragment comments) — kept in the set so the gate fix, when it lands, has its
+    before/after demo ready-made.
 Depends on: agents/objection_classifier.py, agents/session_state.py, agents/voice_interrupt.py
     (live Fireworks calls for ambiguous gate candidates)
 Related: agents/harness.py, docs/ARCHITECTURE.md §6, docs/LESSONS.md
@@ -44,6 +48,19 @@ TIMED_FRAGMENTS = [
     (1.0, "Now, isn't it true that you never actually read the contract?"),
     (7.0, "My neighbor told me the defendant ran the red light."),
     (7.0, "I think the delay was probably intentional."),
+    # --- Comparative grounds (relevance / mischaracterizes_record) ---------------------------
+    # Piggybacks on the leading recall pattern (trailing "right?", NOT high-confidence), so it
+    # reaches tier-3 TODAY: it flatly contradicts the established March 3 signing, and with the
+    # per-ground reasoning cues the model can recognize the record contradiction — this fragment
+    # shows a prompt before/after NOW.
+    (7.0, "The contract was signed in June, not March, right?"),
+    # PURE relevance — no leading/hearsay/speculation/argumentative/CLC surface form, so tier-1
+    # GATE-REJECTS it today (the Finding-1 structural gap): the LLM never sees it regardless of
+    # prompt. It demonstrates a before/after only once the comparative-grounds gate fix lands.
+    (7.0, "I'd like to spend some time on the plaintiff's divorce and his gambling debts."),
+    # PURE mischaracterizes_record — contradicts the established signing with no regex surface
+    # form; same GATE-REJECTED-today status as the relevance fragment above.
+    (6.0, "The contract was never signed by anyone, so it cannot bind my client."),
     (6.0, "The invoice is dated April 2."),
 ]
 

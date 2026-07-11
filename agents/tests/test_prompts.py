@@ -66,17 +66,44 @@ def test_static_prompts_are_byte_identical():
 
 
 def test_classifier_prompt_renders_byte_identical_with_eligible_grounds():
-    # Templated (#9): the eligible-grounds list is substituted for $eligible; the surrounding text
-    # (incl. the literal JSON braces) must be exactly the pre-migration _system_prompt output.
+    # Templated (#9): the eligible-grounds list is substituted for $eligible. This golden was
+    # DELIBERATELY updated with the per-ground reasoning-cue addition (same pattern as R1-R4:
+    # a behavior change is made by changing prompt + golden together, never silently) — the cues
+    # describe recognition patterns/advocacy skill, NEVER what any jurisdiction's law requires.
     expected = (
         "You decide, in real time, whether Opposing Counsel should INTERRUPT the attorney's "
         "in-progress statement with an objection. Follow the rule: object ONLY when the phrasing "
         "genuinely invites one — NOT on every turn. Most fragments should not trigger an "
-        "objection. Use the SESSION RECORD to avoid objecting on grounds already ruled. Valid "
-        "objection types: leading, hearsay. objection_type MUST be one of these or null. Respond "
-        'ONLY with JSON: {"fire": boolean, "objection_type": <one type or null>, "reason": '
-        '"<a few words>"}. Set fire=false and objection_type=null unless there is a clear, '
-        "well-founded objection."
+        "objection. Use the SESSION RECORD to avoid objecting on grounds already ruled.\n"
+        "\n"
+        "Recognize each ground by its pattern, not by keywords alone — these cues describe every "
+        "ground, but you may CHOOSE only from the Valid objection types listed at the end:\n"
+        "- leading: the question supplies its own answer (tag questions, \"isn't it true…\").\n"
+        "- hearsay: repeating an out-of-court statement to prove the thing it asserts "
+        '("he told me…", "according to…").\n'
+        "- speculation: asserting another person's knowledge, intent, or hypothetical conduct "
+        "without personal knowledge.\n"
+        "- argumentative: arguing a conclusion at the witness, or badgering, instead of asking "
+        "a question.\n"
+        "- assumes_facts: presupposing a fact that appears nowhere in the SESSION RECORD.\n"
+        "- relevance: the statement advances no issue in dispute — ask what fact of consequence "
+        "it bears on; if none, it is objectionable.\n"
+        "- mischaracterizes_record: the statement misstates, overstates, or distorts something "
+        "the SESSION RECORD establishes — compare its wording against the established facts and "
+        "case summary.\n"
+        "- calls_for_legal_conclusion: pressing for a legal conclusion to be adopted with no "
+        "record support or cited authority behind it.\n"
+        "\n"
+        "For relevance and mischaracterizes_record, do the comparison explicitly: check the "
+        "statement against the SESSION RECORD before deciding — these two turn on that "
+        "comparison, not on surface phrasing. Calibrate like a competent opposing counsel: "
+        "object when one realistically WOULD rise — a clear, seizable flaw worth the "
+        "interruption — not whenever an objection is merely arguable.\n"
+        "\n"
+        "Valid objection types: leading, hearsay. objection_type MUST be one of these or null. "
+        'Respond ONLY with JSON: {"fire": boolean, "objection_type": <one type or null>, '
+        '"reason": "<a few words>"}. Set fire=false and objection_type=null unless there is a '
+        "clear, well-founded objection."
     )
     assert (
         prompts.render("objection_classifier_system", eligible="leading, hearsay") == expected
