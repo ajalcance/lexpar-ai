@@ -2791,7 +2791,7 @@ else in the stack audited correct — safe to proceed to live testing.
 
 ---
 
-### Hackathon deployment Phase 1 — additive prod infra artifacts + submission tag — status: in progress
+### Hackathon deployment Phase 1 — additive prod infra artifacts + submission tag — status: done
 
 **Goal:** Containerize the full stack for the AMD droplet (165.245.129.142) WITHOUT touching the
 working localhost setup. Everything here is additive: new Dockerfiles (frontend, agents), a prod
@@ -2812,4 +2812,13 @@ the event-specific IP clause (Workstream A) — not touched here.
 - [x] Verify: `docker compose config` on the prod file; build frontend + agents images locally;
       confirm local dev compose untouched
 - [x] Docs: ARCHITECTURE §2/§10 (prod compose now exists), this PLAN entry
-- [ ] PR `feature/hackathon-infra` → main; after merge, tag `hackathon-submission` at the merge commit
+- [x] PR `feature/hackathon-infra` → main (PR #9, CI green, merged); tag `hackathon-submission` pushed at e37e93a
+
+**Result:** All prod infra artifacts merged to main (PR #9) and tagged `hackathon-submission`
+(e37e93a). Verified: prod compose config valid; frontend + agents images build clean locally
+(incl. plugin model prefetch); local-dev files byte-identical (additive confirmed); CI green.
+Pre-publish scan (Workstream A): NO secrets/keys/.env ever committed in history; the compromised
+admin password (chat-only) never entered the repo; findings = two @lexpar.ai account emails in
+tasks/PLAN.md (counsel@ line 2585 current, admin@ historical note) — flagged to the user before
+any public flip. LICENSE untouched (gated on the event-specific IP clause). Next: Phase 2 droplet
+bring-up (user-driven via copy-paste SSH commands).
