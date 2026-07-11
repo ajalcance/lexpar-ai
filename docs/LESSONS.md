@@ -195,6 +195,28 @@ Also note `livekit.plugins.turn_detector` (EnglishModel/MultilingualModel) is de
 `livekit.agents.inference.TurnDetector`, and the plugin models only construct inside a job context —
 verify SDK usage against the installed version, not remembered docs.
 
+### [Agents/LiveKit] VAD interruption at the 0.5s default cancels the agent before it speaks a frame
+**Wrong:** Ran with `"interruption": {"mode": "vad"}` and the SDK default `min_duration=0.5s`. In a
+real (non-studio) setting — laptop speakers, room noise, a breath, "um" — 0.5s of voice activity is
+constantly detected, which fires `session.interrupt()` and **cancels Opposing Counsel's TTS before a
+single audio frame plays.** Live logs were unambiguous: OC's `tts_node` reached `COMPLETE` **zero**
+times across two sessions (mostly `CANCELLED after 0 frame(s)`), with an explicit
+`agent_false_interruption ("a brief noise/echo was read as the attorney speaking")`. The Judge, on a
+**separate non-interruptible participant**, was unaffected — so only the Judge was audible, which
+*read as "the Judge is objecting/speaking out of turn."* Headphones removed the echo but the
+interruptions continued (the threshold, not just echo, was the problem). It masqueraded as a TTS
+bug (delayed/silent audio) for several debugging rounds — audibility was fine; the speech was being
+cancelled.
+**Right:** Two fixes. (1) Raise the interruption threshold well above 0.5s so only sustained speech
+interrupts — `"interruption": {"mode": "vad", "min_duration": 1.0}` (env-tunable,
+`INTERRUPTION_MIN_DURATION`; note `min_words` is STT-only and does nothing in pure `vad` mode).
+Stay on `vad` mode — `adaptive` (which *would* distinguish backchannels) needs cloud inference we
+don't have on self-hosted. (2) Make short, must-complete agent lines **non-interruptible**:
+the canned "Objection — <type>." now uses `session.say(..., allow_interruptions=False)`, matching
+the judge ruling. General rule: a voice agent's interruption threshold is an environment-dependent
+knob, not a set-and-forget default — and diagnose "no audio" by checking whether TTS was *cancelled*
+(`tts_node` never COMPLETEs) before blaming synthesis or playback.
+
 ### [Agents/STT] Deepgram finals are NOT prefix-stable with their interims — don't debounce on raw text
 **Wrong:** The objection debouncer decided "same utterance still growing" with an exact string check
 (`current.startswith(prev)`). Interims arrive lowercase/unpunctuated ("i i my client told me…");

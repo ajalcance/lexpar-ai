@@ -2685,3 +2685,33 @@ is_final=True), ruff clean.** Docs: ARCHITECTURE §6 (restraint, two halves) + �
 LESSONS (max_tokens floor moves with prompt). **NOT pushed** — changes firing behavior, needs a live
 sparring pass to confirm the firing rate is right (fewer false objections without missing real ones).
 main.py untouched by this task (its `[oc-audio]` logging + worker.log stay uncommitted).
+
+---
+
+### OC-silent-audio ROOT CAUSE found + fixed: VAD interruption too aggressive — status: committed, NOT pushed (needs live re-test)
+
+**Diagnosis (from a real captured worker log, via the `[oc-audio]` instrumentation).** The long-
+running "OC inaudible / delayed / judge seems to speak" bug was NOT synthesis, routing, or the judge.
+Two live sessions showed OC's `tts_node` reaching `COMPLETE` **zero** times (mostly `CANCELLED after
+0 frame(s) … likely a VAD interruption`), with an explicit `agent_false_interruption ("a brief
+noise/echo was read as the attorney speaking")` and constant `user_state → speaking (VAD)`. The
+Judge (separate non-interruptible participant) was unaffected → only the Judge was audible, which
+read as "the judge objected." Headphones removed the echo but interruptions continued — so the
+threshold itself (SDK default `min_duration=0.5s`) was the problem: any half-second of voice activity
+cancelled OC before it produced a frame.
+
+**Fix (config-tunable, low-risk):**
+- `config.INTERRUPTION_MIN_DURATION` (env `INTERRUPTION_MIN_DURATION`, default **1.0s**) → passed as
+  `turn_handling["interruption"]["min_duration"]` in main.py, raising the bar from 0.5s so only
+  sustained speech interrupts OC. Stayed on `mode:"vad"` (adaptive needs cloud inference we lack on
+  self-hosted, per LESSONS).
+- OC's canned objection line → `session.say(..., allow_interruptions=False)` (voice_interrupt.py):
+  a ~1-2s barge-in must complete, like the judge ruling.
+
+**Tests: agents 194 offline pass, ruff clean, compiles.** LESSONS entry added (VAD-interruption
+default cancels the agent; diagnose "no audio" by checking whether TTS was *cancelled*, not
+synthesis/playback). **NOT pushed** — needs a live re-test: restart the worker, run a session,
+confirm `grep -c "TTS node COMPLETE" ~/session.log` > 0 and cancellations drop; tune
+`INTERRUPTION_MIN_DURATION` up (1.5-2.0) if OC is still cut off. **Separate open item:** "can't hear
+the Judge" after plugging in headphones is a browser audio-OUTPUT-DEVICE / autoplay issue (the VAD
+bug can't silence the judge), to check at runtime — not this code change.

@@ -101,7 +101,11 @@ async def handle_interim(
             rule_task = asyncio.create_task(
                 judge_rule(objection, transcript, canned_done.wait)
             )
-        await session.say(objection_utterance(decision), allow_interruptions=True)
+        # The objection line is NOT interruptible: it's a ~1-2s canned barge-in ("Objection — X.")
+        # that must complete, like the judge's ruling. When it was interruptible, VAD false-
+        # positives (echo/noise) cancelled it before one audio frame played — OC went unheard. The
+        # judge is already non-interruptible; this makes OC's objection match.
+        await session.say(objection_utterance(decision), allow_interruptions=False)
         canned_done.set()  # objection line finished playing — the judge may now speak
         t_said = time.perf_counter()
         # Immediate-fire latency instrumentation (Issue 3): the gate/classify decision and the

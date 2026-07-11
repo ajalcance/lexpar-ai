@@ -79,6 +79,16 @@ OBJECTION_MODEL = os.getenv(
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 DEEPGRAM_MODEL = os.getenv("DEEPGRAM_MODEL", "nova-3")
+
+# How long (seconds) the attorney must keep speaking before it INTERRUPTS the agent mid-utterance.
+# The SDK default is 0.5s, which lets a brief noise/echo (a breath, "um", speaker bleed) cut
+# Opposing Counsel off before it produces a single audio frame — the confirmed cause of OC being
+# inaudible in live sessions (VAD false-interruptions, worse without headphones). Raised to 1.0s so
+# only sustained speech interrupts; tune up (1.5-2.0) via INTERRUPTION_MIN_DURATION if OC is still
+# getting cut off, or down if genuine interruptions feel unresponsive. (We stay on VAD interruption
+# mode — the SDK's "adaptive" mode needs cloud inference we don't have on a self-hosted server; see
+# docs/LESSONS.md.)
+INTERRUPTION_MIN_DURATION = float(os.getenv("INTERRUPTION_MIN_DURATION", "1.0"))
 ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5")  # low-latency Flash
 # Default: "George" — a CURRENT premade voice. The old default ("Rachel", 21m00Tcm4TlvDq8ikWAM)
 # is a legacy/library voice: free-tier API calls to it fail 402 "paid_plan_required" at synthesis

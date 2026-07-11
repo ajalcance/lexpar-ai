@@ -264,7 +264,13 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         #    model. "v1-mini" IS that local model, pinned directly (no cloud transport at all).
         turn_handling={
             "turn_detection": inference.TurnDetector(version="v1-mini"),
-            "interruption": {"mode": "vad"},
+            # min_duration raises the interruption threshold above the SDK default (0.5s) so a
+            # brief noise/echo can't cut Opposing Counsel off before it speaks — the confirmed
+            # cause of OC being inaudible live (see config.INTERRUPTION_MIN_DURATION + LESSONS.md).
+            "interruption": {
+                "mode": "vad",
+                "min_duration": config.INTERRUPTION_MIN_DURATION,
+            },
         },
         stt=deepgram.STT(
             model=config.DEEPGRAM_MODEL,
