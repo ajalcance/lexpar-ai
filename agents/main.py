@@ -102,6 +102,9 @@ class OpposingCounselAgent(Agent):
         if self._turn_flags.get("objected"):
             self._turn_flags["objected"] = False
             logger.info("objection fired this turn — skipping the full OC reply (object → rule)")
+            # [oc-audio-diag] no reply audio is expected on an objected turn — mark it so a silent
+            # OC turn in the logs isn't misread as the bug.
+            logger.info("[oc-audio] reply SKIPPED this turn (objection fired) — no OC TTS expected")
             return
         attorney_turn = _last_user_text(chat_ctx)
         spoken: list[str] = []
@@ -114,16 +117,63 @@ class OpposingCounselAgent(Agent):
         def _generate(state, turn):
             return opposing_counsel.stream_reply(state, turn, session_id)
 
+        # [oc-audio-diag] TEMPORARY: mark the reply lifecycle so one live run shows whether a reply
+        # was generated and text was actually handed to TTS — distinguishing "no reply produced"
+        # from "reply produced but never voiced". Remove after the silent-OC diagnosis.
+        reply_t0 = time.monotonic()
+        logger.info("[oc-audio] reply turn START — generating verified sentences")
         async for sentence in astream_verified_reply(
             self._state, attorney_turn, generate=_generate
         ):
+            if not spoken:
+                logger.info(
+                    "[oc-audio] first verified sentence -> TTS at +%.3fs",
+                    time.monotonic() - reply_t0,
+                )
             spoken.append(sentence)
             yield sentence + " "  # trailing space so TTS never jams two sentences together
         if spoken:
+            logger.info(
+                "[oc-audio] reply DONE: %d verified sentence(s) handed to TTS", len(spoken)
+            )
             # Accumulate exactly what was spoken (post-verification) for the end-of-session batch.
             self._state.add_turn("opposing_counsel", " ".join(spoken))
         else:
             logger.warning("no verified sentences this turn — staying silent (fail closed)")
+
+    async def tts_node(self, text, model_settings):
+        # [oc-audio-diag] TEMPORARY diagnostic — NO behavior change. Delegates to the default
+        # tts_node unchanged (same frames, same order, same timing) and only observes the sequence
+        # so one live run can tell apart:
+        #   (a) TTS never called for the reply  -> no "TTS node ENTER" line for a reply turn
+        #   (b) TTS started then interrupted    -> "ENTER" (+ maybe "first frame") then "CANCELLED"
+        #   (c) TTS fully synthesized           -> "ENTER" -> "first frame" -> "COMPLETE"
+        # Only OC's session-TTS path passes through here; the Judge (own participant) does not.
+        # Remove once the failure mode is confirmed from the logs.
+        t0 = time.monotonic()
+        frames = 0
+        logger.info("[oc-audio] TTS node ENTER (synthesizing OC audio)")
+        try:
+            async for frame in Agent.default.tts_node(self, text, model_settings):
+                frames += 1
+                if frames == 1:
+                    logger.info(
+                        "[oc-audio] first TTS audio frame at +%.3fs", time.monotonic() - t0
+                    )
+                yield frame
+            logger.info(
+                "[oc-audio] TTS node COMPLETE: %d frame(s) over %.3fs (full synthesis)",
+                frames,
+                time.monotonic() - t0,
+            )
+        except (asyncio.CancelledError, GeneratorExit):
+            logger.info(
+                "[oc-audio] TTS node CANCELLED after %d frame(s) at +%.3fs "
+                "(interrupted/cancelled before completion — likely a VAD interruption)",
+                frames,
+                time.monotonic() - t0,
+            )
+            raise
 
 
 async def entrypoint(ctx: agents.JobContext) -> None:
@@ -367,6 +417,37 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             is_final=event.is_final,
         )
         asyncio.create_task(coro)
+
+    # [oc-audio-diag] TEMPORARY: pure log-only observers of the session's interruption / VAD / state
+    # signals so one live run shows WHAT cuts OC's audio. The smoking gun for the leading hypothesis
+    # is `agent_false_interruption` (a brief noise/echo was read as speech) and/or `user_state ->
+    # speaking` firing WHILE `agent_state == speaking` (OC's own audio leaking into the mic → VAD).
+    # No behavior change — these handlers only log. Remove after the diagnosis.
+    @session.on("agent_state_changed")
+    def _diag_agent_state(ev) -> None:
+        logger.info("[oc-audio] agent_state %s -> %s", ev.old_state, ev.new_state)
+
+    @session.on("user_state_changed")
+    def _diag_user_state(ev) -> None:
+        logger.info("[oc-audio] user_state %s -> %s (VAD)", ev.old_state, ev.new_state)
+
+    @session.on("agent_false_interruption")
+    def _diag_false_interruption(ev) -> None:
+        logger.info(
+            "[oc-audio] agent_false_interruption (resumed=%s) — a brief noise/echo was read as the "
+            "attorney speaking and interrupted the agent mid-turn",
+            ev.resumed,
+        )
+
+    @session.on("speech_created")
+    def _diag_speech_created(ev) -> None:
+        logger.info(
+            "[oc-audio] speech_created source=%s user_initiated=%s", ev.source, ev.user_initiated
+        )
+
+    @session.on("error")
+    def _diag_error(ev) -> None:
+        logger.warning("[oc-audio] session error from %s: %r", type(ev.source).__name__, ev.error)
 
     finalized = {"done": False}
 
