@@ -2645,3 +2645,43 @@ audit outcomes `FALLBACK_FIRE`/`FALLBACK_NO_FIRE` + a `comparative_fallback()` r
   updated (supplementary-route paragraph + eight audit outcomes). No LESSONS entry — the SDK/wiring
   went as designed. Committed apart from the prompt work; NOT pushed (needs the same live pass).
   main.py's `[oc-audio]` diagnostic logging + worker.log left untouched/uncommitted.
+
+---
+
+### Objection over-firing fix: argument restraint (finals-only timing + proceeding-aware calibration) — status: committed, NOT pushed (needs live pass)
+
+**Trigger:** the "judge objected" symptom was traced (persisted transcript ground truth) to OC
+objecting, correctly attributed — not the judge (that report stands). The real defect: **OC
+over-objects in oral argument.** Evidence across 4 live sessions (6 objections): all 4
+`calls_for_legal_conclusion` fires were on ordinary advocacy ("as a matter of law / the court must
+find X") and fired on **interims** (mid-clause = "too early"); Option A's fallback produced one
+**overruled** `assumes_facts` objection. Root causes: (1) argument objections fired on interims
+(premature); (2) the CLC regex + LLM fired on normal legal argument; (3) the fallback's candidate
+hint was presented like detected evidence, biasing toward firing.
+
+**Fix (coordinated, four parts):**
+- **Timing — argument proceedings fire on FINALS only** (`classify_fragment` top-gate via
+  `_is_argument_proceeding`): every interim in oral_argument/motion_hearing defers; the whole
+  statement is judged when its Deepgram final lands. Witness examinations keep interim barge-in
+  (unchanged, regression-tested). Fixes "too early" and gives the model the complete statement.
+- **Judgment — proceeding-aware prompt calibration** (`objection_classifier_system.md`, golden
+  updated byte-exact): arguing the law/characterizing the record is proper → object rarely; "as a
+  matter of law the court should find X" is advocacy, NOT calls_for_legal_conclusion; comparative
+  grounds usually don't apply.
+- **Fallback hint reframed** (`_build_messages(via_fallback=)`): speculative comparative candidates
+  framed "no signal detected — usually none applies, default to not firing," not as evidence.
+- **Finding 5 — `according to` demoted from tier-2** immediate-fire → tier-1 (LLM-judged), so a
+  citation ("according to Section 5…") isn't blind-fired as hearsay.
+- **Gotcha surfaced + fixed:** the more demanding calibration pushed the comparative judgment past
+  the classifier's `max_tokens=512` → gpt-oss empty-content (`finish=length`, `fail_closed`). Verified
+  live (empty at 512, clean JSON at 1024) → **raised 512 → 1024** (a ceiling; simple cases still stop
+  early — no latency cost). LESSONS updated (floor moves with the PROMPT, not just the task).
+
+**Live-verified (harness):** "as a matter of law, the court should find this mortgage void" and two
+more normal-argument statements now **decline** (were the exact 4/4-sustained over-fires); genuine
+objections still fire (record contradiction → mischaracterizes_record; facts-not-in-record →
+assumes_facts). **Tests: agents 194 offline pass (+4 timing/demotion; 4 argument tests moved to
+is_final=True), ruff clean.** Docs: ARCHITECTURE §6 (restraint, two halves) + §7 (max_tokens),
+LESSONS (max_tokens floor moves with prompt). **NOT pushed** — changes firing behavior, needs a live
+sparring pass to confirm the firing rate is right (fewer false objections without missing real ones).
+main.py untouched by this task (its `[oc-audio]` logging + worker.log stay uncommitted).

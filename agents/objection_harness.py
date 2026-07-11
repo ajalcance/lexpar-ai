@@ -69,6 +69,15 @@ COMPARATIVE_FINALS = [
     "Frankly, that's irrelevant.",                                                      # < floor
 ]
 
+# NORMAL oral-argument advocacy that must NOT draw an objection — arguing the law to the bench is
+# proper. Before the over-firing fix, the "as a matter of law / the court must find" phrasing fired
+# calls_for_legal_conclusion every time (4/4 sustained in the live sessions). It should now decline.
+NORMAL_ARGUMENT_FINALS = [
+    "As a matter of law, the court should find this mortgage void from its inception.",
+    "This court must find that the board's inaction was a breach of fiduciary duty.",
+    "The foreclosure proceedings are therefore void for lack of proper authority.",
+]
+
 
 class FakeClock:
     def __init__(self) -> None:
@@ -166,6 +175,17 @@ def _comparative_fallback_demo() -> None:
         )
         print(f'  "{fragment}"')
         print(f"      interim(before): {b:<16}   final(after): {a}")
+
+    print("\n  Normal legal argument (must NOT object — arguing the law is proper):")
+    for fragment in NORMAL_ARGUMENT_FINALS:
+        state = SessionState(proceeding_type="oral_argument")
+        decision = ObjectionClassifier(state, clock=FakeClock()).consider(fragment, is_final=True)
+        verdict = (
+            f"OBJECT ({decision.objection_type}) [{decision.outcome}]"
+            if decision.fire
+            else f"— no-fire [{decision.outcome}]"
+        )
+        print(f'  {verdict:<40} "{fragment}"')
 
 
 def main() -> None:

@@ -408,7 +408,10 @@ def test_gate_filters_ineligible_grounds_before_any_tier(monkeypatch):
         raise AssertionError("LLM must not be called for an ineligible-only candidate")
 
     monkeypatch.setattr(oc, "chat", boom)
-    decision = classify_fragment("Where was the witness that night?", _oral_argument_state())
+    # is_final=True so it reaches the ineligible-ground filtering (argument interims defer earlier).
+    decision = classify_fragment(
+        "Where was the witness that night?", _oral_argument_state(), is_final=True
+    )
     assert decision.outcome == oc.GATE_REJECTED
     assert not decision.fire
     assert "ineligible" in decision.reason
@@ -425,7 +428,7 @@ def test_high_confidence_leading_cannot_fire_in_oral_argument(monkeypatch):
     )
     monkeypatch.setattr(oc, "chat", boom_llm := (lambda *a, **k: '{"fire": false}'))
     del boom_llm
-    decision = classify_fragment(fragment, _oral_argument_state())
+    decision = classify_fragment(fragment, _oral_argument_state(), is_final=True)
     assert decision.outcome == oc.GATE_REJECTED  # leading was its only candidate ground
 
 
@@ -437,8 +440,10 @@ def test_eligible_candidates_still_reach_llm_in_oral_argument(monkeypatch):
         return '{"fire": true, "objection_type": "calls_for_legal_conclusion", "reason": "r"}'
 
     monkeypatch.setattr(oc, "chat", fake_chat)
+    # is_final=True: in oral argument the CLC regex candidate is judged on the COMPLETED statement
+    # (interims defer), so this exercises the tier-3 path.
     decision = classify_fragment(
-        "As a matter of law, this amounts to bad faith.", _oral_argument_state()
+        "As a matter of law, this amounts to bad faith.", _oral_argument_state(), is_final=True
     )
     assert decision.fire and decision.objection_type == "calls_for_legal_conclusion"
     system = captured["messages"][0]["content"]
@@ -462,7 +467,7 @@ def test_llm_fire_with_ineligible_type_is_suppressed(monkeypatch):
         oc, "chat", lambda *a, **k: '{"fire": true, "objection_type": "hearsay", "reason": "r"}'
     )
     decision = classify_fragment(
-        "As a matter of law, this amounts to bad faith.", _oral_argument_state()
+        "As a matter of law, this amounts to bad faith.", _oral_argument_state(), is_final=True
     )
     assert not decision.fire
     assert decision.outcome == oc.LLM_NO_FIRE
@@ -510,10 +515,12 @@ def test_final_routes_pure_comparative_to_tier3(monkeypatch):
     decision = classify_fragment(PURE_COMPARATIVE, _oral_argument_state(), is_final=True)
     assert decision.fire and decision.objection_type == "mischaracterizes_record"
     assert decision.outcome == oc.FALLBACK_FIRE  # its own audit outcome, not plain FIRE
-    # the comparative grounds (no regex) were offered as the candidate hint
-    assert "HEURISTIC CANDIDATES: relevance, assumes_facts, mischaracterizes_record" in (
-        captured["messages"][1]["content"]
-    )
+    # The comparative grounds are offered CONSERVATIVELY (no signal was detected → default to not
+    # firing), not presented as detected candidates — this reduces the fallback's over-fire bias.
+    user = captured["messages"][1]["content"]
+    assert "no objection signal was detected" in user
+    assert "usually none does, so default to not firing" in user
+    assert "relevance, assumes_facts, mischaracterizes_record" in user
 
 
 def test_interim_does_not_trigger_fallback(monkeypatch):
@@ -586,3 +593,52 @@ def test_fallback_fire_is_debounced_and_cooled_through_consider(monkeypatch):
     assert other.outcome == oc.DEBOUNCED
     # and the review partition surfaces the fallback route on its own
     assert [r.fragment for r in classifier.comparative_fallback()] == [PURE_COMPARATIVE]
+
+
+# --- Argument proceedings fire on FINALS, not interims (over-firing / "too early" fix) -----------
+
+CLC_STATEMENT = "As a matter of law, the court must find this mortgage null and void."
+
+
+def test_argument_interim_defers_no_llm(monkeypatch):
+    # Any interim in an argument proceeding — even one with a regex candidate (CLC) — defers to the
+    # completed statement and never calls the model (avoids objecting mid-clause / "too early").
+    monkeypatch.setattr(oc, "chat", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no LLM")))
+    decision = classify_fragment(CLC_STATEMENT, _oral_argument_state(), is_final=False)
+    assert decision.outcome == oc.GATE_REJECTED
+    assert "awaiting the completed statement" in decision.reason
+
+
+def test_argument_regex_candidate_fires_on_final(monkeypatch):
+    # The SAME statement as a completed final IS judged (tier-3) — the CLC regex reaches the model.
+    monkeypatch.setattr(
+        oc,
+        "chat",
+        lambda *a, **k: (
+            '{"fire": true, "objection_type": "calls_for_legal_conclusion", "reason": "x"}'
+        ),
+    )
+    decision = classify_fragment(CLC_STATEMENT, _oral_argument_state(), is_final=True)
+    assert decision.fire and decision.objection_type == "calls_for_legal_conclusion"
+
+
+def test_examination_still_fires_on_interim(monkeypatch):
+    # Regression guard: witness examinations are UNCHANGED — a leading interim still immediate-fires
+    # mid-question (barge-in), it does NOT wait for a final.
+    monkeypatch.setattr(oc, "chat", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no LLM")))
+    decision = classify_fragment(
+        "Isn't it true you were there?",
+        SessionState(proceeding_type="direct_examination"),
+        is_final=False,
+    )
+    assert decision.outcome == oc.FIRE_IMMEDIATE and decision.fire
+
+
+def test_according_to_no_longer_immediate_fires():
+    # Finding 5: "according to" is demoted from tier-2 — it's still a tier-1 candidate (reaches the
+    # LLM) but no longer fires WITHOUT the model, so a citation ("according to Section 5…") isn't
+    # blind-fired as hearsay.
+    assert "hearsay" in candidate_grounds("According to Section 5 of the contract, notice is due.")
+    assert high_confidence_grounds("According to Section 5 of the contract, notice is due.") == []
+    # a genuinely unambiguous hearsay pattern still immediate-fires
+    assert high_confidence_grounds("He told me it was red.") == ["hearsay"]

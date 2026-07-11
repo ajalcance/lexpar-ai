@@ -338,6 +338,18 @@ user JWT whose `role == 'admin'`), distinct from both the agent token and an ord
     the tier-3 machinery verbatim (fail-closed, eligible-guard) and rides the same
     `consider()`-level debounce/cooldown/hold; only the entry is new. Its fires/no-fires carry their
     own audit outcomes (`fallback_fire` / `fallback_no_fire`) so the route is separately reviewable.
+    **Restraint in argument proceedings (two halves).** A live pass showed OC over-objecting in oral
+    argument — objecting mid-clause and on ordinary legal argument ("as a matter of law the court
+    must find X"). Two coordinated fixes: **(timing)** in argument proceedings (oral_argument /
+    motion_hearing) the classifier evaluates only **completed statements** (Deepgram finals) — every
+    interim defers, so it never barges in mid-clause and the model judges the whole statement; witness
+    examinations keep interim barge-in (cut off an improper question as it's asked). **(judgment)**
+    the tier-3 prompt is proceeding-aware: arguing the law and characterizing the record is *proper*
+    in argument, so objections there are rare — "as a matter of law the court should find X" is
+    advocacy, not `calls_for_legal_conclusion`; the comparative grounds usually don't apply and their
+    fallback candidates are framed as "usually none does, default to not firing." (The heavier
+    comparative reasoning pushed the classifier's `max_tokens` floor up — raised 512 → 1024 to avoid
+    the gpt-oss empty-content bug; it's a ceiling, so simple cases still stop early. See LESSONS.)
     `ObjectionClassifier` adds **per-utterance debounce** (compared on **normalized** text — STT
     finals rewrite casing/punctuation relative to their interims, so an exact-prefix check re-arms
     on the revised final and double-fires; see LESSONS), a **re-fire cooldown** (time floor ~5 s,
@@ -545,7 +557,7 @@ call.
 | Opposing Counsel | Fireworks `deepseek-v4-pro` | Self-hosted vLLM on AMD MI300X | Proves AMD platform ownership for the hackathon; switch to self-hosted once session volume justifies dedicated GPU uptime |
 | Judge | Fireworks `gpt-oss-120b`, JSON-structured (**interim**) | Stays on Fireworks | **Should be Gemma** for bonus-prize eligibility, but no serverless Gemma (2/3/4) is reachable on this account/endpoint — verified against the live `/v1/models` list and direct ID probes (all 404), including the Gemma 3 12B/4B IDs from Fireworks' changelog. Interim: `gpt-oss-120b` via structured `{"ruling": …}` output (fast, reliable). `deepseek-v4-pro` was rejected for the Judge — as a reasoning model it is slow (30–60s) and intermittently returns empty content. Do not self-host this one. |
 | Verification | Fireworks `gpt-oss-120b` | Same GPU as reasoning (self-hosted) | Small/fast verifier per §6.5 — deliberately not the reasoning model; needs clean JSON output. |
-| Objection classifier | Fireworks `gpt-oss-120b`, JSON (`OBJECTION_LLM_MODEL`), `max_tokens=512` | Fast model, co-located | Most latency-sensitive call (streaming speech). **Benchmarked against the whole account catalog** (see note below): gpt-oss-120b is the *fastest reliable* model here (~1.3 s), and `max_tokens` cannot drop below 512 without reproducing the empty-content bug. So the latency win came from the **three-tier gate** (§6), not a model swap — clear leading/hearsay fire with no model call at all. Runs only on gate candidates and debounces per utterance. Swap via env if a faster model ever appears. |
+| Objection classifier | Fireworks `gpt-oss-120b`, JSON (`OBJECTION_LLM_MODEL`), `max_tokens=1024` | Fast model, co-located | Most latency-sensitive call (streaming speech). **Benchmarked against the whole account catalog** (see note below): gpt-oss-120b is the *fastest reliable* model here (~1.3 s), and `max_tokens` cannot drop below 512 without reproducing the empty-content bug (raised to 1024 once the proceeding-aware calibration made the comparative judgments reason more — a ceiling, so simple cases still stop early). So the latency win came from the **three-tier gate** (§6), not a model swap — clear leading/hearsay fire with no model call at all. Runs only on gate candidates and debounces per utterance. Swap via env if a faster model ever appears. |
 
 Switching is a config change (`.env` value), never a code change — this is deliberate. **Bonus-eligibility
 note:** the Judge must move to a Gemma model before relying on Gemma-track eligibility; tracked as an

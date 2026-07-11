@@ -34,6 +34,18 @@ Purpose: The bespoke, differentiating piece (ARCHITECTURE §6). Decides, as the 
     outcomes (FALLBACK_FIRE / FALLBACK_NO_FIRE) so this route is separately reviewable, the same way
     FIRE_IMMEDIATE was split from FIRE.
 
+    Timing by proceeding — interims vs finals: in WITNESS examinations (direct/cross) the classifier
+    fires on interims, so it barges in mid-question (you cut off a leading/hearsay question as it's
+    asked). In ARGUMENT proceedings (oral_argument / motion_hearing) it evaluates only COMPLETED
+    statements (Deepgram finals): the attorney is meant to argue the law and characterize the
+    record,
+    so objecting mid-clause is premature — every interim defers, and the whole statement is judged
+    when its final lands. This is why the comparative fallback is finals-only, and it applies to the
+    regex-candidate path too in argument (e.g. `calls_for_legal_conclusion` fires on the completed
+    statement, not the instant "as a matter of law" is heard). Restraint has two halves: this timing
+    rule, and the prompt's calibration (argument objections are rare; ordinary legal argument is not
+    an objection) — see prompts/objection_classifier_system.md.
+
     `ObjectionClassifier` wraps the above with per-utterance debounce so a growing fragment does not
     trigger repeated objections on the same utterance.
 Depends on: json, re, dataclasses; agents/llm_router.py, agents/session_state.py
@@ -198,7 +210,10 @@ _HIGH_CONFIDENCE_PATTERNS: dict[str, list[str]] = {
     "hearsay": [
         r"\b(?:told|informed|texted|emailed) (?:me|him|her|us|them)\b",
         r"\bi (?:heard|was told)\b",
-        r"according to\b",
+        # "according to" is intentionally NOT here: it immediate-fired (no LLM) on legitimate
+        # citations too ("according to Section 5 of the contract…" is not hearsay). It stays in the
+        # tier-1 recall gate, so it still reaches tier-3 where the model judges it — trading ~1.3s
+        # of latency on that phrasing for not blind-firing on a citation.
     ],
 }
 _HC_COMPILED = {
@@ -277,6 +292,15 @@ _WITNESS_EXAM_GROUNDS = frozenset({"leading", "hearsay", "speculation", "argumen
 FALLBACK_MIN_WORDS = 8
 
 
+def _is_argument_proceeding(eligible: tuple[str, ...]) -> bool:
+    """True for argument proceedings (oral_argument / motion_hearing): no witness-examination
+    ground is eligible, so counsel argues to the bench rather than examining a witness. False for
+    direct/cross AND for the fail-open unknown/empty proceeding type (which returns ALL grounds,
+    witness grounds included) — so offline harnesses/tests with no proceeding type keep interim
+    firing and stay retrieval-inert as before."""
+    return not any(g in eligible for g in _WITNESS_EXAM_GROUNDS)
+
+
 def comparative_fallback_grounds(fragment: str, state: SessionState, is_final: bool) -> list[str]:
     """The comparative grounds to offer when a COMPLETED final trips no eligible tier-1 candidate —
     the supplementary route into tier-3 (see module docstring). Returns [] (→ no fallback,
@@ -290,18 +314,33 @@ def comparative_fallback_grounds(fragment: str, state: SessionState, is_final: b
     if len(fragment.split()) < FALLBACK_MIN_WORDS:
         return []
     eligible = eligible_grounds_for(state.proceeding_type)
-    if any(g in eligible for g in _WITNESS_EXAM_GROUNDS):
+    if not _is_argument_proceeding(eligible):
         return []
     return [g for g in eligible if g not in _REGEX_GROUNDS]
 
 
 def _build_messages(
-    fragment: str, state: SessionState, candidates: list[str], rules: str = ""
+    fragment: str,
+    state: SessionState,
+    candidates: list[str],
+    rules: str = "",
+    *,
+    via_fallback: bool = False,
 ) -> list[dict[str, str]]:
     """Assemble the minimal classifier messages (+ the §13 procedural-rules block when retrieval
     produced one; + the proceeding type so the model judges in the right procedural frame).
-    Pure — no API call."""
-    hint = ", ".join(candidates) if candidates else "none"
+    Pure — no API call. `via_fallback` reframes the candidate hint: on the comparative fallback the
+    grounds were NOT triggered by any surface signal (the fragment matched no regex), so presenting
+    them like detected candidates biases the model toward firing — instead they are framed as
+    grounds to CONSIDER, with the reminder that usually none applies."""
+    if via_fallback:
+        hint = (
+            "no objection signal was detected — consider whether ANY of these clearly applies to "
+            f"the completed statement; usually none does, so default to not firing: "
+            f"{', '.join(candidates)}"
+        )
+    else:
+        hint = ", ".join(candidates) if candidates else "none"
     context = f"SESSION RECORD:\n{state.snapshot()}"
     if state.proceeding_type:
         context += f"\n\nPROCEEDING TYPE: {state.proceeding_type}"
@@ -356,6 +395,19 @@ def classify_fragment(fragment: str, state: SessionState, *, is_final: bool = Fa
     # reaches the LLM, and a tier-2 pattern for an ineligible ground (e.g. leading's trailing-"?"
     # in oral argument, the audit-flagged mismatch) can no longer fire at all.
     eligible = eligible_grounds_for(state.proceeding_type)
+    # Argument proceedings evaluate COMPLETED statements, not interims: in oral_argument /
+    # motion_hearing the attorney is expected to argue the law and characterize the record, so
+    # objecting mid-clause is premature — defer every interim and judge the whole statement when
+    # its Deepgram final lands. (Witness examinations keep interim barge-in — you cut off an
+    # improper question as it's asked.) Also saves an LLM call per interim in argument. This is the
+    # timing half of the over-firing fix; the prompt calibration is the judgment half.
+    if _is_argument_proceeding(eligible) and not is_final:
+        return Decision(
+            False,
+            None,
+            "argument proceeding — awaiting the completed statement",
+            outcome=GATE_REJECTED,
+        )
     raw_candidates = candidate_grounds(fragment)
     candidates = [g for g in raw_candidates if g in eligible]
     via_fallback = False
@@ -403,11 +455,17 @@ def classify_fragment(fragment: str, state: SessionState, *, is_final: bool = Fa
         endpoint = build_endpoint(objection_config())
         content = chat(
             endpoint,
-            _build_messages(fragment, state, candidates, rules),
+            _build_messages(fragment, state, candidates, rules, via_fallback=via_fallback),
             temperature=0.0,
-            # gpt-oss reasons before emitting; too small a budget yields empty content, so give it
-            # room for the hidden reasoning plus the short JSON decision.
-            max_tokens=512,
+            # gpt-oss reasons before emitting; too small a budget yields EMPTY content (finish=
+            # length → fail_closed). The proceeding-aware calibration made the comparative judgments
+            # (relevance/mischaracterizes/assumes_facts) reason more, and 512 — the old floor for
+            # the simpler prompt — started returning empty on them (verified: finish=length at 512,
+            # clean JSON at 1024). Raised to 1024. This is a CEILING, not a target: simple cases
+            # (leading/hearsay/CLC) still stop well under it, so no latency cost there. The floor
+            # scales with task complexity — re-check with a live call when the prompt changes (see
+            # docs/LESSONS.md, the gpt-oss max_tokens entry).
+            max_tokens=1024,
             response_format={"type": "json_object"},
         )
         decision = _parse_decision(content)

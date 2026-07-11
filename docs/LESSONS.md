@@ -78,7 +78,11 @@ budget is the wrong lever — change the model or skip the call (see next entry)
 with task complexity, not output size**: the objection classifier is fine at 512, but the judge's
 end-of-session assessment (rule every objection + extract facts + closing ruling) reasons far more
 and came back empty at 512 — it needed **1536**. When you add a heavier reasoning task, re-check the
-budget with a live call, don't assume the old floor carries over.
+budget with a live call, don't assume the old floor carries over. **Confirmed again later:** the
+classifier stayed at 512 for a year — until a *prompt* change (proceeding-aware, more nuanced
+comparative-grounds judgment) pushed its reasoning past 512 on the hard cases (verified live:
+`finish=length`/empty at 512, clean JSON at 1024). The floor moved with the PROMPT, not just the
+task — a more demanding prompt on the same call is a "heavier reasoning task." Raised 512 → 1024.
 
 ### [Agents/LLM] Don't assume a "fast small model" exists — benchmark the actual account catalog
 **Wrong:** Planned to cut objection barge-in latency by swapping `OBJECTION_LLM_MODEL` to "a fast
