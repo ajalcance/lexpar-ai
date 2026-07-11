@@ -356,8 +356,16 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         # tested voice_interrupt glue (debounce + cooldown ensure one objection per utterance,
         # and the ruling hold keeps OC from objecting over the judge). The attorney's *turn* is
         # recorded separately in the agent's on_user_turn_completed hook (one coherent turn),
-        # so we do NOT add per-fragment turns here.
-        coro = handle_interim(session, classifier, event.transcript, publish_objection, judge_rule)
+        # so we do NOT add per-fragment turns here. `is_final` enables the comparative-grounds
+        # fallback (Option A) for completed finals only — interims stay cheap at the regex gate.
+        coro = handle_interim(
+            session,
+            classifier,
+            event.transcript,
+            publish_objection,
+            judge_rule,
+            is_final=event.is_final,
+        )
         asyncio.create_task(coro)
 
     finalized = {"done": False}

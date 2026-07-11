@@ -2622,3 +2622,26 @@ options trade added tier-3 call volume against miss risk).
 - **Suites: agents 181 offline pass, ruff clean.** ⚠️ Committed, NOT pushed: changes what the model
   is told → needs a live sparring pass to sanity-check firing rate (more real catches without
   over-firing) before origin/main.
+
+**Option A — comparative-grounds fallback (gate fix, committed separately, NOT pushed):** closes the
+Finding-1 structural gap. A completed Deepgram final (`is_final` — verified on the installed
+UserInputTranscribedEvent; interims stay cheap at the regex gate) with no eligible tier-1 candidate,
+in an argument proceeding (oral_argument/motion_hearing — derived from `eligible_grounds_for` as
+"no witness-exam ground eligible", NOT hardcoded), that clears an 8-word length floor, is routed to
+tier-3 on the eligible comparative grounds (relevance/mischaracterizes_record/assumes_facts). A
+supplementary ROUTE into tier-3, not a fourth tier: reuses the tier-3 machinery + eligible-guard
+verbatim and rides the same `consider()`-level debounce/cooldown/hold (only the entry is new). Own
+audit outcomes `FALLBACK_FIRE`/`FALLBACK_NO_FIRE` + a `comparative_fallback()` review partition
+(the FIRE_IMMEDIATE-split precedent). `is_final` threads main.py `event.is_final` → `handle_interim`
+→ `consider` → `classify_fragment(..., is_final=)`; injectable-decider fakes updated to accept it.
+- **Harness (live):** pure relevance final → OBJECT(relevance)[fallback_fire]; pure mischaracterization
+  → OBJECT(mischaracterizes_record)[fallback_fire]; both `gate_rejected` as interims; sub-floor
+  "Frankly, that's irrelevant." → skipped, no LLM. Existing leading/hearsay/speculation/piggyback
+  decisions byte-for-byte unchanged (fallback only fires on `is_final=True`, which TIMED_FRAGMENTS
+  never passes).
+- **Tests: agents 190 offline pass (+9: finals-only vs interim, proceeding gating incl. witness-exam
+  and fail-open-unknown off, length floor, motion_hearing on, fallback-no-fire, and a
+  debounce+cooldown-through-consider driven by a REAL fallback fire), ruff clean.** ARCHITECTURE §6
+  updated (supplementary-route paragraph + eight audit outcomes). No LESSONS entry — the SDK/wiring
+  went as designed. Committed apart from the prompt work; NOT pushed (needs the same live pass).
+  main.py's `[oc-audio]` diagnostic logging + worker.log left untouched/uncommitted.

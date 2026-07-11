@@ -47,7 +47,12 @@ def build_objection_event(decision: Decision) -> dict:
 
 
 async def handle_interim(
-    session, classifier: ObjectionClassifier, transcript: str, publish=None, judge_rule=None
+    session,
+    classifier: ObjectionClassifier,
+    transcript: str,
+    publish=None,
+    judge_rule=None,
+    is_final: bool = False,
 ):
     """
     Feed one transcript fragment to the classifier; on a fire decision, barge in — interrupt the
@@ -73,7 +78,9 @@ async def handle_interim(
     AND the floor to have elapsed.
     """
     t_start = time.perf_counter()
-    decision = await asyncio.to_thread(classifier.consider, transcript)
+    # is_final enables the comparative-grounds fallback for completed finals only (interims stay
+    # cheap at the regex gate); passed straight through consider() to the decider.
+    decision = await asyncio.to_thread(classifier.consider, transcript, is_final)
     t_decided = time.perf_counter()
     if decision.fire:
         objection = classifier.state.record_objection(

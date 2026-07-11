@@ -21,6 +21,19 @@ Purpose: The bespoke, differentiating piece (ARCHITECTURE §6). Decides, as the 
          re-object on grounds just overruled). Fails closed: any error/timeout/unparseable output →
          NO interruption.
 
+    Supplementary route — comparative-grounds fallback (NOT a fourth tier; a new way INTO tier-3):
+    the comparative grounds (`relevance` / `mischaracterizes_record` / `assumes_facts`) are checked
+    against the record, not surface phrasing, so they have no tier-1 regex — a purely
+    irrelevant/record-mischaracterizing statement trips no gate and would be dropped pre-model.
+    So on a COMPLETED final (never interims — those stay cheap at the regex gate), in a proceeding
+    where those grounds are eligible and no witness-examination grounds apply (oral_argument /
+    motion_hearing), a final that clears a short length floor is routed to the tier-3 model anyway,
+    offering the eligible comparative grounds. It reuses the tier-3 machinery verbatim (fail-closed,
+    eligible-guard) and every downstream guard (debounce/cooldown/hold live in `consider`, upstream
+    of the decider) — only the ENTRY into tier-3 is new. Its fires/no-fires carry their own audit
+    outcomes (FALLBACK_FIRE / FALLBACK_NO_FIRE) so this route is separately reviewable, the same way
+    FIRE_IMMEDIATE was split from FIRE.
+
     `ObjectionClassifier` wraps the above with per-utterance debounce so a growing fragment does not
     trigger repeated objections on the same utterance.
 Depends on: json, re, dataclasses; agents/llm_router.py, agents/session_state.py
@@ -199,14 +212,18 @@ _IMMEDIATE_PRIORITY = ("leading", "hearsay")
 
 # Decision outcomes — the audit categories. GATE_REJECTED never reached the LLM (the gate filtered
 # it); FIRE_IMMEDIATE fired on a high-confidence pattern WITHOUT the LLM (tier 2); LLM_NO_FIRE and
-# FIRE reached the LLM (tier 3) which declined / fired; FAIL_CLOSED is a swallowed error; DEBOUNCED
-# is a suppressed repeat of an already-objected utterance. Keeping FIRE_IMMEDIATE distinct from FIRE
-# is what lets us see, in the data, whether the high-confidence gate is ever firing too aggressively
-# — the same instinct that splits GATE_REJECTED from LLM_NO_FIRE.
+# FIRE reached the LLM (tier 3) via a regex candidate, which declined / fired; FALLBACK_NO_FIRE and
+# FALLBACK_FIRE reached the LLM via the comparative-grounds fallback (a completed final with no
+# regex candidate, argument proceedings only), which declined / fired; FAIL_CLOSED is a swallowed
+# error; DEBOUNCED is a suppressed repeat of an already-objected utterance. Keeping the fallback
+# outcomes distinct from FIRE/LLM_NO_FIRE lets us see, in the data, how often the comparative route
+# fires vs. over-fires — the same instinct that split FIRE_IMMEDIATE from FIRE.
 GATE_REJECTED = "gate_rejected"
 FIRE_IMMEDIATE = "fire_immediate"
 LLM_NO_FIRE = "llm_no_fire"
 FIRE = "fire"
+FALLBACK_FIRE = "fallback_fire"
+FALLBACK_NO_FIRE = "fallback_no_fire"
 FAIL_CLOSED = "fail_closed"
 DEBOUNCED = "debounced"
 
@@ -246,6 +263,36 @@ def _immediate_objection_type(grounds: list[str]) -> str:
         if ground in grounds:
             return ground
     return grounds[0]
+
+
+# Grounds tier-1 can detect from surface phrasing (the recall-gate keys). Anything eligible but NOT
+# here is a comparative ground with no regex — the ones the fallback exists to reach.
+_REGEX_GROUNDS = frozenset(_GATE_PATTERNS)
+# Witness-examination grounds. If ANY is eligible, a witness is being examined (direct/cross, or the
+# fail-open unknown/empty proceeding type that returns ALL grounds) — the comparative fallback stays
+# off so it doesn't flood examination turns; those grounds already reach tier-3 via their regex.
+_WITNESS_EXAM_GROUNDS = frozenset({"leading", "hearsay", "speculation", "argumentative"})
+# Length floor (words) below which a completed final is too trivial to spend an LLM call on ("That's
+# irrelevant.", "So what?"). Cheapest check — applied before any proceeding/ground work.
+FALLBACK_MIN_WORDS = 8
+
+
+def comparative_fallback_grounds(fragment: str, state: SessionState, is_final: bool) -> list[str]:
+    """The comparative grounds to offer when a COMPLETED final trips no eligible tier-1 candidate —
+    the supplementary route into tier-3 (see module docstring). Returns [] (→ no fallback,
+    ordinary gate-reject) unless ALL hold: it's a final (interims stay cheap); the proceeding is
+    argument-only (no witness-exam ground eligible — excludes direct/cross AND the fail-open
+    unknown/empty proceeding type); and it clears the length floor. Grounds are derived from
+    `eligible_grounds_for` (the single source of truth), filtered to those with no regex — never a
+    hardcoded list, so a change to the eligibility map or taxonomy carries through automatically."""
+    if not is_final:
+        return []
+    if len(fragment.split()) < FALLBACK_MIN_WORDS:
+        return []
+    eligible = eligible_grounds_for(state.proceeding_type)
+    if any(g in eligible for g in _WITNESS_EXAM_GROUNDS):
+        return []
+    return [g for g in eligible if g not in _REGEX_GROUNDS]
 
 
 def _build_messages(
@@ -292,12 +339,18 @@ def _parse_decision(content: str) -> Decision:
     return Decision(fire=fire, objection_type=objection_type, reason=reason, outcome=outcome)
 
 
-def classify_fragment(fragment: str, state: SessionState) -> Decision:
+def classify_fragment(fragment: str, state: SessionState, *, is_final: bool = False) -> Decision:
     """
     Tiers 1–3. Tier 1: no gate candidate → no fire (GATE_REJECTED, no LLM). Tier 2: a
     high-confidence candidate → fire IMMEDIATELY (FIRE_IMMEDIATE, no LLM). Tier 3: an ambiguous
     candidate → the fast model makes the call. Fails closed — any error/timeout/unparseable output
     returns NO interruption.
+
+    `is_final` marks a completed Deepgram final (vs. an interim). It ONLY enables the comparative-
+    grounds fallback (see module docstring): a final with no eligible tier-1 candidate, in an
+    argument proceeding, is routed to the tier-3 model on the comparative grounds instead of being
+    gate-rejected. Interims (`is_final=False`, the default) are unaffected — they gate-reject as
+    before, so nothing changes on the streaming path or for any existing caller/test.
     """
     # §13 proceeding-type gating: an ineligible ground is filtered at EVERY tier — it never
     # reaches the LLM, and a tier-2 pattern for an ineligible ground (e.g. leading's trailing-"?"
@@ -305,13 +358,24 @@ def classify_fragment(fragment: str, state: SessionState) -> Decision:
     eligible = eligible_grounds_for(state.proceeding_type)
     raw_candidates = candidate_grounds(fragment)
     candidates = [g for g in raw_candidates if g in eligible]
+    via_fallback = False
     if not candidates:
-        reason = (
-            f"grounds ineligible for {state.proceeding_type}"
-            if raw_candidates
-            else "no objection-inviting phrasing"
-        )
-        return Decision(False, None, reason, outcome=GATE_REJECTED)
+        # Supplementary route: a completed final in an argument proceeding, no eligible regex
+        # candidate → offer the comparative grounds to the model rather than dropping it. Empty
+        # unless finals-only + argument-proceeding + length-floor all hold (see the helper).
+        fallback = comparative_fallback_grounds(fragment, state, is_final)
+        if fallback:
+            candidates = fallback
+            via_fallback = True
+        else:
+            reason = (
+                f"grounds ineligible for {state.proceeding_type}"
+                if raw_candidates
+                else "no objection-inviting phrasing"
+            )
+            return Decision(False, None, reason, outcome=GATE_REJECTED)
+    # Tier 2 (high-confidence immediate fire) is regex-only; the comparative fallback offers only
+    # grounds with no regex, so `high` is always empty on the fallback route (it flows to tier-3).
     high = [g for g in high_confidence_grounds(fragment) if g in eligible]
     if high:
         ground = _immediate_objection_type(high)
@@ -350,13 +414,17 @@ def classify_fragment(fragment: str, state: SessionState) -> Decision:
         # Belt-and-braces: the prompt only OFFERS eligible types, but if the model fires with one
         # anyway (or invents a type), a procedurally incoherent objection must never be spoken.
         if decision.fire and decision.objection_type not in eligible:
-            return Decision(
+            decision = Decision(
                 False,
                 None,
                 f"model returned ineligible ground {decision.objection_type!r} "
                 f"for {state.proceeding_type or 'unknown proceeding'}",
                 outcome=LLM_NO_FIRE,
             )
+        # Mark the comparative-fallback route with its own audit outcomes so it's reviewable apart
+        # from ordinary regex-candidate LLM decisions (FALLBACK_FIRE / FALLBACK_NO_FIRE).
+        if via_fallback:
+            decision.outcome = FALLBACK_FIRE if decision.fire else FALLBACK_NO_FIRE
         return decision
     except Exception:
         return Decision(
@@ -453,7 +521,7 @@ class ObjectionClassifier:
                 return "re-fire cooldown after the last objection"
         return None
 
-    def consider(self, fragment: str) -> Decision:
+    def consider(self, fragment: str, is_final: bool = False) -> Decision:
         with self._lock:
             frag = fragment.strip()
             if not self._is_continuation(self._prev, frag):
@@ -466,7 +534,10 @@ class ObjectionClassifier:
             elif (reason := self._suppressed_reason()) is not None:
                 decision = Decision(False, None, reason, outcome=DEBOUNCED)
             else:
-                decision = self._decide(frag, self.state)
+                # is_final only enables the comparative-grounds fallback inside the decider; every
+                # debounce/cooldown/hold guard above is upstream and unchanged, so a fallback fire
+                # is deduped/cooled/held exactly like any other fire.
+                decision = self._decide(frag, self.state, is_final=is_final)
                 if decision.fire:
                     self._handled = True
                     self._last_fire_at = self._clock()
@@ -492,3 +563,13 @@ class ObjectionClassifier:
     def llm_no_fire(self) -> list[DecisionRecord]:
         """Fragments that reached the LLM but were judged not to warrant an objection."""
         return [r for r in self.records if r.decision.outcome == LLM_NO_FIRE]
+
+    def comparative_fallback(self) -> list[DecisionRecord]:
+        """Fragments routed to the LLM via the comparative-grounds fallback (finals-only, argument
+        proceedings) — fire or no-fire. Review whether this route catches real misses without
+        over-firing; read each record's `.decision.fire` for the model's verdict."""
+        return [
+            r
+            for r in self.records
+            if r.decision.outcome in (FALLBACK_FIRE, FALLBACK_NO_FIRE)
+        ]

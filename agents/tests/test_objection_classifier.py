@@ -176,7 +176,9 @@ class FakeClock:
 
 
 def always_fire_decider(calls: list[str]):
-    def decider(fragment: str, state: SessionState) -> Decision:
+    # Injected deciders match classify_fragment's contract, which now takes a keyword-only
+    # is_final (consider() passes it through); the fake ignores it.
+    def decider(fragment: str, state: SessionState, *, is_final: bool = False) -> Decision:
         calls.append(fragment)
         return Decision(True, "leading", "x")
 
@@ -350,7 +352,7 @@ def test_review_log_partitions_gate_immediate_and_llm(monkeypatch):
 
 def test_review_log_off_by_default():
     classifier = ObjectionClassifier(
-        SessionState(), decider=lambda f, s: Decision(False, None, "x")
+        SessionState(), decider=lambda f, s, **_: Decision(False, None, "x")
     )
     classifier.consider("The contract was signed on March 3.")
     assert classifier.records == []
@@ -479,3 +481,108 @@ def test_legal_conclusion_gate_patterns_are_candidates_not_immediate():
     fragment = "The court should find that the transfer was void."
     assert "calls_for_legal_conclusion" in candidate_grounds(fragment)
     assert high_confidence_grounds(fragment) == []  # judgment call — never fires without the LLM
+
+
+# --- Comparative-grounds fallback (Option A) -----------------------------------------------------
+# A pure relevance/mischaracterization statement: no leading/hearsay/speculation/argumentative/CLC
+# surface form, so candidate_grounds() returns []. It reaches tier-3 ONLY via the finals fallback.
+PURE_COMPARATIVE = "The contract was never signed by anyone, so it cannot bind my client."
+
+
+def _fire_chat(*a, **k):
+    return (
+        '{"fire": true, "objection_type": "mischaracterizes_record", "reason": "misstates record"}'
+    )
+
+
+def test_pure_comparative_has_no_regex_candidate():
+    assert candidate_grounds(PURE_COMPARATIVE) == []  # the precondition the fallback exists for
+
+
+def test_final_routes_pure_comparative_to_tier3(monkeypatch):
+    captured: dict = {}
+
+    def fake_chat(endpoint, messages, **kwargs):
+        captured["messages"] = messages
+        return _fire_chat()
+
+    monkeypatch.setattr(oc, "chat", fake_chat)
+    decision = classify_fragment(PURE_COMPARATIVE, _oral_argument_state(), is_final=True)
+    assert decision.fire and decision.objection_type == "mischaracterizes_record"
+    assert decision.outcome == oc.FALLBACK_FIRE  # its own audit outcome, not plain FIRE
+    # the comparative grounds (no regex) were offered as the candidate hint
+    assert "HEURISTIC CANDIDATES: relevance, assumes_facts, mischaracterizes_record" in (
+        captured["messages"][1]["content"]
+    )
+
+
+def test_interim_does_not_trigger_fallback(monkeypatch):
+    # Same fragment, but as an INTERIM (is_final=False, the default) — must gate-reject, never call
+    # the model. Interims staying cheap at the regex gate is the whole point of finals-only.
+    monkeypatch.setattr(oc, "chat", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no LLM")))
+    decision = classify_fragment(PURE_COMPARATIVE, _oral_argument_state(), is_final=False)
+    assert decision.outcome == oc.GATE_REJECTED and not decision.fire
+
+
+def test_fallback_no_fire_when_model_declines(monkeypatch):
+    monkeypatch.setattr(oc, "chat", lambda *a, **k: '{"fire": false}')
+    decision = classify_fragment(PURE_COMPARATIVE, _oral_argument_state(), is_final=True)
+    assert not decision.fire and decision.outcome == oc.FALLBACK_NO_FIRE
+
+
+def test_fallback_off_in_witness_examination(monkeypatch):
+    # direct/cross-exam have witness grounds eligible → the fallback stays off (those grounds
+    # already reach tier-3 by regex; the fallback would only flood examination turns). No LLM call.
+    monkeypatch.setattr(oc, "chat", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no LLM")))
+    for pt in ("direct_examination", "cross_examination"):
+        decision = classify_fragment(
+            PURE_COMPARATIVE, SessionState(proceeding_type=pt), is_final=True
+        )
+        assert decision.outcome == oc.GATE_REJECTED, pt
+
+
+def test_fallback_off_for_unknown_proceeding(monkeypatch):
+    # Empty/unknown proceeding fails open to ALL grounds (witness grounds present) → fallback off,
+    # so offline harnesses/tests with no proceeding type never trigger LLM calls on plain sentences.
+    monkeypatch.setattr(oc, "chat", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no LLM")))
+    decision = classify_fragment(PURE_COMPARATIVE, SessionState(), is_final=True)
+    assert decision.outcome == oc.GATE_REJECTED
+
+
+def test_fallback_length_floor_skips_trivial_final(monkeypatch):
+    monkeypatch.setattr(oc, "chat", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no LLM")))
+    decision = classify_fragment(
+        "Frankly, that's irrelevant.", _oral_argument_state(), is_final=True
+    )
+    assert decision.outcome == oc.GATE_REJECTED  # under FALLBACK_MIN_WORDS → no LLM
+
+
+def test_motion_hearing_also_gets_the_fallback(monkeypatch):
+    monkeypatch.setattr(oc, "chat", _fire_chat)
+    decision = classify_fragment(
+        PURE_COMPARATIVE, SessionState(proceeding_type="motion_hearing"), is_final=True
+    )
+    assert decision.outcome == oc.FALLBACK_FIRE
+
+
+def test_fallback_fire_is_debounced_and_cooled_through_consider(monkeypatch):
+    # A fallback fire flows through consider() like any fire: it latches _handled (a continuation
+    # final is deduped) and starts the cooldown (a new comparative final inside the floor is
+    # suppressed) — reusing the SAME machinery the always_fire regression tests cover, driven here
+    # by a real fallback fire rather than a fake decider.
+    monkeypatch.setattr(oc, "chat", _fire_chat)
+    clock = FakeClock()
+    classifier = ObjectionClassifier(_oral_argument_state(), record=True, clock=clock)
+    first = classifier.consider(PURE_COMPARATIVE, is_final=True)
+    assert first.fire and first.outcome == oc.FALLBACK_FIRE
+    # same utterance continuing (final revised) → debounced, not a second fire
+    grown = classifier.consider(PURE_COMPARATIVE + " Indeed.", is_final=True)
+    assert grown.outcome == oc.DEBOUNCED
+    # a genuinely new comparative final within the cooldown floor → suppressed by the time floor
+    clock.now += 1.0
+    other = classifier.consider(
+        "Counsel's argument wanders far outside anything this dispute puts in issue.", is_final=True
+    )
+    assert other.outcome == oc.DEBOUNCED
+    # and the review partition surfaces the fallback route on its own
+    assert [r.fragment for r in classifier.comparative_fallback()] == [PURE_COMPARATIVE]

@@ -61,7 +61,7 @@ def test_handle_interim_barges_in_and_publishes_on_fire():
     publisher = FakePublisher()
     state = SessionState()
     classifier = ObjectionClassifier(
-        state, decider=lambda f, s: Decision(True, "leading", "x", outcome="fire")
+        state, decider=lambda f, s, **_: Decision(True, "leading", "x", outcome="fire")
     )
     decision = asyncio.run(
         handle_interim(session, classifier, "Isn't it true you lied?", publisher)
@@ -87,7 +87,7 @@ def test_handle_interim_silent_and_no_publish_on_no_fire():
     publisher = FakePublisher()
     state = SessionState()
     classifier = ObjectionClassifier(
-        state, decider=lambda f, s: Decision(False, None, "no")
+        state, decider=lambda f, s, **_: Decision(False, None, "no")
     )
     fragment = "The contract was signed on March 3."
     decision = asyncio.run(handle_interim(session, classifier, fragment, publisher))
@@ -103,7 +103,7 @@ def test_handle_interim_records_generic_objection_when_type_missing():
     session = FakeSession()
     state = SessionState()
     classifier = ObjectionClassifier(
-        state, decider=lambda f, s: Decision(True, None, "x", outcome="fire")
+        state, decider=lambda f, s, **_: Decision(True, None, "x", outcome="fire")
     )
     asyncio.run(handle_interim(session, classifier, "some fragment", None))
     assert state.objections[0].grounds == "objection"  # falls back when type is None
@@ -130,7 +130,7 @@ def test_judge_rule_called_with_recorded_objection_on_fire():
     state = SessionState()
     judge = FakeJudge()
     classifier = ObjectionClassifier(
-        state, decider=lambda f, s: Decision(True, "hearsay", "x", outcome="fire")
+        state, decider=lambda f, s, **_: Decision(True, "hearsay", "x", outcome="fire")
     )
     asyncio.run(handle_interim(session, classifier, "He told me it was red.", None, judge))
     assert len(judge.calls) == 1
@@ -144,7 +144,7 @@ def test_judge_rule_not_called_on_no_fire():
     session = FakeSession()
     judge = FakeJudge()
     classifier = ObjectionClassifier(
-        SessionState(), decider=lambda f, s: Decision(False, None, "no")
+        SessionState(), decider=lambda f, s, **_: Decision(False, None, "no")
     )
     asyncio.run(handle_interim(session, classifier, "The invoice is dated April 2.", None, judge))
     assert judge.calls == []
@@ -163,7 +163,7 @@ def test_canned_objection_dispatched_before_ruling_runs():
         said_when_judge_ran["said"] = list(session.said)
 
     classifier = ObjectionClassifier(
-        state, decider=lambda f, s: Decision(True, "leading", "x", outcome="fire")
+        state, decider=lambda f, s, **_: Decision(True, "leading", "x", outcome="fire")
     )
     asyncio.run(handle_interim(session, classifier, "Isn't it true you lied?", None, judge))
     assert said_when_judge_ran["said"] == ["Objection — leading."]
@@ -189,7 +189,7 @@ def test_judge_speak_gated_until_canned_line_completes():
 
     session = SlowSaySession()
     classifier = ObjectionClassifier(
-        state, decider=lambda f, s: Decision(True, "hearsay", "x", outcome="fire")
+        state, decider=lambda f, s, **_: Decision(True, "hearsay", "x", outcome="fire")
     )
     asyncio.run(handle_interim(session, classifier, "He told me it was red.", None, judge))
     assert order == ["canned:Objection — hearsay.", "ruling:Sustained."]
@@ -200,7 +200,7 @@ def test_hold_released_even_when_judge_rule_raises():
     state = SessionState()
     judge = FakeJudge(raises=True)
     classifier = ObjectionClassifier(
-        state, decider=lambda f, s: Decision(True, "leading", "x", outcome="fire")
+        state, decider=lambda f, s, **_: Decision(True, "leading", "x", outcome="fire")
     )
     try:
         asyncio.run(handle_interim(session, classifier, "Isn't it true?", None, judge))

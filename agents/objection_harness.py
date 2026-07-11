@@ -9,11 +9,12 @@ Purpose: A text-only harness for the objection classifier — no Deepgram / Live
     pre-two-tier behavior — so the barge-in speedup is measured, not assumed (ARCHITECTURE §6).
     Includes the DOUBLE-FIRE REGRESSION sequence (an STT final revised with smart formatting
     arriving after a pause must NOT re-fire) and an inline-ruling demo (fire → judge rules →
-    ledger updated), both deterministic via an injected clock / fake judge. Also includes
-    COMPARATIVE-GROUNDS fragments (relevance / mischaracterizes_record): one that piggybacks into
-    tier-3 today via a leading-shaped surface form, and two pure ones that tier-1 GATE-REJECTS
-    today (see the fragment comments) — kept in the set so the gate fix, when it lands, has its
-    before/after demo ready-made.
+    ledger updated), both deterministic via an injected clock / fake judge. Also demonstrates the
+    COMPARATIVE-GROUNDS FALLBACK (Option A): pure relevance / mischaracterization finals (no
+    leading/hearsay/speculation/argumentative/CLC surface form) which tier-1 gate-rejects as
+    interims but the finals-only fallback routes to tier-3 in oral_argument.
+    `_comparative_fallback_demo()` runs each BEFORE (interim → gate-reject, no LLM) and AFTER
+    (final → fallback → live model), plus the length-floor skip.
 Depends on: agents/objection_classifier.py, agents/session_state.py, agents/voice_interrupt.py
     (live Fireworks calls for ambiguous gate candidates)
 Related: agents/harness.py, docs/ARCHITECTURE.md §6, docs/LESSONS.md
@@ -48,20 +49,24 @@ TIMED_FRAGMENTS = [
     (1.0, "Now, isn't it true that you never actually read the contract?"),
     (7.0, "My neighbor told me the defendant ran the red light."),
     (7.0, "I think the delay was probably intentional."),
-    # --- Comparative grounds (relevance / mischaracterizes_record) ---------------------------
     # Piggybacks on the leading recall pattern (trailing "right?", NOT high-confidence), so it
-    # reaches tier-3 TODAY: it flatly contradicts the established March 3 signing, and with the
-    # per-ground reasoning cues the model can recognize the record contradiction — this fragment
-    # shows a prompt before/after NOW.
+    # reaches tier-3 TODAY regardless of the comparative fallback: it flatly contradicts the
+    # established March 3 signing, and with the per-ground reasoning cues the model can recognize
+    # the record contradiction. Kept here as the PROMPT-scaffold demo. (The PURE comparative
+    # fragments — objectionable only on relevance/mischaracterization with no regex surface form —
+    # live in _comparative_fallback_demo() below, where they exercise the finals-only fallback.)
     (7.0, "The contract was signed in June, not March, right?"),
-    # PURE relevance — no leading/hearsay/speculation/argumentative/CLC surface form, so tier-1
-    # GATE-REJECTS it today (the Finding-1 structural gap): the LLM never sees it regardless of
-    # prompt. It demonstrates a before/after only once the comparative-grounds gate fix lands.
-    (7.0, "I'd like to spend some time on the plaintiff's divorce and his gambling debts."),
-    # PURE mischaracterizes_record — contradicts the established signing with no regex surface
-    # form; same GATE-REJECTED-today status as the relevance fragment above.
-    (6.0, "The contract was never signed by anyone, so it cannot bind my client."),
     (6.0, "The invoice is dated April 2."),
+]
+
+# PURE comparative-grounds finals for the Option-A fallback demo: objectionable ONLY on relevance /
+# mischaracterizes_record, NO leading/hearsay/speculation/argumentative/CLC surface form, so
+# candidate_grounds() returns [] — they reach tier-3 solely via the finals fallback (oral_argument).
+# The last is under the 8-word length floor and must be skipped without an LLM call.
+COMPARATIVE_FINALS = [
+    "I'd like to spend some time on the plaintiff's divorce and his gambling debts.",  # relevance
+    "The contract was never signed by anyone, so it cannot bind my client.",           # mischar.
+    "Frankly, that's irrelevant.",                                                      # < floor
 ]
 
 
@@ -138,6 +143,31 @@ async def _inline_ruling_demo() -> None:
     print(f"  Transcript: {[(t.speaker, t.content) for t in state.transcript]}")
 
 
+def _comparative_fallback_demo() -> None:
+    """Option A: pure relevance/mischaracterization finals reach tier-3 ONLY via the finals-only
+    fallback in oral_argument. Show each fragment BEFORE (as an interim → gate-rejected, no LLM)
+    and AFTER (as a final → routed to the live model), plus the length-floor skip. A fresh
+    classifier per fragment so the cooldown/debounce of one doesn't mask another (they'd all be
+    within the 5s floor otherwise); this demo is about the ROUTE, not the streaming debounce."""
+    print("\n=== Comparative-grounds fallback (Option A, oral_argument, live) ===")
+    print(f"  (length floor = {oc.FALLBACK_MIN_WORDS} words)\n")
+    for fragment in COMPARATIVE_FINALS:
+        state = SessionState(proceeding_type="oral_argument")
+        state.add_established_fact("The employment contract was signed on March 3.")
+        before = ObjectionClassifier(state, clock=FakeClock()).consider(fragment, is_final=False)
+        fresh = SessionState(proceeding_type="oral_argument")
+        fresh.add_established_fact("The employment contract was signed on March 3.")
+        after = ObjectionClassifier(fresh, clock=FakeClock()).consider(fragment, is_final=True)
+        b = f"{before.outcome}"
+        a = (
+            f"OBJECT ({after.objection_type}) [{after.outcome}]"
+            if after.fire
+            else f"— [{after.outcome}]"
+        )
+        print(f'  "{fragment}"')
+        print(f"      interim(before): {b:<16}   final(after): {a}")
+
+
 def main() -> None:
     # AFTER: the real two-tier gate (high-confidence patterns fire immediately, no LLM).
     two_tier, after = _run("Two-tier gate (immediate-fire on — current)", immediate_enabled=True)
@@ -162,6 +192,7 @@ def main() -> None:
     _review("Immediate fires (high-confidence, no LLM)", two_tier.immediate_fires())
     _review("LLM no-fire (reached the LLM, judged not to object)", two_tier.llm_no_fire())
 
+    _comparative_fallback_demo()
     asyncio.run(_inline_ruling_demo())
 
 

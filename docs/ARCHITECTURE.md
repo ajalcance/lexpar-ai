@@ -326,15 +326,28 @@ user JWT whose `role == 'admin'`), distinct from both the agent token and an ord
     direct "he told me" hearsay) that it **fires immediately with no LLM call at all**, the only way
     to hit ~0.5 s barge-in given the account has no sub-second model; (3) the fast model
     (`classify_fragment`, gpt-oss-120b JSON) judges the remaining **ambiguous** candidates.
+    On top of the three tiers there is a **supplementary route into tier-3 — the comparative-grounds
+    fallback** (not a fourth tier; a different way to *reach* the model): the comparative grounds
+    (`relevance` / `mischaracterizes_record` / `assumes_facts`) are judged against the record, not
+    surface phrasing, so they have no tier-1 regex and a purely irrelevant/record-mischaracterizing
+    statement would be gate-rejected before the model ever saw it. So on a **completed Deepgram
+    final** (never interims — those stay cheap at the regex gate), in an **argument proceeding**
+    (`oral_argument` / `motion_hearing`, where no witness-examination ground is eligible — derived
+    from `eligible_grounds_for`, not hardcoded) that clears a short **length floor**, a final with no
+    eligible regex candidate is routed to tier-3 anyway on the eligible comparative grounds. It reuses
+    the tier-3 machinery verbatim (fail-closed, eligible-guard) and rides the same
+    `consider()`-level debounce/cooldown/hold; only the entry is new. Its fires/no-fires carry their
+    own audit outcomes (`fallback_fire` / `fallback_no_fire`) so the route is separately reviewable.
     `ObjectionClassifier` adds **per-utterance debounce** (compared on **normalized** text — STT
     finals rewrite casing/punctuation relative to their interims, so an exact-prefix check re-arms
     on the revised final and double-fires; see LESSONS), a **re-fire cooldown** (time floor ~5 s,
     injectable clock), and a **ruling hold** (`hold()`/`release_hold()`): while an inline judge
     ruling is in flight no new objection can fire over the judge, and re-arming requires BOTH the
     floor elapsed AND the hold released — so a slow ruling call (network jitter) stays protected.
-    The LLM stage **fails closed** (any error → no interruption). Six audit outcomes distinguish
-    `fire_immediate` (tier 2, no model) from `fire` (tier 3, model-judged) so an over-aggressive
-    high-confidence gate is visible in the data. `consider()` is **lock-serialized** — the worker
+    The LLM stage **fails closed** (any error → no interruption). Eight audit outcomes distinguish
+    `fire_immediate` (tier 2, no model) from `fire` (tier 3, model-judged) and both from
+    `fallback_fire` / `fallback_no_fire` (the comparative-grounds route), so an over-aggressive
+    high-confidence gate or fallback is visible in the data. `consider()` is **lock-serialized** — the worker
     feeds interim transcripts through it from concurrent `asyncio.to_thread` calls, so its debounce
     state must not be raced. Bespoke logic on top of the framework, not something LiveKit provides
     out of the box.
