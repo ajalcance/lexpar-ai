@@ -1,0 +1,30 @@
+# Caddy reverse proxy for the LexPar AI production deploy (infra/docker-compose.prod.yml).
+# Automatic HTTPS via Let's Encrypt on both sslip.io hostnames ({$VAR} = container env, set from
+# .env.prod). Caddy proxies WebSockets natively — no extra config needed for WSS.
+#
+#   PUBLIC_DOMAIN   e.g. 165-245-129-142.sslip.io          → the app (SPA + API, same origin)
+#   LIVEKIT_DOMAIN  e.g. livekit.165-245-129-142.sslip.io  → LiveKit signaling (WSS)
+
+{$PUBLIC_DOMAIN} {
+	encode gzip
+
+	# REST API → FastAPI backend (same-origin, so the browser needs no CORS exception).
+	handle /api/* {
+		reverse_proxy backend:8000
+	}
+	handle /health {
+		reverse_proxy backend:8000
+	}
+
+	# Everything else → the static SPA.
+	handle {
+		reverse_proxy frontend:80
+	}
+}
+
+# LiveKit signaling: the browser connects to wss://LIVEKIT_DOMAIN (the URL the backend hands out
+# in the token response). Media itself flows directly to the droplet over UDP/TCP, not through
+# Caddy.
+{$LIVEKIT_DOMAIN} {
+	reverse_proxy livekit:7880
+}

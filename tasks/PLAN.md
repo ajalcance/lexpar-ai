@@ -2788,3 +2788,28 @@ transcript chain, docs/hygiene, all suites) came back clean except two small ite
 agents 201 offline pass, ruff clean, main.py compiles. (The observer/turn-hook live in the
 unit-untestable main.py; correctness is by construction + the standing live re-test.) Everything
 else in the stack audited correct — safe to proceed to live testing.
+
+---
+
+### Hackathon deployment Phase 1 — additive prod infra artifacts + submission tag — status: in progress
+
+**Goal:** Containerize the full stack for the AMD droplet (165.245.129.142) WITHOUT touching the
+working localhost setup. Everything here is additive: new Dockerfiles (frontend, agents), a prod
+compose file, Caddy TLS reverse proxy (sslip.io + Let's Encrypt), a LiveKit production config, and
+a documented `.env.prod` template. Deploy happens from a stable `hackathon-submission` tag so local
+dev on main continues safely. Fresh cloud DB (no local data migrates). LICENSE decision is GATED on
+the event-specific IP clause (Workstream A) — not touched here.
+
+- [x] `frontend/Dockerfile` (multi-stage: node build → nginx) + `nginx.conf` + `.dockerignore`
+- [x] `agents/Dockerfile` (voice deps + model prefetch) + `.dockerignore`
+- [x] `backend/.dockerignore` — already existed and sufficient; untouched
+- [x] `infra/docker-compose.prod.yml` — postgres (fresh volume) / minio / livekit (prod config,
+      public node-ip, UDP media range) / one-shot alembic migrate / backend / agents / frontend / caddy
+- [x] `infra/livekit.prod.yaml` + `infra/Caddyfile` (app domain + livekit WSS domain)
+- [x] `.env.prod.example` (INTERRUPTION_MIN_DURATION=1.0 explicit; fresh-secret placeholders)
+- [x] `infra/deploy.sh` (thin idempotent compose wrapper)
+- [x] `.gitignore`: add `.env.prod`
+- [x] Verify: `docker compose config` on the prod file; build frontend + agents images locally;
+      confirm local dev compose untouched
+- [x] Docs: ARCHITECTURE §2/§10 (prod compose now exists), this PLAN entry
+- [ ] PR `feature/hackathon-infra` → main; after merge, tag `hackathon-submission` at the merge commit

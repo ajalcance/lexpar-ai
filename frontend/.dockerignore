@@ -1,0 +1,7 @@
+# Keep the frontend image build context lean (frontend/Dockerfile).
+node_modules
+dist
+coverage
+.env
+.env.*
+*.log

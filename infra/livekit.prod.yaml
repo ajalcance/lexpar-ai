@@ -1,0 +1,26 @@
+# LiveKit server PRODUCTION config for the AMD droplet (infra/docker-compose.prod.yml mounts
+# this at /etc/livekit.yaml). Local dev uses `--dev` flags instead (infra/docker-compose.yml).
+#
+# Deliberately NOT in this file (supplied via environment/flags so no secret or
+# deployment-specific value is committed):
+#   - API keys      → LIVEKIT_KEYS env var  ("${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}")
+#   - node IP       → --node-ip flag        (the droplet's public IP; advertised in ICE candidates)
+#
+# Signaling (port 7880) is NOT published on the host — Caddy terminates WSS on the public
+# LIVEKIT_DOMAIN and proxies to livekit:7880 over the compose network. Media flows directly:
+# UDP 50000-50060 (must match the compose port mapping) with TCP 7881 as the ICE fallback for
+# UDP-hostile networks. The embedded TURN server is not enabled: it would need its own TLS
+# cert/port; direct UDP + TCP fallback covers ordinary judge/demo networks.
+
+port: 7880
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50060
+  # The public address is supplied with --node-ip; no STUN-based discovery needed on a droplet
+  # with a known static public IP.
+  use_external_ip: false
+
+logging:
+  level: info

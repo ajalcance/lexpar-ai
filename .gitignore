@@ -1,5 +1,7 @@
 .DS_Store
 .env
+# Droplet production env (real secrets; .env.prod.example documents the shape)
+.env.prod
 node_modules/
 __pycache__/
 *.pyc

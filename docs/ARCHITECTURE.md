@@ -72,16 +72,18 @@ lexpar-ai/
 │   ├── llm_router.py             switches Fireworks <-> self-hosted vLLM per agent
 │   ├── prompts.py                prompt registry: render()/cache for EVERY LLM prompt (DEV §10)
 │   ├── prompts/                  all agent prompt text (personas + sub-task prompts), one *.md each
-│   ├── requirements.txt
-│   └── Dockerfile                (planned — not yet written; only backend/Dockerfile exists today)
+│   ├── requirements.txt          (+ requirements-voice.txt: heavy media deps, out of CI)
+│   └── Dockerfile                voice worker image (deps + model prefetch; prod deploy only)
 │
 ├── scripts/
 │   └── seed_court.py             OPTIONAL headless court/rules seeding (§13; NOT the operator path)
 │
 ├── infra/
 │   ├── docker-compose.yml        local dev: postgres, minio (local S3), livekit server
-│   ├── docker-compose.prod.yml   (planned — AMD Developer Cloud deployment; not yet written)
-│   └── deploy.sh                 (planned — not yet written)
+│   ├── docker-compose.prod.yml   AMD droplet deployment: full stack + Caddy TLS (additive; §10)
+│   ├── livekit.prod.yaml         LiveKit production config (public networking; keys via env)
+│   ├── Caddyfile                 reverse proxy: app + /api same-origin, LiveKit WSS domain
+│   └── deploy.sh                 idempotent `compose up -d --build` wrapper (droplet-side)
 │
 ├── docs/
 │   ├── ARCHITECTURE.md           this file
@@ -754,10 +756,22 @@ the backend — see `frontend/.env.example`. Vite only exposes vars prefixed `VI
   of CI). Run it against a live LiveKit server with:
   `pip install -r agents/requirements.txt -r agents/requirements-voice.txt` then
   `python agents/main.py dev`.
-- **Production (AMD Developer Cloud) — planned, not yet built:** the intended path is a
-  `docker-compose.prod.yml` on the droplet deployed via `docker compose pull && docker compose up -d`.
-  Neither that compose file nor a `deploy.sh` exists yet, and CI does not push tagged images to a
-  registry — so this is the target shape (see the §10.5 cutover runbook), not a working pipeline today.
+- **Production (AMD Developer Cloud droplet):** `infra/docker-compose.prod.yml` runs the full
+  stack — Postgres (fresh volume; no local data migrates to the temporary droplet), MinIO,
+  LiveKit (production networking: `--node-ip <public IP>`, UDP media range 50000–50060 + TCP 7881,
+  real keys via `LIVEKIT_KEYS`; `infra/livekit.prod.yaml`), a one-shot `migrate` service (reuses
+  the backend image, `alembic upgrade head`), backend, agents worker (own Dockerfile: both
+  requirement sets + model prefetch, `python main.py start`), frontend (multi-stage build → nginx
+  SPA; `VITE_API_BASE_URL` baked at build), and **Caddy** as the only public HTTP/S entry
+  (`infra/Caddyfile`): auto-TLS via Let's Encrypt on sslip.io domains — the app + `/api/*`
+  same-origin on `PUBLIC_DOMAIN`, LiveKit signaling as WSS on `LIVEKIT_DOMAIN` (media flows
+  directly over UDP/TCP, not through Caddy). Config comes from a repo-root `.env.prod`
+  (gitignored; `.env.prod.example` documents the shape — fresh droplet-only secrets,
+  `INTERRUPTION_MIN_DURATION=1.0` set explicitly). Deploy: `./infra/deploy.sh` (idempotent
+  `compose up -d --build`), from a stable tag — the droplet does not track `main`. All of this is
+  **additive**: local dev (`infra/docker-compose.yml` + host processes) is unchanged. Images build
+  on the droplet; CI still pushes nothing to a registry (a build-and-push pipeline remains future
+  work).
 - **CI (`.github/workflows/ci.yml`):** lint + type-check + test on every push, plus a
   `docker build` of the **backend** image as a smoke test (built and locally tagged `:ci`, never
   pushed to a registry — frontend/agents images are deferred). A full build-and-push-to-registry

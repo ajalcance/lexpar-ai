@@ -1,0 +1,9 @@
+# Keep the agents image build context lean (agents/Dockerfile).
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+tests
+.env
+.env.*
+*.log
