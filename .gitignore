@@ -16,3 +16,14 @@ venv/
 
 # Operator-supplied official court-rule documents (never committed - see scripts/seed_court.py)
 seed_data/
+
+# SSH keypairs / private keys — NEVER commit (deploy keys live outside the repo)
+lexpar
+lexpar.pub
+id_rsa*
+id_ed25519*
+*.pem
+
+# Transient worker/run logs (runtime artifacts, not source)
+worker.log
+*.log
