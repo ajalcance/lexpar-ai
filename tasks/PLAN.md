@@ -2822,3 +2822,35 @@ admin password (chat-only) never entered the repo; findings = two @lexpar.ai acc
 tasks/PLAN.md (counsel@ line 2585 current, admin@ historical note) — flagged to the user before
 any public flip. LICENSE untouched (gated on the event-specific IP clause). Next: Phase 2 droplet
 bring-up (user-driven via copy-paste SSH commands).
+
+---
+
+### Hackathon deployment Phases 2-4 — droplet live + MI300X cutover — status: done
+
+**Executed on the AMD droplet (165.245.129.142, Ubuntu 24.04, full MI300X VF / 192 GB) from the
+`hackathon-submission` tag — local dev untouched throughout.**
+
+- **Phase 2:** Docker/Compose/Git already present; read-only GitHub **deploy key** minted on-box;
+  cloned the tag (detached HEAD). `.env.prod` built from `.env.prod.example` with **7 fresh secrets
+  generated on the box** (never seen by the assistant) + the 3 provider keys pasted in on-box;
+  `INTERRUPTION_MIN_DURATION=1.0` explicit. `docker compose config` valid.
+- **Phase 3:** disabled the droplet's pre-installed host Caddy (freed 80/443); `./infra/deploy.sh`
+  brought up the full stack (migrate ran `alembic upgrade head`, bucket created, all services
+  healthy). **Let's Encrypt issued certs for both sslip.io domains** (proves inbound 80 open);
+  smoke tests green — `/health` ok, app 200, LiveKit WSS `OK`, agents `registered worker`. Verified
+  publicly reachable over HTTPS from off-box.
+- **Phase 4 (the AMD centerpiece):** chose **`Qwen/Qwen2.5-72B-Instruct`** (ungated + Apache-2.0 vs
+  gated Llama; comparable quality, no CoT leak). Ran stock `rocm/vllm:latest` with the GPU passed
+  in, on the app's Docker network (private `http://vllm:8000/v1`, no public port). Raw endpoint
+  OpenAI-compatible (served as `opposing-counsel`). Flipped `OPPOSING_COUNSEL_LLM_PROVIDER=self_hosted`
+  in `.env.prod`, recreated only the agents worker (Judge + verification stay Fireworks). Verified via
+  the in-container harness (real code path → vLLM) and `rocm-smi` (GPU **100%**, ~**174 GB** VRAM
+  mid-generation). **Rollback = one line:** set provider back to `fireworks`, recreate agents.
+- **Repo:** fixed `harness.py`'s hardcoded `(Fireworks)` labels to print the actual configured
+  provider (`config.OPPOSING_COUNSEL_PROVIDER` / `JUDGE_PROVIDER`). Docs updated: ARCHITECTURE §7
+  (OC row), §10.5 Step 3 (chosen model recorded), §11 (both boxes checked).
+
+**Remaining:** Phase 5 — live end-to-end courtroom run (validates the WebRTC UDP media path, the one
+thing still unproven), build the demo Court + Case, and claim the first admin account (fresh cloud
+DB has zero users → first registrant bootstraps to admin; the compromised chat-era password never
+existed on this DB).

@@ -573,7 +573,7 @@ call.
 
 | Agent | Model in use now | Post-droplet option | Why |
 |---|---|---|---|
-| Opposing Counsel | Fireworks `deepseek-v4-pro` | Self-hosted vLLM on AMD MI300X | Proves AMD platform ownership for the hackathon; switch to self-hosted once session volume justifies dedicated GPU uptime |
+| Opposing Counsel | Fireworks `deepseek-v4-pro` (local dev); **self-hosted `Qwen2.5-72B-Instruct` on AMD MI300X (hackathon droplet, live 2026-07-11)** | Self-hosted vLLM on AMD MI300X | Proves AMD platform ownership for the hackathon; config-only switch (§10.5), so local dev stays on Fireworks unchanged |
 | Judge | Fireworks `gpt-oss-120b`, JSON-structured (**interim**) | Stays on Fireworks | **Should be Gemma** for bonus-prize eligibility, but no serverless Gemma (2/3/4) is reachable on this account/endpoint — verified against the live `/v1/models` list and direct ID probes (all 404), including the Gemma 3 12B/4B IDs from Fireworks' changelog. Interim: `gpt-oss-120b` via structured `{"ruling": …}` output (fast, reliable). `deepseek-v4-pro` was rejected for the Judge — as a reasoning model it is slow (30–60s) and intermittently returns empty content. Do not self-host this one. |
 | Verification | Fireworks `gpt-oss-120b` | Same GPU as reasoning (self-hosted) | Small/fast verifier per §6.5 — deliberately not the reasoning model; needs clean JSON output. |
 | Objection classifier | Fireworks `gpt-oss-120b`, JSON (`OBJECTION_LLM_MODEL`), `max_tokens=1024` | Fast model, co-located | Most latency-sensitive call (streaming speech). **Benchmarked against the whole account catalog** (see note below): gpt-oss-120b is the *fastest reliable* model here (~1.3 s), and `max_tokens` cannot drop below 512 without reproducing the empty-content bug (raised to 1024 once the proceeding-aware calibration made the comparative judgments reason more — a ceiling, so simple cases still stop early). So the latency win came from the **three-tier gate** (§6), not a model swap — clear leading/hearsay fire with no model call at all. Runs only on gate candidates and debounces per utterance. Swap via env if a faster model ever appears. |
@@ -858,6 +858,15 @@ Pick one, set `<MODEL_ID>` in Step 2, and **record the final choice here** once 
 Judge's Gemma blocker (§7) is also being solved, a Gemma model can be served the same way on this GPU
 — but that is a separate cutover (`JUDGE_LLM_*`).
 
+**Chosen + deployed (2026-07-11): `Qwen/Qwen2.5-72B-Instruct`.** Rationale over Llama-3.3-70B:
+ungated on HuggingFace (no token/approval friction under time pressure) and Apache-2.0 (clean for
+post-hackathon commercial reuse), with comparable quality and no chain-of-thought leakage. Served on
+the on-box MI300X as `opposing-counsel` (`--max-model-len 16384`, `--gpu-memory-utilization 0.9`) via
+the stock `rocm/vllm:latest` image; the whole 72B fits in bf16 with the KV cache reporting ~6.8×
+concurrency headroom at 16k. The vLLM container joins the app's Docker network so the agents worker
+reaches it privately at `http://vllm:8000/v1` (no public port). Raw endpoint + real code path both
+verified; `rocm-smi` showed GPU 100% / ~174 GB VRAM mid-generation.
+
 ### Step 4 — Smoke-test the raw endpoint (before touching the app)
 
 From the backend/agents host (so you also prove reachability):
@@ -921,12 +930,16 @@ update §7's "Model in use now" for Opposing Counsel, and check the §11 box.
       the production cutover: real bcrypt password auth is now the only mode, `AUTH_MODE` was removed,
       and the first registrant auto-bootstraps to admin. (The agents worker's `AGENT_SERVICE_TOKEN`
       remains a separate, scoped credential — never part of user auth.)
-- [ ] Regenerate `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` to real random values before any
-      non-local deployment. The current `devkey` / `secret` pair is safe **only** because LiveKit
-      runs solely on localhost today (§10); exposing the server off-box with default keys lets anyone
-      mint room tokens.
-- [ ] Cut the Opposing Counsel agent over to self-hosted vLLM once the AMD droplet exists and
-      hackathon submission is locked in.
+- [x] Regenerate `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` to real random values before any
+      non-local deployment. **Done** on the AMD hackathon droplet (2026-07-11): fresh random keys
+      generated on-box into `.env.prod` (never `devkey`/`secret` off-box). Local dev still uses the
+      dev pair because LiveKit there is loopback-only (§10).
+- [x] Cut the Opposing Counsel agent over to self-hosted vLLM once the AMD droplet exists and
+      hackathon submission is locked in. **Done** on the droplet (2026-07-11): Opposing Counsel
+      serves **Qwen2.5-72B-Instruct** on the on-box MI300X via vLLM (served as `opposing-counsel`,
+      OpenAI-compatible; config-only switch `OPPOSING_COUNSEL_LLM_PROVIDER=self_hosted`). Judge +
+      verification stay on Fireworks. Local dev and the code defaults remain Fireworks. Live-verified:
+      real code path generates through vLLM, `rocm-smi` showed GPU 100% / ~174 GB VRAM during a turn.
 - [ ] Move the Judge to a Gemma model (`JUDGE_LLM_MODEL`) for bonus-track eligibility — currently
       running `gpt-oss-120b` (JSON-structured) as an interim because no serverless Gemma is
       reachable on this Fireworks account (§7).

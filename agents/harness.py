@@ -14,6 +14,7 @@ Usage: from agents/, run `python harness.py` (needs a live Fireworks key).
 
 from __future__ import annotations
 
+import config
 import judge
 import opposing_counsel
 import verification
@@ -51,7 +52,7 @@ def main() -> None:
     print(ATTORNEY_TURN)
 
     reply = opposing_counsel.generate_reply(state, ATTORNEY_TURN)
-    print("\n=== OPPOSING COUNSEL (Fireworks) ===")
+    print(f"\n=== OPPOSING COUNSEL ({config.OPPOSING_COUNSEL_PROVIDER}) ===")
     print(reply)
 
     suspicious = verification.find_suspicious_citations(reply)
@@ -62,7 +63,7 @@ def main() -> None:
     print("Verdict:", "REGENERATE" if (suspicious or contradictions) else "PASS → TTS")
 
     ruling = judge.generate_ruling(state, ATTORNEY_TURN)
-    print("\n=== JUDGE (Fireworks) ===")
+    print(f"\n=== JUDGE ({config.JUDGE_PROVIDER}) ===")
     print(ruling)
 
 
