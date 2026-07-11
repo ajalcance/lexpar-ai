@@ -168,6 +168,15 @@ stream` endpoint, which *does* work on this account (verified 200/MP3). Wrap the
 instead of the websocket. When diagnosing a websocket TTS, test the specific endpoint the plugin uses
 (single-stream vs multi-stream-input vs HTTP /stream) individually; they have different plan/account
 support, and "the key works" (REST 200) doesn't prove the websocket path does.
+**Update (2026-07-12, PAID tier):** the free-tier limitation above was the whole reason for the HTTP
+workaround — it does NOT apply on a paid plan, where the `multi-stream-input` websocket works. Carrying
+the StreamAdapter regardless left every reply on the slower per-sentence HTTP path (a live pass showed
+the canned objection line taking 2–8 s to play). Fix: the transport is now a config switch,
+`config.ELEVENLABS_STREAMING` (default **true** = native streaming websocket = audio as the model
+generates; set `false` to fall back to the HTTP StreamAdapter). Lesson within the lesson: a workaround
+adopted for an account-tier constraint must be revisited when the tier changes — pin such workarounds
+behind a flag from the start so lifting them is a config change, not an archaeology dig. Verify on the
+box after switching (a websocket that silently yields no audio fails at *synthesis*, not construction).
 
 ### [Infra/LiveKit] Docker-on-macOS: signaling connects but WebRTC fails without `--node-ip`
 **Wrong:** Ran `livekit-server --dev` in Docker and assumed mapped ports (7880/7881/7882) were

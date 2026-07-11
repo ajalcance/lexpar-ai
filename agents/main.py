@@ -238,10 +238,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     judge_idle = asyncio.Event()
     judge_idle.set()
 
-    # ElevenLabs' multi-stream-input websocket (the plugin's default `.stream()` path) returns no
-    # audio on our free-tier account — replies were never voiced and the socket closed 1006. Wrap
-    # the TTS in StreamAdapter, which synthesizes sentence-by-sentence over the HTTP `/stream`
-    # endpoint (verified working on this account) instead of the websocket. See docs/LESSONS.md.
+    # ElevenLabs' multi-stream-input websocket (the plugin's `.stream()` path) yields no audio on a
+    # FREE-tier account (socket opens then closes 1006) — the historical reason we wrapped the TTS
+    # in StreamAdapter over the slower HTTP `/stream` endpoint. On a PAID tier the websocket works,
+    # so the transport is now a config switch (config.ELEVENLABS_STREAMING, applied below at
+    # `session_tts`) — default streaming, one-line env rollback to the HTTP path. See LESSONS.md.
     # voice_settings drive expressiveness (Track A) — previously UNSET, so ElevenLabs used flat
     # per-voice defaults (the monotone cause). Values come from config (tune by ear via .env).
     eleven_tts = elevenlabs.TTS(
@@ -273,6 +274,16 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             voice_settings=elevenlabs.VoiceSettings(**config.JUDGE_VOICE_SETTINGS),
             api_key=config.ELEVENLABS_API_KEY,
         )
+
+    # Session TTS transport: on a PAID tier use ElevenLabs' native streaming websocket directly
+    # (audio as the model generates — the low-latency path). StreamAdapter (HTTP `/stream`, one
+    # whole synthesis per sentence) stays as the reversible fallback for the free tier / if the
+    # websocket ever misbehaves — flip ELEVENLABS_STREAMING=false to switch, no code change.
+    session_tts = eleven_tts if config.ELEVENLABS_STREAMING else StreamAdapter(tts=eleven_tts)
+    logger.info(
+        "session TTS transport: %s",
+        "native streaming websocket" if config.ELEVENLABS_STREAMING else "StreamAdapter (HTTP)",
+    )
 
     session = AgentSession(
         # Silero VAD needs no API key. STT/TTS keys are passed EXPLICITLY from our own config
@@ -309,7 +320,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             base_url=config.OPPOSING_COUNSEL_ENDPOINT,
             api_key=llm_router.api_key_for(config.OPPOSING_COUNSEL_PROVIDER),
         ),
-        tts=StreamAdapter(tts=eleven_tts),
+        tts=session_tts,
     )
 
     async def publish_objection(decision) -> None:

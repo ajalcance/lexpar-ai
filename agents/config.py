@@ -116,6 +116,15 @@ def _getbool(name: str, default: bool) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
+# Use ElevenLabs' native streaming websocket (multi-stream-input) as the AgentSession TTS — the true
+# low-latency path (audio starts as the model generates, not after a whole HTTP synthesis per
+# sentence). That websocket yields ZERO audio on the FREE tier (opens then closes 1006), which is
+# why the TTS was historically wrapped in StreamAdapter over the slower HTTP `/stream` endpoint. On
+# a PAID tier the websocket works, so this defaults ON. Set ELEVENLABS_STREAMING=false to fall back
+# to the HTTP path — a one-line rollback if the websocket ever misbehaves. See docs/LESSONS.md.
+ELEVENLABS_STREAMING = _getbool("ELEVENLABS_STREAMING", True)
+
+
 # ElevenLabs voice_settings (expressiveness). These were previously UNSET, so ElevenLabs used each
 # voice's flat dashboard defaults — the main cause of monotone delivery. `style` is the primary
 # expressiveness dial (0 = flat/old behavior; higher = more expressive but adds inference latency);
