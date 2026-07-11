@@ -554,7 +554,11 @@ When an objection fires and Opposing Counsel's line is spoken, the Judge immedia
   `asyncio.Event` (SET = judge idle) closes that gap: `judge_rule` and the closing ruling **clear**
   it around the bench's speech (always released in a `finally`), and OC's `llm_node` **awaits** it
   before taking the floor. Without it, a ruling on one STT-final and OC's reply to the *next* rapid
-  final collided live. The judge always has priority — it's the court; OC waits.
+  final collided live. The judge always has priority — it's the court; OC waits. Because an
+  objection fires on the *same event-loop tick* the turn completes, `llm_node` also does a brief
+  **settle-and-recheck** (`_OC_REPLY_SETTLE_S`) before committing: it yields, then re-tests
+  `objected`/the floor, so the objection→`judge_rule` path deterministically wins the race instead
+  of OC beating it and streaming a reply the judge then talks over.
 
 ### End-of-session judge assessment (spoken ruling + scorecard)
 

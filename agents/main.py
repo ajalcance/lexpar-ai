@@ -71,6 +71,15 @@ def _last_user_text(chat_ctx) -> str:
     return ""
 
 
+# Settle window before OC commits to a reply. An objection fires on the same event-loop tick the
+# attorney's turn completes, so the objection→judge_rule task (which sets `objected` and clears the
+# speaking floor) can lose the race to this reply. Yielding briefly, then re-checking, lets the
+# objection path win deterministically — so a just-fired objection reliably suppresses the reply
+# instead of OC talking over the ruling on the judge's own track. OC replies are not latency-
+# critical (the objection + ruling are), so a sub-second settle is invisible.
+_OC_REPLY_SETTLE_S = 0.4
+
+
 class OpposingCounselAgent(Agent):
     """
     Opposing Counsel routed into LiveKit. The persona + generation live in opposing_counsel.py and
@@ -127,6 +136,13 @@ class OpposingCounselAgent(Agent):
         if self._turn_flags.get("objected"):
             self._turn_flags["objected"] = False
             logger.info("objection fired this turn — skipping the full OC reply (object → rule)")
+            return
+        # Settle-and-recheck: close the race where an objection fires on the same tick the turn
+        # completes and this reply beats judge_rule to setting `objected` / clearing the floor.
+        await asyncio.sleep(_OC_REPLY_SETTLE_S)
+        if self._turn_flags.get("objected"):
+            self._turn_flags["objected"] = False
+            logger.info("objection fired this turn (post-settle) — skipping the full OC reply")
             return
         # Wait for the bench to finish before OC takes the floor — the judge speaks on its own
         # track with no shared speech queue, so this is the only thing preventing OC's reply from
