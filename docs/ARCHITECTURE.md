@@ -513,6 +513,16 @@ When an objection fires and Opposing Counsel's line is spoken, the Judge immedia
   already ruled, so a second full argument would be redundant, re-object *after* the ruling, and
   race it through the TTS queue. The full reply still runs on turns with no objection (normal
   cross-examination). Tracked by a per-turn `objected` flag set on fire, checked/reset in `llm_node`.
+- **One objection channel, not two (the word "objection" ⇒ a ruling).** Objections come ONLY from
+  the structured barge-in (the classifier fires → ledger → the judge rules). OC's end-of-turn spoken
+  reply is **counter-argument only** and must never lodge a formal objection or say "objection" /
+  "I object" — its persona + `oc_reply_style` forbid it, and `llm_node` logs a warning if a reply
+  slips one through (observability, never rewritten). Before this, OC (the reasoning model) also
+  *verbalized* objections inside its argument (`was_interruption=false` turns), which never entered
+  the ledger and so were **never ruled** — a live oral-argument pass showed OC "objecting" 4× in
+  spoken argument with the judge ruling only the 1 structured barge-in. The invariant now holds:
+  every "Objection" the attorney hears is structured and gets a bench ruling; unruled objection
+  language in argument is a prompt-adherence bug, surfaced in the logs.
 - **Latency:** the canned objection is on the immediate path (gate ≈ 23 µs, ElevenLabs `/stream`
   first-audio-byte ~0.14 s measured); it fires on an **interim**, so Deepgram endpointing is not in
   this path. `voice_interrupt` logs the gate-decision + interrupt/say-dispatch times per fire. The

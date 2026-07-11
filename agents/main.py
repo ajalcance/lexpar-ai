@@ -144,7 +144,20 @@ class OpposingCounselAgent(Agent):
             # would leave NO trace in the transcript (the reason OC looked absent from the record).
             # `spoken` holds exactly the verified sentences that were actually voiced.
             if spoken:
-                self._state.add_turn("opposing_counsel", " ".join(spoken))
+                reply = " ".join(spoken)
+                self._state.add_turn("opposing_counsel", reply)
+                # Invariant guard (observability only): OC's spoken reply is counter-argument and
+                # must NOT lodge an objection — the word "objection" may only come from the
+                # structured barge-in, which the judge rules. If OC slips, the transcript would show
+                # an unruled "objection", so surface it in the logs (never rewrite the reply).
+                low = reply.lower()
+                lodged = ("i object" in low or "objection, your honor" in low
+                          or "objection your honor" in low)
+                if lodged:
+                    logger.warning(
+                        "OC reply lodged an objection in counter-argument (unruled) — tighten "
+                        "oc_reply_style/opposing_counsel prompt if this recurs"
+                    )
             else:
                 logger.warning("no verified sentences this turn — staying silent (fail closed)")
 

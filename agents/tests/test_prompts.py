@@ -17,7 +17,10 @@ import prompts
 STATIC_GOLDENS = {
     "oc_reply_style": (
         "Respond as opposing counsel in a few spoken sentences. Output only the words you say "
-        "aloud in the courtroom — no analysis, headings, quotation marks, or preamble."
+        "aloud in the courtroom — no analysis, headings, quotation marks, or preamble. Argue the "
+        "merits as direct counter-argument — do NOT lodge an objection or use the words "
+        '"objection" or "I object"; state the point as argument instead (e.g. "The record does '
+        'not support that…").'
     ),
     "judge_ruling_instruction": (
         "If you cite a rule, name only a section heading that appears in RELEVANT PROCEDURAL "
@@ -64,11 +67,12 @@ STATIC_GOLDENS = {
         "ordinary evidentiary grounds normally.\n"
         "\n"
         "Do not sustain merely because the objection names a ground; test whether that ground "
-        "actually fits this statement in this proceeding. Give one short reason (a few words, "
-        "spoken aloud) that MATCHES your ruling and the objection's ground. If you cite a rule, "
+        "actually fits this statement in this proceeding. State one crisp, judicial sentence "
+        "(spoken aloud) that gives your reasoning and MATCHES your ruling and the objection's "
+        "ground — authoritative and specific, not a bare label. If you cite a rule, "
         "name only a section heading that appears in RELEVANT PROCEDURAL RULES; otherwise rule "
         'without naming a specific citation. Respond ONLY with JSON: {"ruling": '
-        '"sustained"|"overruled", "reason": "<a few words>"}.'
+        '"sustained"|"overruled", "reason": "<one sentence>"}.'
     ),
     "consistency_verifier": (
         "You are a verification model in a courtroom rehearsal system. You check a DRAFT REPLY "

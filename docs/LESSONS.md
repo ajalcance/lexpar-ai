@@ -496,3 +496,26 @@ anchoring. Prompt changes are made prompt-and-golden-together (`tests/test_promp
 never silently. General rule: any LLM handed a decision another component already "pre-approved"
 (here: an objection the classifier fired) will anchor toward ratifying it unless explicitly told to
 re-adjudicate on the merits with the same context that component used.
+
+### [Agents/OC] Two objection channels, one wired to the judge — "OC objected 5×, judge ruled once"
+**Wrong:** The system has TWO ways an objection can appear, but only one produces a ruling. (1) The
+objection classifier fires a structured barge-in (`was_interruption=true`) → records to the ledger →
+the judge rules. (2) The Opposing Counsel persona was told to "raise objections when the phrasing
+invites one," so the REASONING model also *verbalized* objections inside its end-of-turn spoken reply
+("Objection, your honor, relevance…", `was_interruption=false`). Channel (2) is just OC's argument
+text — it never calls `record_objection` or `judge_rule`, so the judge never rules on it. A live
+oral-argument pass: OC said "objection" in 4 of its 5 spoken replies, the classifier barged in once,
+and the judge ruled exactly once (correctly overruling the one structured objection). To the user it
+looked like the judge ignored 4 objections. Root cause: the persona duplicated the classifier's job
+without the ruling wiring, so the two channels diverged.
+**Right:** Collapse to ONE objection channel and make it an invariant: the word "objection" may only
+come from the structured barge-in (which the judge rules); OC's spoken reply is COUNTER-ARGUMENT ONLY
+and must never lodge an objection or say "objection"/"I object" — it makes the same point as argument
+("The record does not support that…"). Enforced in the persona (`opposing_counsel.md`) and the
+per-turn `oc_reply_style.md`, with a log-only guard in `llm_node` that warns if a reply still lodges
+one (never rewrites — mangling spoken text is worse than a logged slip). This keeps OC's strong
+argumentation (the user liked it) while guaranteeing every objection the attorney hears gets a bench
+ruling. General rule: if two components can both emit the same user-visible signal (here: "an
+objection"), exactly one must own it end-to-end — a second, unwired emitter produces outputs the rest
+of the pipeline silently drops. Also bumped the inline ruling from "a few words" to one crisp
+judicial sentence so the bench reads as authoritative as counsel, not a bare label.
