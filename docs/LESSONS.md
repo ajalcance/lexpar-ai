@@ -395,3 +395,27 @@ used its injected embedder at all.
 picked up. General rule: a default of `module.attr` freezes the value; if a test needs to swap it,
 either pass it explicitly or resolve it inside the function. And when a "passing" test survives a
 change that should have broken it, suspect the test was never exercising the path it claims to.
+
+### [Backend/RAG] Re-upload was ADDITIVE — supersede must be atomic, structural, and provenance-preserving
+**Wrong:** Every document upload minted a new row, ingest deleted only the NEW document's (zero)
+chunks, and retrieval queried chunks by the denormalized court_id/case_id with no document filter —
+so "re-uploading" a corrected statute would have left the old fixed-window chunks retrievable
+alongside the new section-aware ones, both eligible per query, non-deterministically (the poison
+pill). Worse, the chunk tables have no deleted_at, so soft-deleting the DOCUMENT row would have
+changed nothing about retrieval. And a naive fix — hard-delete the old chunks — would sever
+RulingProvenance.chunk_ids_used, defeating the audit trail the system deliberately built.
+**Right:** Three coupled decisions. (1) **Exclusion is structural, at the query:** retrieval filters
+chunks through the parent document's deleted_at (an IN-subquery) — archived chunks are ineligible in
+BOTH the exact-citation and semantic paths regardless of rank, while the rows stay for provenance.
+(2) **Replace is one explicit, atomic action** — not a filename-matching implicit supersede (a new
+document with a similar name would silently archive the old one) and not a manual archive-then-upload
+two-step (forgetting step one recreates the hazard: the failure mode of the safety mechanism must not
+be the hazard itself). The old version is archived ONLY when the replacement ingests to `ready`, so a
+failed ingest can't strand the corpus, and restore of a superseded doc is refused while its
+replacement is live. (3) **Two tiers, not one "delete":** Archive keeps everything resolvable
+(reversible, low-friction); Purge is admin-only + typed-confirmation and is ALLOWED to break
+provenance resolvability — chunk_ids_used are strings, not FKs, so purged ids become honest
+tombstones and the display (counts) degrades gracefully instead of erroring; refusing purge would
+neuter it for its main use (test/mistake uploads, usually cited only by test sessions). Load-bearing
+regression: rig an archived chunk to WIN both ranking mechanisms and assert it can never be
+retrieved, at every entry point, on both corpora.

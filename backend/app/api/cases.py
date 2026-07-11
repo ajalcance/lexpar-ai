@@ -25,7 +25,7 @@ from app.db import SessionLocal, get_db
 from app.models.user import User
 from app.schemas.case import CaseCreate, CaseDocumentOut, CaseOut
 from app.schemas.session import SessionOut
-from app.security import get_current_user
+from app.security import get_current_user, require_admin
 from app.services import (
     case_knowledge_service,
     case_service,
@@ -36,9 +36,12 @@ from app.services import (
 router = APIRouter(prefix="/api/cases", tags=["cases"])
 
 
-def _ingest_in_background(document_id: uuid.UUID, storage_path: str) -> None:
+def _ingest_in_background(
+    document_id: uuid.UUID, storage_path: str, supersedes_id: uuid.UUID | None = None
+) -> None:
     """Runs after the upload response: fetch bytes, extract → chunk → embed → persist. Its own DB
-    session (the request's is closed). Failures are recorded on the document row, not raised."""
+    session (the request's is closed). Failures are recorded on the document row, not raised.
+    `supersedes_id` = the Replace action: the old pleading is archived only on ingest success."""
     db = SessionLocal()
     try:
         from app.models.case_document import CaseDocument
@@ -47,7 +50,9 @@ def _ingest_in_background(document_id: uuid.UUID, storage_path: str) -> None:
         if document is None:
             return
         raw = storage_service.get_object(storage_path)
-        case_knowledge_service.ingest_document(db, document, raw)
+        case_knowledge_service.ingest_document(
+            db, document, raw, supersedes_document_id=supersedes_id
+        )
     finally:
         db.close()
 
@@ -137,3 +142,92 @@ def list_pleadings(
         CaseDocumentOut(**case_knowledge_service.as_status_dict(d))
         for d in case_knowledge_service.documents_for(db, case_id)
     ]
+
+
+@router.delete("/{case_id}/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+def archive_pleading(
+    case_id: uuid.UUID,
+    document_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: DbSession = Depends(get_db),
+) -> None:
+    """SOFT tier for a pleading (owner action): excluded from retrieval via the document-state
+    filter; rows/chunks/file kept so provenance stays resolvable."""
+    case_service.get_case(db, current_user, case_id)  # 404/ownership
+    document = case_knowledge_service.get_case_document(db, case_id, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Pleading not found.")
+    case_knowledge_service.archive_case_document(db, document)
+
+
+@router.post(
+    "/{case_id}/documents/{document_id}/replace",
+    response_model=CaseDocumentOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def replace_pleading(
+    case_id: uuid.UUID,
+    document_id: uuid.UUID,
+    background: BackgroundTasks,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: DbSession = Depends(get_db),
+) -> CaseDocumentOut:
+    """Atomic Replace for a corrected version of the same pleading: the old version stays in
+    retrieval until the new one ingests to 'ready' (then archived + lineage recorded). The case
+    summary is last-writer-wins — correct for a replacement (§12 documented limitation for
+    genuinely multi-document cases)."""
+    case_service.get_case(db, current_user, case_id)
+    old = case_knowledge_service.get_case_document(db, case_id, document_id)
+    if old is None:
+        raise HTTPException(status_code=404, detail="Pleading not found.")
+    if old.deleted_at is not None:
+        raise HTTPException(status_code=409, detail="This pleading is archived — upload anew.")
+
+    if file.content_type not in ("application/pdf", "application/octet-stream"):
+        raise HTTPException(status_code=415, detail="Only PDF pleadings are supported.")
+    data = await file.read()
+    max_bytes = get_settings().max_upload_mb * 1024 * 1024
+    if not data:
+        raise HTTPException(status_code=422, detail="The uploaded file is empty.")
+    if len(data) > max_bytes:
+        raise HTTPException(
+            status_code=413, detail=f"File exceeds the {get_settings().max_upload_mb} MB limit."
+        )
+
+    key = storage_service.object_key(str(case_id), file.filename or "pleading.pdf")
+    storage_service.put_object(key, data, content_type="application/pdf")
+    document = case_knowledge_service.create_document_row(
+        db, case_id, file.filename or "pleading.pdf", key, "application/pdf", len(data)
+    )
+    background.add_task(_ingest_in_background, document.id, key, old.id)
+    return CaseDocumentOut(**case_knowledge_service.as_status_dict(document))
+
+
+@router.delete("/{case_id}", status_code=status.HTTP_204_NO_CONTENT)
+def archive_case(
+    case_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: DbSession = Depends(get_db),
+) -> None:
+    """SOFT tier (owner action, the default): the case disappears from lists/detail; sessions,
+    scorecards, documents, and provenance stay intact. Reversible at the DB level."""
+    case = case_service.get_case(db, current_user, case_id)
+    case_service.archive_case(db, case)
+
+
+@router.post("/{case_id}/purge", status_code=status.HTTP_204_NO_CONTENT)
+def purge_case(
+    case_id: uuid.UUID,
+    _admin: User = Depends(require_admin),
+    db: DbSession = Depends(get_db),
+) -> None:
+    """HARD tier (ADMIN-only): genuinely delete the case and everything under it (sessions,
+    transcripts, scorecards, provenance, documents, chunks, stored files). For test/mistake
+    cases."""
+    from app.models.case import Case
+
+    case = db.get(Case, case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found.")
+    case_service.purge_case(db, case)

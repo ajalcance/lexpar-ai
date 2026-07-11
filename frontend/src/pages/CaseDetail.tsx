@@ -14,6 +14,7 @@ import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Breadcrumbs } from '@/components/Breadcrumbs';
+import { useAuthStore } from '@/store/auth';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -58,6 +59,25 @@ export function CaseDetail() {
   const startSession = useMutation({
     mutationFn: () => api.createSession(caseId, proceeding),
     onSuccess: (session) => navigate(`/session/${session.id}`),
+  });
+
+  // Two-tier deletion: Archive (soft, owner) is the default; Purge (hard) is admin-only and
+  // requires the case title typed back — never one accidental click away from Archive.
+  const user = useAuthStore((state) => state.user);
+  const [confirming, setConfirming] = useState<'archive' | 'purge' | null>(null);
+  const [typedTitle, setTypedTitle] = useState('');
+  const [dangerError, setDangerError] = useState<string | null>(null);
+  const onDangerError = (err: unknown) =>
+    setDangerError(err instanceof Error ? err.message : 'Action failed.');
+  const archiveCase = useMutation({
+    mutationFn: () => api.archiveCase(caseId),
+    onSuccess: () => navigate('/dashboard'),
+    onError: onDangerError,
+  });
+  const purgeCase = useMutation({
+    mutationFn: () => api.purgeCase(caseId),
+    onSuccess: () => navigate('/dashboard'),
+    onError: onDangerError,
   });
 
   if (isLoading) {
@@ -168,6 +188,85 @@ export function CaseDetail() {
               </div>
             ))
           )}
+        </CardContent>
+      </Card>
+
+      <Card className="border-destructive/40">
+        <CardHeader>
+          <CardTitle className="text-lg text-destructive">Danger zone</CardTitle>
+          <CardDescription>
+            Archive hides this case (sessions and scorecards are kept).
+            {user?.role === 'admin' &&
+              ' Purge permanently deletes the case and everything under it.'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={archiveCase.isPending}
+              onClick={() => setConfirming('archive')}
+            >
+              Archive case
+            </Button>
+            {user?.role === 'admin' && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-destructive hover:text-destructive"
+                onClick={() => setConfirming('purge')}
+              >
+                Purge case…
+              </Button>
+            )}
+          </div>
+          {confirming && (
+            <div className="flex flex-col gap-2 rounded-md border border-destructive/40 p-3">
+              <p className="text-sm text-destructive">
+                {confirming === 'archive'
+                  ? `Archive "${legalCase.title}"? It disappears from your cases; nothing is deleted.`
+                  : `Permanently purge "${legalCase.title}" — sessions, transcripts, scorecards, and documents included? This cannot be undone.`}
+              </p>
+              {confirming === 'purge' && (
+                <input
+                  className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                  value={typedTitle}
+                  onChange={(event) => setTypedTitle(event.target.value)}
+                  placeholder={`Type "${legalCase.title}" to confirm`}
+                  aria-label="Type the case title to confirm"
+                />
+              )}
+              <div className="flex gap-2">
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  disabled={
+                    (confirming === 'purge' && typedTitle !== legalCase.title) ||
+                    archiveCase.isPending ||
+                    purgeCase.isPending
+                  }
+                  onClick={() =>
+                    confirming === 'archive' ? archiveCase.mutate() : purgeCase.mutate()
+                  }
+                >
+                  {confirming === 'archive' ? 'Archive' : 'Purge permanently'}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setConfirming(null);
+                    setTypedTitle('');
+                    setDangerError(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
+          {dangerError && <p className="text-sm text-destructive">{dangerError}</p>}
         </CardContent>
       </Card>
     </div>

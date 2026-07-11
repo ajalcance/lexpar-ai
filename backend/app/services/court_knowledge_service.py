@@ -23,14 +23,20 @@ from __future__ import annotations
 import logging
 import re
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session as DbSession
 
 from app.models.court_rule import CourtRuleChunk, CourtRuleDocument
-from app.services import document_service, embedding_service
+from app.models.ruling_provenance import RulingProvenance
+from app.services import document_service, embedding_service, storage_service
 
 logger = logging.getLogger("lexpar.knowledge")
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
 DEFAULT_TOP_K = 4
 
@@ -149,10 +155,15 @@ def ingest_rule_document(
     raw_bytes: bytes,
     *,
     embedder=embedding_service.embed_texts,
+    supersedes_document_id: uuid.UUID | None = None,
 ) -> None:
     """Extract → chunk → embed → persist chunks (verbatim text only, with per-chunk section
     headings where confidently present). Sets ingestion_status to 'ready' or 'failed' (with the
-    error) — never leaves it silently 'pending'."""
+    error) — never leaves it silently 'pending'.
+
+    `supersedes_document_id` is the atomic Replace action: ONLY once this ingest succeeds is the
+    old document archived (deleted_at + superseded_by_id) — a failed ingest leaves the old
+    version live, so a Replace can never strand the court with no corpus."""
     try:
         text = document_service.extract_pdf_text(raw_bytes)
         if len(text.strip()) < document_service.MIN_EXTRACTED_CHARS:
@@ -186,6 +197,12 @@ def ingest_rule_document(
         document.chunk_count = len(chunk_pairs)
         document.ingestion_status = "ready"
         document.error = None
+        # Atomic supersede (Replace): archive the old version only now that the new one is ready.
+        if supersedes_document_id is not None:
+            old = db.get(CourtRuleDocument, supersedes_document_id)
+            if old is not None and old.deleted_at is None:
+                old.deleted_at = _now()
+                old.superseded_by_id = document.id
         db.commit()
         logger.info("ingested rule document %s (%d chunks)", document.id, len(chunk_pairs))
     except Exception as exc:  # noqa: BLE001 — record the failure, don't crash the worker/route
@@ -229,7 +246,22 @@ def retrieve_rule_refs(
         from app.config import get_settings
 
         min_score = get_settings().rule_retrieval_min_score
-    rows = list(db.scalars(select(CourtRuleChunk).where(CourtRuleChunk.court_id == court_id)).all())
+    # STRUCTURAL exclusion of archived/superseded documents (the poison-pill guard): only chunks
+    # whose parent document is non-deleted are ever candidates — for BOTH the exact-citation path
+    # and the semantic path. Chunk rows themselves are kept (RulingProvenance stays resolvable);
+    # this filter is what makes an archived version invisible to retrieval.
+    active_doc_ids = select(CourtRuleDocument.id).where(
+        CourtRuleDocument.court_id == court_id,
+        CourtRuleDocument.deleted_at.is_(None),
+    )
+    rows = list(
+        db.scalars(
+            select(CourtRuleChunk).where(
+                CourtRuleChunk.court_id == court_id,
+                CourtRuleChunk.court_rule_document_id.in_(active_doc_ids),
+            )
+        ).all()
+    )
     if not rows or not query.strip():
         return []
 
@@ -273,15 +305,83 @@ def retrieve_rule_passages(
     ]
 
 
-def documents_for_court(db: DbSession, court_id: uuid.UUID) -> list[CourtRuleDocument]:
-    return list(
-        db.scalars(
-            select(CourtRuleDocument).where(
-                CourtRuleDocument.court_id == court_id,
-                CourtRuleDocument.deleted_at.is_(None),
+def documents_for_court(
+    db: DbSession, court_id: uuid.UUID, *, include_archived: bool = False
+) -> list[CourtRuleDocument]:
+    """A court's rule documents. `include_archived` (the admin surface) also lists archived/
+    superseded ones — greyed in the UI, restorable when not superseded."""
+    stmt = select(CourtRuleDocument).where(CourtRuleDocument.court_id == court_id)
+    if not include_archived:
+        stmt = stmt.where(CourtRuleDocument.deleted_at.is_(None))
+    return list(db.scalars(stmt).all())
+
+
+def get_rule_document(
+    db: DbSession, court_id: uuid.UUID, document_id: uuid.UUID
+) -> CourtRuleDocument | None:
+    document = db.get(CourtRuleDocument, document_id)
+    if document is None or document.court_id != court_id:
+        return None
+    return document
+
+
+def archive_rule_document(db: DbSession, document: CourtRuleDocument) -> None:
+    """The SOFT tier: invisible to lists and structurally excluded from retrieval (the query
+    filter), but rows/chunks/storage stay — RulingProvenance remains resolvable. Reversible."""
+    if document.deleted_at is None:
+        document.deleted_at = _now()
+        db.commit()
+
+
+def restore_rule_document(db: DbSession, document: CourtRuleDocument) -> None:
+    """Undo an archive. REFUSED for a superseded document while its replacement exists — restoring
+    it would put two versions of the same instrument back into retrieval (the poison pill)."""
+    if document.superseded_by_id is not None:
+        replacement = db.get(CourtRuleDocument, document.superseded_by_id)
+        if replacement is not None and replacement.deleted_at is None:
+            raise ValueError(
+                "This document was replaced by a newer version. Archive the replacement first "
+                "if you really want this version back in retrieval."
+            )
+    document.deleted_at = None
+    document.superseded_by_id = None
+    db.commit()
+
+
+def provenance_count_for_document(db: DbSession, document: CourtRuleDocument) -> int:
+    """How many past rulings cite this document's chunks (the loud warning before a purge).
+    chunk_ids_used holds "court:<uuid>" strings — scanned in Python (fine at this scale)."""
+    chunk_ids = {
+        f"court:{cid}"
+        for cid in db.scalars(
+            select(CourtRuleChunk.id).where(
+                CourtRuleChunk.court_rule_document_id == document.id
             )
         ).all()
+    }
+    if not chunk_ids:
+        return 0
+    count = 0
+    for row in db.scalars(select(RulingProvenance)).all():
+        if chunk_ids & set(row.chunk_ids_used or []):
+            count += 1
+    return count
+
+
+def purge_rule_document(db: DbSession, document: CourtRuleDocument) -> None:
+    """The HARD tier: chunks → row → storage file, gone. Existing RulingProvenance rows are NOT
+    touched — their "court:<uuid>" strings become tombstones and the audit display degrades to a
+    count ("source no longer available"), by design. Admin-only at the route."""
+    db.execute(
+        delete(CourtRuleChunk).where(CourtRuleChunk.court_rule_document_id == document.id)
     )
+    storage_path = document.storage_path
+    db.delete(document)
+    db.commit()
+    try:
+        storage_service.delete_object(storage_path)
+    except Exception:  # noqa: BLE001 — best-effort: an orphaned file is a cost, not a hazard
+        logger.warning("could not delete stored object %s after purge", storage_path)
 
 
 def as_status_dict(document: CourtRuleDocument) -> dict:
@@ -293,4 +393,6 @@ def as_status_dict(document: CourtRuleDocument) -> dict:
         "ingestion_status": document.ingestion_status,
         "chunk_count": document.chunk_count,
         "error": document.error,
+        "archived": document.deleted_at is not None,
+        "superseded": document.superseded_by_id is not None,
     }

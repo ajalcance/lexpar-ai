@@ -46,3 +46,10 @@ def get_object(key: str) -> bytes:
     settings = get_settings()
     resp = _client().get_object(Bucket=settings.object_storage_bucket, Key=key)
     return resp["Body"].read()
+
+
+def delete_object(key: str) -> None:
+    """Remove an object — PURGE only (the hard tier of the two-tier deletion design). Archive
+    deliberately retains the file. Raises on failure; purge callers treat it as best-effort."""
+    settings = get_settings()
+    _client().delete_object(Bucket=settings.object_storage_bucket, Key=key)

@@ -122,6 +122,8 @@ interface CourtRuleDocumentJson {
   ingestion_status: CourtRuleDocument['ingestionStatus'];
   chunk_count: number;
   error: string | null;
+  archived: boolean;
+  superseded: boolean;
 }
 interface ProvenanceJson {
   id: string;
@@ -190,6 +192,8 @@ const toCourtRuleDocument = (j: CourtRuleDocumentJson): CourtRuleDocument => ({
   ingestionStatus: j.ingestion_status,
   chunkCount: j.chunk_count,
   error: j.error,
+  archived: j.archived ?? false,
+  superseded: j.superseded ?? false,
 });
 
 const toSession = (j: SessionJson): Session => ({
@@ -305,6 +309,88 @@ export async function uploadCourtRule(
     throw new ApiError(await extractError(response), response.status);
   }
   return toCourtRuleDocument((await response.json()) as CourtRuleDocumentJson);
+}
+
+// --- Two-tier deletion (archive/replace vs purge, §13) ---------------------------------------
+
+/** Replace a rule document with a corrected/newer version (atomic supersede: the old version
+ *  stays in retrieval until the new one ingests to 'ready'). Admin only. */
+export async function replaceCourtRule(
+  courtId: string,
+  documentId: string,
+  file: File,
+): Promise<CourtRuleDocument> {
+  const form = new FormData();
+  form.append('file', file);
+  const token = useAuthStore.getState().token;
+  const response = await fetch(
+    `${API_BASE_URL}/api/courts/${courtId}/rules/${documentId}/replace`,
+    { method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : {}, body: form },
+  );
+  if (!response.ok) {
+    throw new ApiError(await extractError(response), response.status);
+  }
+  return toCourtRuleDocument((await response.json()) as CourtRuleDocumentJson);
+}
+
+/** Archive (soft, reversible): exclude a rule document from retrieval; rows + file kept. */
+export async function archiveCourtRule(
+  courtId: string,
+  documentId: string,
+): Promise<CourtRuleDocument> {
+  const data = await request<CourtRuleDocumentJson>(
+    `/api/courts/${courtId}/rules/${documentId}`,
+    { method: 'DELETE' },
+  );
+  return toCourtRuleDocument(data);
+}
+
+/** Undo an archive (refused with 409 while a live replacement supersedes it). */
+export async function restoreCourtRule(
+  courtId: string,
+  documentId: string,
+): Promise<CourtRuleDocument> {
+  const data = await request<CourtRuleDocumentJson>(
+    `/api/courts/${courtId}/rules/${documentId}/restore`,
+    { method: 'POST' },
+  );
+  return toCourtRuleDocument(data);
+}
+
+/** The loud pre-purge warning: how many past rulings cite this document's chunks. */
+export async function getCourtRulePurgeImpact(
+  courtId: string,
+  documentId: string,
+): Promise<{ provenanceRulings: number; chunkCount: number }> {
+  const data = await request<{ provenance_rulings: number; chunk_count: number }>(
+    `/api/courts/${courtId}/rules/${documentId}/impact`,
+  );
+  return { provenanceRulings: data.provenance_rulings, chunkCount: data.chunk_count };
+}
+
+/** PURGE (hard, irreversible, admin): delete the document, its chunks, and the stored file. */
+export async function purgeCourtRule(courtId: string, documentId: string): Promise<void> {
+  await request<void>(`/api/courts/${courtId}/rules/${documentId}/purge`, { method: 'POST' });
+}
+
+/** Archive a court (soft): retires the forum + its corpus; referencing cases keep running. */
+export async function archiveCourt(courtId: string): Promise<void> {
+  await request<unknown>(`/api/courts/${courtId}/archive`, { method: 'POST' });
+}
+
+/** PURGE a court (hard; 409 while any case references it). */
+export async function purgeCourt(courtId: string): Promise<void> {
+  await request<void>(`/api/courts/${courtId}/purge`, { method: 'POST' });
+}
+
+/** Archive a case (soft, owner action): hidden from lists; sessions/scorecards kept. */
+export async function archiveCase(caseId: string): Promise<void> {
+  await request<void>(`/api/cases/${caseId}`, { method: 'DELETE' });
+}
+
+/** PURGE a case (hard, admin): the case and everything under it, gone. */
+export async function purgeCase(caseId: string): Promise<void> {
+  await request<void>(`/api/cases/${caseId}/purge`, { method: 'POST' });
 }
 
 /** The §13 ruling-provenance audit trail for a session (owner-scoped) — which sources each AI

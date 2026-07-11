@@ -40,6 +40,10 @@ class CaseDocument(Base):
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Set (alongside deleted_at) when replaced by a corrected upload (two-tier deletion design).
+    superseded_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("case_documents.id"), nullable=True
+    )
 
 
 class CaseChunk(Base):

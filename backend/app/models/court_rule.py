@@ -54,6 +54,12 @@ class CourtRuleDocument(Base):
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Set (alongside deleted_at) when this document was REPLACED by a newer version — the audit
+    # lineage of the two-tier deletion design. A superseded document cannot be restored while its
+    # replacement exists (that would put two versions of one instrument back into retrieval).
+    superseded_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("court_rule_documents.id"), nullable=True
+    )
 
 
 class CourtRuleChunk(Base):

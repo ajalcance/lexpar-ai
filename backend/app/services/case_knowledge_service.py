@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session as DbSession
@@ -59,9 +60,16 @@ def ingest_document(
     *,
     embedder=embedding_service.embed_texts,
     summarizer=_default_summarizer,
+    supersedes_document_id: uuid.UUID | None = None,
 ) -> None:
     """Extract → chunk → embed → persist chunks, and refresh the case summary. Sets the document
-    status to 'ready' or 'failed' (with the error) — never leaves it silently 'pending'."""
+    status to 'ready' or 'failed' (with the error) — never leaves it silently 'pending'.
+
+    `supersedes_document_id` = the atomic Replace action (a corrected version of the same
+    pleading): only once this ingest succeeds is the old document archived, so a failed ingest
+    never strands the case without its pleading. NOTE: the summary is last-writer-wins (the
+    replacement's summary overwrites) — correct for Replace; a documented limitation for genuinely
+    multi-document cases (§12)."""
     try:
         text = document_service.extract_pdf_text(raw_bytes)
         if len(text.strip()) < document_service.MIN_EXTRACTED_CHARS:
@@ -98,6 +106,12 @@ def ingest_document(
                 case.case_summary = summarizer(text)
             except Exception:
                 logger.exception("case summary generation failed for case %s", document.case_id)
+        # Atomic supersede (Replace): archive the old version only now that the new one is ready.
+        if supersedes_document_id is not None:
+            old = db.get(CaseDocument, supersedes_document_id)
+            if old is not None and old.deleted_at is None:
+                old.deleted_at = datetime.now(timezone.utc)
+                old.superseded_by_id = document.id
         db.commit()
         logger.info("ingested pleading %s (%d chunks)", document.id, len(chunks))
     except Exception as exc:  # noqa: BLE001 — record the failure, don't crash the worker/route
@@ -117,8 +131,18 @@ def retrieve_refs(
     embedder=embedding_service.embed_text,
 ) -> list[tuple[str, str]]:
     """Top-k (chunk_id, passage) pairs most relevant to `query` for a case. The chunk ids feed the
-    §13 provenance trail (which chunks were actually shown to the model on a given turn)."""
-    rows = db.scalars(select(CaseChunk).where(CaseChunk.case_id == case_id)).all()
+    §13 provenance trail (which chunks were actually shown to the model on a given turn).
+    Archived/superseded documents' chunks are STRUCTURALLY excluded (poison-pill guard) — only
+    chunks whose parent document is non-deleted are candidates; the rows stay for provenance."""
+    active_doc_ids = select(CaseDocument.id).where(
+        CaseDocument.case_id == case_id,
+        CaseDocument.deleted_at.is_(None),
+    )
+    rows = db.scalars(
+        select(CaseChunk).where(
+            CaseChunk.case_id == case_id, CaseChunk.document_id.in_(active_doc_ids)
+        )
+    ).all()
     if not rows or not query.strip():
         return []
     query_vec = embedder(query)
@@ -143,6 +167,23 @@ def retrieve(
 def summary_for(db: DbSession, case_id: uuid.UUID) -> str:
     case = db.get(Case, case_id)
     return (case.case_summary or "") if case else ""
+
+
+def get_case_document(
+    db: DbSession, case_id: uuid.UUID, document_id: uuid.UUID
+) -> CaseDocument | None:
+    document = db.get(CaseDocument, document_id)
+    if document is None or document.case_id != case_id:
+        return None
+    return document
+
+
+def archive_case_document(db: DbSession, document: CaseDocument) -> None:
+    """SOFT tier for a pleading: excluded from retrieval via the document-state filter; rows and
+    the stored file remain (provenance stays resolvable). Reversible at the DB level."""
+    if document.deleted_at is None:
+        document.deleted_at = datetime.now(timezone.utc)
+        db.commit()
 
 
 def documents_for(db: DbSession, case_id: uuid.UUID) -> list[CaseDocument]:

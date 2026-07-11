@@ -8,16 +8,25 @@ Security notes: All queries filter by user_id (least privilege) so one attorney 
     another's cases. case_facts is never logged.
 """
 
+import logging
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session as DbSession
 
 from app.models.case import Case
+from app.models.case_document import CaseChunk, CaseDocument
 from app.models.court import Court
+from app.models.ruling_provenance import RulingProvenance
+from app.models.scorecard import Scorecard
+from app.models.session import Session
+from app.models.transcript import Transcript
 from app.models.user import User
 from app.schemas.case import CaseCreate
+
+logger = logging.getLogger("lexpar.cases")
 
 
 def create_case(db: DbSession, user: User, data: CaseCreate) -> Case:
@@ -65,3 +74,46 @@ def get_case(db: DbSession, user: User, case_id: uuid.UUID) -> Case:
     if case is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found.")
     return case
+
+
+def archive_case(db: DbSession, case: Case) -> None:
+    """SOFT tier (the default): the case disappears from lists/detail (both already filter
+    deleted_at); sessions/scorecards/documents stay intact and provenance stays resolvable.
+    Reversible at the DB level."""
+    if case.deleted_at is None:
+        case.deleted_at = datetime.now(timezone.utc)
+        db.commit()
+
+
+def purge_case(db: DbSession, case: Case) -> None:
+    """HARD tier (admin-only at the route): genuinely delete the case and everything under it —
+    provenance → scorecards → transcripts → sessions → chunks → documents → storage files → the
+    case row. Ordered manually (no FK/ORM cascade exists, by audit); storage deletes best-effort.
+    For a purged case the provenance rows go too: the audit trail of a session that no longer
+    exists audits nothing."""
+    session_ids = list(
+        db.scalars(select(Session.id).where(Session.case_id == case.id)).all()
+    )
+    if session_ids:
+        db.execute(
+            delete(RulingProvenance).where(RulingProvenance.session_id.in_(session_ids))
+        )
+        db.execute(delete(Scorecard).where(Scorecard.session_id.in_(session_ids)))
+        db.execute(delete(Transcript).where(Transcript.session_id.in_(session_ids)))
+        db.execute(delete(Session).where(Session.id.in_(session_ids)))
+    documents = db.scalars(
+        select(CaseDocument).where(CaseDocument.case_id == case.id)
+    ).all()
+    storage_paths = [d.storage_path for d in documents]
+    db.execute(delete(CaseChunk).where(CaseChunk.case_id == case.id))
+    for document in documents:
+        db.delete(document)
+    db.delete(case)
+    db.commit()
+    from app.services import storage_service
+
+    for path in storage_paths:
+        try:
+            storage_service.delete_object(path)
+        except Exception:  # noqa: BLE001 — best-effort
+            logger.warning("could not delete stored object %s after case purge", path)

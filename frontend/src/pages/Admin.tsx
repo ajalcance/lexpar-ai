@@ -12,7 +12,6 @@
 import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Shield } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -23,14 +22,9 @@ import {
 } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { RuleDocumentRow } from '@/components/RuleDocumentRow';
 import * as api from '@/lib/api';
 import { useAuthStore } from '@/store/auth';
-
-const STATUS_VARIANT = {
-  pending: 'secondary',
-  ready: 'outline',
-  failed: 'destructive',
-} as const;
 
 export function Admin() {
   const user = useAuthStore((state) => state.user);
@@ -246,23 +240,130 @@ export function Admin() {
                   <p className="text-sm text-muted-foreground">No rule documents yet.</p>
                 )}
                 {ruleDocs?.map((doc) => (
-                  <div key={doc.id} className="flex flex-wrap items-center gap-2 text-sm">
-                    <span className="font-medium">{doc.title}</span>
-                    {doc.sourceCitation && (
-                      <span className="text-muted-foreground">{doc.sourceCitation}</span>
-                    )}
-                    <Badge variant={STATUS_VARIANT[doc.ingestionStatus]}>
-                      {doc.ingestionStatus}
-                      {doc.ingestionStatus === 'ready' ? ` — ${doc.chunkCount} chunks` : ''}
-                    </Badge>
-                    {doc.error && <span className="text-destructive">{doc.error}</span>}
-                  </div>
+                  <RuleDocumentRow key={doc.id} courtId={selectedCourtId} doc={doc} />
                 ))}
               </div>
             </>
           )}
         </CardContent>
       </Card>
+
+      {selectedCourtId && (
+        <CourtDangerZone
+          courtId={selectedCourtId}
+          courtName={courts?.find((c) => c.id === selectedCourtId)?.name ?? ''}
+          onGone={() => {
+            setSelectedCourtId('');
+            void queryClient.invalidateQueries({ queryKey: ['courts'] });
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/** Court-level Archive/Purge — separated "danger zone", never adjacent to the routine actions.
+ *  Purge requires the court name typed back and is refused by the backend (409) while any case
+ *  still references the forum. */
+function CourtDangerZone({
+  courtId,
+  courtName,
+  onGone,
+}: {
+  courtId: string;
+  courtName: string;
+  onGone: () => void;
+}) {
+  const [confirming, setConfirming] = useState<'archive' | 'purge' | null>(null);
+  const [typedName, setTypedName] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const onError = (err: unknown) =>
+    setError(err instanceof Error ? err.message : 'Action failed.');
+  const archive = useMutation({
+    mutationFn: () => api.archiveCourt(courtId),
+    onSuccess: onGone,
+    onError,
+  });
+  const purge = useMutation({
+    mutationFn: () => api.purgeCourt(courtId),
+    onSuccess: onGone,
+    onError,
+  });
+
+  return (
+    <Card className="border-destructive/40">
+      <CardHeader>
+        <CardTitle className="text-lg text-destructive">Danger zone</CardTitle>
+        <CardDescription>
+          Archive retires this forum (cases keep running, without rules grounding — reversible at
+          the database level). Purge permanently deletes the forum and its corpus; it is refused
+          while any case still references it.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={archive.isPending}
+            onClick={() => setConfirming('archive')}
+          >
+            Archive court
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-destructive hover:text-destructive"
+            onClick={() => setConfirming('purge')}
+          >
+            Purge court…
+          </Button>
+        </div>
+        {confirming && (
+          <div className="flex flex-col gap-2 rounded-md border border-destructive/40 p-3">
+            <p className="text-sm text-destructive">
+              {confirming === 'archive'
+                ? `Archive "${courtName}"? Its rules leave retrieval; existing cases keep running without grounding.`
+                : `Permanently purge "${courtName}" and its entire rules corpus? This cannot be undone.`}
+            </p>
+            {confirming === 'purge' && (
+              <Input
+                value={typedName}
+                onChange={(event) => setTypedName(event.target.value)}
+                placeholder={`Type "${courtName}" to confirm`}
+                aria-label="Type the court name to confirm"
+              />
+            )}
+            <div className="flex gap-2">
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={
+                  (confirming === 'purge' && typedName !== courtName) ||
+                  archive.isPending ||
+                  purge.isPending
+                }
+                onClick={() => (confirming === 'archive' ? archive.mutate() : purge.mutate())}
+              >
+                {confirming === 'archive' ? 'Archive' : 'Purge permanently'}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setConfirming(null);
+                  setTypedName('');
+                  setError(null);
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
+        {error && <p className="text-sm text-destructive">{error}</p>}
+      </CardContent>
+    </Card>
   );
 }

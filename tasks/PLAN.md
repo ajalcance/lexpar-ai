@@ -2464,3 +2464,50 @@ chunking, hybrid exact+semantic retrieval, query enrichment, relevance floor / r
 - **⚠️ RE-INGESTION REQUIRED (distinct from code done):** section-aware chunking only affects
   NEWLY-ingested documents. The seeded Court's already-ingested rule PDFs must be **re-uploaded via
   /admin** for A/B to take effect on them; τ tuning is a real-data judgment, env-configurable.
+---
+
+### Deletion, purge & poison-pill prevention (two-tier design + supersede-on-reupload) — status: done
+
+**Trigger:** the retrieval-accuracy work requires re-uploading the Court's rule PDFs — and the
+Phase-1 audit confirmed re-upload was ADDITIVE (new document row every time; ingest clears only the
+new doc's chunks; retrieval reads chunks by denormalized court_id/case_id with NO document filter
+and the chunk tables have no deleted_at) — old + new chunks would both be retrievable: the exact
+poison pill. Also confirmed: no deletion capability existed anywhere (one DELETE route: none),
+essentially no cascade (only Session→transcripts ORM cascade), storage had no delete_object, and
+the only agent-side cache is the static prompt registry (retrieval is a live HTTP call per turn).
+
+**Design (Phase 2, approved as a set):** (1) exclusion via document-state filter in the retrieval
+queries — no chunk schema change; chunks stay for RulingProvenance resolvability. (2) Replace = an
+explicit atomic per-document action; old archived (deleted_at + superseded_by_id) ONLY when the new
+ingest reaches ready. (3) Purge = allow + cascade + degrade provenance gracefully (chunk_ids_used
+are strings → tombstones; UI shows counts) + warn with the exact affected-rulings count — not
+refuse. (4) Court archive unblocked (cases keep court_id, run ungrounded, fail-open); Court purge
+409 while ANY case references it. (5) case_summary last-writer-wins kept; documented §12 limitation.
+
+**Result:** Done, fully offline-verified. **Schema:** superseded_by_id on both document tables
+(Alembic 0005). **Backend:** retrieval filters (both corpora) via active-document IN-subquery;
+court_knowledge_service (archive/restore/purge/impact + supersede-on-ready in ingest);
+case_knowledge_service (archive + supersede in ingest); court_service (archive cascades docs, purge
+blocked-while-referenced); case_service (archive + manually-ordered purge cascade: provenance →
+scorecards → transcripts → sessions → chunks → documents → storage files → case);
+storage_service.delete_object (purge only — archive retains). **Routes:** courts — replace/archive
+(DELETE)/restore/impact/purge per document + archive/purge per court (admin list now includes
+archived w/ flags); cases — DELETE (archive, owner), purge (admin), pleading archive + replace.
+**Frontend:** RuleDocumentRow (Replace/Archive/Restore + Purge behind a typed-title confirm showing
+the provenance-impact count), Admin CourtDangerZone, CaseDetail danger zone (Archive owner-default;
+Purge admin-only, typed confirm) + api.ts wiring; CourtRuleDocument type gains archived/superseded.
+**THE load-bearing test (built first):** tests/test_deletion_purge.py — the adversarial poison-pill
+regression rigs an archived/superseded chunk to WIN both the semantic ranking (best cosine) AND the
+exact-citation lookup (same section_reference the query cites) and asserts it is NEVER retrieved:
+direct service, passages wrapper, and the agent-facing internal route, on BOTH corpora. Plus:
+atomic-Replace (failed ingest leaves old live; success supersedes + lineage), archive/restore round
+trip, restore-refused-while-superseded, document purge cascade + provenance tombstone survives +
+impact count, court archive cascade, court purge 409, full case purge cascade. **Suites: backend 91
+(+10), frontend 65 (+1 archive-confirm flow), agents 181 unchanged (no agent code touched; the
+shown_text invariant tests still pass — this changes what's ELIGIBLE, not how blocks are
+assembled); ruff/type-check/lint clean.** **Docs:** ARCHITECTURE §5 (13 new routes), §8 (two-tier
+soft-delete design), §12 (summary last-writer-wins limitation), §13 (two-tier deletion subsection);
+LESSONS (additive-reupload/atomic-supersede/purge-vs-provenance reasoning). **✅ RE-UPLOAD NOW SAFE:
+use the per-document "Replace…" action in /admin** — that is the supersede path (old version stays
+live until the new one is ready, then leaves retrieval atomically). Plain "Upload rules" remains
+for genuinely new documents.

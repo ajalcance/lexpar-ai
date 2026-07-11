@@ -71,6 +71,10 @@ export interface CourtRuleDocument {
   ingestionStatus: 'pending' | 'ready' | 'failed';
   chunkCount: number;
   error: string | null;
+  /** Two-tier deletion state: archived = excluded from retrieval (soft, restorable unless
+   *  superseded); superseded = archived because a Replace uploaded a newer version. */
+  archived: boolean;
+  superseded: boolean;
 }
 
 /** §13 audit trail for one AI ruling — which sources it was shown, which citations flagged. */

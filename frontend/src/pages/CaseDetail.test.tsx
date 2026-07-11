@@ -80,6 +80,23 @@ describe('CaseDetail session creation', () => {
     });
   });
 
+  it('archives the case (soft default) after an explicit confirm', async () => {
+    vi.spyOn(api, 'getCase').mockResolvedValue(CASE);
+    vi.spyOn(api, 'getCaseSessions').mockResolvedValue([]);
+    const archiveCase = vi.spyOn(api, 'archiveCase').mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    renderAt();
+
+    await user.click(await screen.findByRole('button', { name: 'Archive case' }));
+    // two-step: the destructive confirm appears, nothing has been called yet
+    expect(archiveCase).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Archive' }));
+
+    await waitFor(() => {
+      expect(archiveCase).toHaveBeenCalledWith('c1');
+    });
+  });
+
   it('links a completed session in history to its scorecard', async () => {
     vi.spyOn(api, 'getCase').mockResolvedValue(CASE);
     vi.spyOn(api, 'getCaseSessions').mockResolvedValue([

@@ -40,3 +40,14 @@ class CourtRuleDocumentOut(BaseModel):
     ingestion_status: str  # 'pending' | 'ready' | 'failed'
     chunk_count: int
     error: str | None = None
+    # Two-tier deletion state: archived = excluded from retrieval (soft; restorable unless
+    # superseded); superseded = archived because a Replace uploaded a newer version.
+    archived: bool = False
+    superseded: bool = False
+
+
+class PurgeImpactOut(BaseModel):
+    """The loud warning before a purge: how many past rulings cite this document's chunks."""
+
+    provenance_rulings: int
+    chunk_count: int

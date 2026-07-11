@@ -249,7 +249,18 @@ the one thing still absent:
 | GET | `/api/courts` | Active court catalog (case-creation dropdown; §13) | yes |
 | POST | `/api/courts` | Create a court (§13) | **admin** |
 | POST | `/api/courts/{id}/rules` | Upload an official rule PDF → ingest (§13) | **admin** |
-| GET | `/api/courts/{id}/rules` | Rule-document ingestion status (§13) | **admin** |
+| GET | `/api/courts/{id}/rules` | Rule documents incl. archived (admin corpus surface, §13) | **admin** |
+| POST | `/api/courts/{id}/rules/{doc}/replace` | Atomic Replace: supersede on successful ingest (§13) | **admin** |
+| DELETE | `/api/courts/{id}/rules/{doc}` | Archive a rule document (soft; out of retrieval) | **admin** |
+| POST | `/api/courts/{id}/rules/{doc}/restore` | Un-archive (409 while superseded by a live replacement) | **admin** |
+| GET | `/api/courts/{id}/rules/{doc}/impact` | Pre-purge warning: rulings citing this document | **admin** |
+| POST | `/api/courts/{id}/rules/{doc}/purge` | PURGE: chunks + row + stored file, gone | **admin** |
+| POST | `/api/courts/{id}/archive` | Retire a forum (cascades soft-archive to its documents) | **admin** |
+| POST | `/api/courts/{id}/purge` | PURGE a forum (409 while any case references it) | **admin** |
+| DELETE | `/api/cases/{id}` | Archive a case (soft, owner default) | yes |
+| POST | `/api/cases/{id}/purge` | PURGE a case + everything under it | **admin** |
+| DELETE | `/api/cases/{id}/documents/{doc}` | Archive a pleading (soft; out of retrieval) | yes |
+| POST | `/api/cases/{id}/documents/{doc}/replace` | Atomic Replace for a corrected pleading | yes |
 | POST | `/api/sessions` | Start a session — **`proceeding_type` required** (§13) | yes |
 | GET | `/api/sessions/{id}` | Session status + transcript | yes |
 | GET | `/api/sessions/{id}/scorecard` | Scorecard after session ends | yes |
@@ -628,9 +639,15 @@ S3-compatible (MinIO locally, DigitalOcean Spaces in production).
   (`uuid4`, timezone-aware `datetime.now`) rather than Postgres server defaults
   (`gen_random_uuid()`, `TIMESTAMPTZ`). The same models therefore run unchanged on Postgres
   (prod) and SQLite (tests).
-- **Soft deletes:** `users`, `cases`, and `sessions` carry a nullable `deleted_at`; queries
-  exclude it (DEVELOPER_GUIDELINES §8), so a retention policy later is a query change, not a
-  schema migration.
+- **Soft deletes → the two-tier deletion design.** `users`, `cases`, `sessions`, and both document
+  tables carry a nullable `deleted_at`. This grew into an explicit two-tier model (§13):
+  **Archive** (soft, default, reversible — set `deleted_at`; the entity leaves lists AND retrieval
+  via the document-state filter, but rows/chunks/files remain, so `RulingProvenance` stays
+  resolvable) vs **Purge** (hard, admin-only, typed-confirmation — rows, chunks, and the stored
+  object-storage file are genuinely deleted, with a manually-ordered cascade since no FK cascade
+  exists). Document tables also carry `superseded_by_id`: the atomic **Replace** action archives
+  the old version only after its replacement ingests to `ready`. A retention policy later is
+  still a query change, not a schema migration.
 - **Sensitive fields** (`cases.case_facts`, `transcripts.content`, scorecard text) are tagged
   `# SENSITIVE: attorney work product` in the models and never logged.
 - **Who writes what:** the browser client never writes `transcripts` or `scorecards`. The agents
@@ -869,6 +886,11 @@ An attorney uploads the pleading (PDF) and every objection/reply/ruling is groun
    `nomic-embed-text-v1.5`, 768-dim) → persist `case_chunks`. Also **one structured-summary LLM pass**
    → `cases.case_summary` (parties, claims, key dates, disputed facts, stipulations). Status →
    `ready` / `failed` (with the error — never silently stuck). Poll via `GET .../documents`.
+   **Known limitation (deliberate):** `case_summary` is **last-writer-wins** — each ingest
+   overwrites it with the latest document's summary. Correct for the Replace flow (the corrected
+   pleading's summary should win); lossy for genuinely multi-document cases (the summary reflects
+   only the last-ingested filing). Multi-document summarization is a documented follow-up, not
+   built.
 3. **Portable vector store:** embeddings are stored as **JSON arrays** and cosine-ranked in Python —
    so the same models run on Postgres (prod) and SQLite (CI), no infra change; a pleading is ~100
    chunks so brute-force top-k is <1 ms. **pgvector is the documented scale-up path** (many cases/ANN).
@@ -1019,6 +1041,30 @@ side accurate, not just present:
   citation accuracy than always injecting the best-k-however-weak. `k` = 4 on the live-critical paths;
   **`k` = 8 for `assess_session`** (its post-deliberation-wave slack), safe because with the floor
   `k` is a cap, not a floor.
+
+**Two-tier deletion: Archive/Replace vs Purge (the poison-pill guard).** Corpus knowledge can be
+corrected without ever leaving stale and new versions retrievable side by side:
+
+- **Structural exclusion:** every retrieval query (both corpora) filters chunks through their
+  parent document's `deleted_at` — an archived/superseded document's chunks are ineligible **at
+  the query**, for both the exact-citation and semantic paths, no matter how well they'd rank.
+  Chunk rows are untouched, so `RulingProvenance.chunk_ids_used` stays resolvable. (The
+  load-bearing regression: `tests/test_deletion_purge.py` rigs an archived chunk to WIN both
+  ranking mechanisms and asserts it can never be retrieved.)
+- **Replace (the re-upload path):** an explicit per-document action, not a filename heuristic and
+  not a manual two-step. The new version ingests first; **only on `ready`** is the old one
+  archived (`deleted_at` + `superseded_by_id` lineage) — a failed ingest never strands the corpus,
+  and old+new are never simultaneously retrievable. Restore of a superseded document is refused
+  while its replacement is live (that would re-create the poison pill).
+- **Archive** (soft, default): document / case / court (court cascades to its documents;
+  referencing cases keep their `court_id` and run without rules grounding — fail-open). Reversible.
+- **Purge** (hard, admin-only, typed-confirmation): rows + chunks + the stored file, manually
+  cascaded. **Provenance degrades gracefully, by design:** `chunk_ids_used` are strings, not FKs —
+  purged ids become tombstones; the scorecard's grounding display (which shows counts) keeps
+  working, but the audit trail no longer resolves to source text. The pre-purge dialog states the
+  exact count of affected rulings. Court purge is **refused (409)** while any case references the
+  forum. A purged *case* takes its provenance rows with it (an audit of a session that no longer
+  exists audits nothing).
 
 **Why dynamic retrieval, not a static objection→rule mapping table.** A hand-maintained
 "objection type → governing rule" lookup was rejected: (1) it would encode a **paraphrased/authored**
