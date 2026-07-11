@@ -100,14 +100,16 @@ class OpposingCounselAgent(Agent):
         # keeps the saved transcript from shredding into fragments. The classifier still sees every
         # interim via the separate user_input_transcribed handler.
         text = (getattr(new_message, "text_content", "") or "").strip()
+        # Timestamp the turn at the moment the attorney STARTED speaking, not now (turn-end).
+        # Objections/rulings fire mid-utterance (on an interim) and are recorded then; if the
+        # attorney turn were timestamped at turn-end it would sort AFTER them, so the report would
+        # show the objection before the statement it objects to. Start-time keeps order. CONSUME it
+        # (set None) so a brief mid-sentence pause→resume can't leave a stale start for the next
+        # turn; the observer re-arms on the next fresh utterance (None → turn-end fallback is safe).
+        started = self._turn_timing.get("attorney_started_at")
+        self._turn_timing["attorney_started_at"] = None
         if text:
-            # Timestamp the turn at the moment the attorney STARTED speaking, not now (turn-end).
-            # Objections/rulings fire mid-utterance (on an interim) and are recorded then; if the
-            # attorney turn were timestamped at turn-end it would sort AFTER them, so the report
-            # would show the objection before the statement it objects to. Start-time keeps order.
-            self._state.add_turn(
-                "attorney", text, spoken_at=self._turn_timing.get("attorney_started_at")
-            )
+            self._state.add_turn("attorney", text, spoken_at=started)
 
     async def llm_node(self, chat_ctx, tools, model_settings):
         # Courtroom flow: if an objection already fired on this turn, Opposing Counsel already spoke
@@ -413,10 +415,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     @session.on("user_state_changed")
     def _track_attorney_turn_start(ev) -> None:
-        # Record when the attorney starts speaking so the turn committed in on_user_turn_completed
-        # can be timestamped at its START (transcript-ordering fix). Overwritten each new utterance;
-        # the most recent start applies to the next committed turn.
-        if ev.new_state == "speaking":
+        # Record when the attorney FIRST starts a fresh utterance so the turn committed in
+        # on_user_turn_completed is timestamped at its START (transcript-ordering fix). Set only
+        # when unset — a brief mid-sentence pause flips speaking→listening→speaking, and overwriting
+        # on each resume would stamp the turn at the LAST resume, re-introducing the mis-order.
+        # on_user_turn_completed consumes (clears) it, re-arming this for the next utterance.
+        if ev.new_state == "speaking" and turn_timing["attorney_started_at"] is None:
             turn_timing["attorney_started_at"] = datetime.now(timezone.utc)
 
     finalized = {"done": False}

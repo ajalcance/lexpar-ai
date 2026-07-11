@@ -2769,3 +2769,22 @@ before) — verified by compile + the live-facing design; ARCHITECTURE §6.5 upd
 confirm:** run a session with a couple of objections + a normal OC reply, End session, then check the
 scorecard transcript reads in order (statement → objection+reason → ruling), OC's replies appear, and
 attorney fragments are merged.
+
+---
+
+### Audit follow-up on the recent stack — status: 2 findings fixed, pushed
+
+Read-only audit of this session's 9 commits (main.py coherence, cross-change interactions, the
+transcript chain, docs/hygiene, all suites) came back clean except two small items, both fixed:
+- **(b) turn-start ordering edge:** the `user_state→speaking` observer overwrote `attorney_started_at`
+  on EVERY resume, so a mid-sentence pause→resume stamped the turn at the LAST resume (re-introducing
+  the objection-before-statement mis-order for that turn). Now set ONLY when unset (captures the true
+  first start) and CLEARED in `on_user_turn_completed` after use, so the next utterance re-arms it;
+  None → turn-end fallback stays safe. Shared-dict semantics verified (agent's `self._turn_timing`
+  and entrypoint's `turn_timing` are the same object).
+- **(c) undocumented env var:** `INTERRUPTION_MIN_DURATION` (added by the VAD fix) was missing from
+  `.env.example` and ARCHITECTURE §9 — added to both.
+
+agents 201 offline pass, ruff clean, main.py compiles. (The observer/turn-hook live in the
+unit-untestable main.py; correctness is by construction + the standing live re-test.) Everything
+else in the stack audited correct — safe to proceed to live testing.
