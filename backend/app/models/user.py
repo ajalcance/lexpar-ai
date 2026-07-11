@@ -3,8 +3,10 @@ File: app/models/user.py
 Purpose: SQLAlchemy model for the `users` table (ARCHITECTURE §8) — the attorney account.
 Depends on: sqlalchemy, app/db.py
 Related: app/schemas/auth.py (API shape), app/services/auth_service.py
-Security notes: `password_hash` is NULL while AUTH_MODE=stub. When real auth lands, store only a
-    hash, never a plaintext password. `deleted_at` supports soft deletes (DEV_GUIDELINES §8).
+Security notes: `password_hash` holds a bcrypt hash, never a plaintext password (a NULL hash can
+    never authenticate — verify_password returns False on it). The column stays nullable only for
+    legacy rows; all real accounts are created hashed via auth_service.register_user. `deleted_at`
+    supports soft deletes (DEV_GUIDELINES §8).
 """
 
 import uuid

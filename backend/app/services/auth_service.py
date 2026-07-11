@@ -1,16 +1,15 @@
 """
 File: app/services/auth_service.py
-Purpose: Authentication logic. Two modes (config.auth_mode):
-    - "production": real password auth — credentials are verified against the bcrypt hash in
-      users.password_hash; users are created via register_user (hashed). This is what must be on
-      before any real attorney/case data (ARCHITECTURE §11).
-    - "stub": the legacy admin/admin demo path, kept for local dev only.
-    Either way the JWT it leads to is verified for real on every request by app/security.py.
+Purpose: Authentication logic. ONE mode: real password auth — credentials are verified against the
+    bcrypt hash in users.password_hash; users are created via register_user (hashed). The legacy
+    admin/admin "stub" path was removed at the production cutover (see tasks/PLAN.md) — there is no
+    longer a demo/bypass identity, and AUTH_MODE is no longer a config value. The JWT this leads to
+    is verified for real on every request by app/security.py.
 
     ADMIN BOOTSTRAP (§13): the FIRST user to authenticate on a deployment with no active admin is
-    promoted to admin automatically (ensure_admin_bootstrap, called from both login paths and from
-    register, which returns a token and is therefore also a first login). This makes Court/rule
-    setup a pure-UI workflow — no script or CLI is ever needed to obtain admin access.
+    promoted to admin automatically (ensure_admin_bootstrap, called from login and from register,
+    which returns a token and is therefore also a first login). This makes Court/rule setup a
+    pure-UI workflow — no script or CLI is ever needed to obtain admin access.
     Race-safety reasoning (documented per the §13 bootstrap task):
     - Chosen: a SINGLE atomic conditional UPDATE — "promote this user IF no active admin exists"
       as one statement (aliased NOT-EXISTS guard), so there is no ORM-level check-then-act window.
@@ -19,15 +18,15 @@ Purpose: Authentication logic. Two modes (config.auth_mode):
       admin-less deployment, same instant) could each evaluate the guard before either commits and
       both be promoted. That failure mode is benign — two founding users of an empty install both
       become admin; admins hold no privileges against each other and roles can be corrected in the
-      DB. Today (single-tenant stub auth) the race cannot occur at all.
+      DB.
     - Upgrade path if it ever matters: take a pg advisory lock (or SERIALIZABLE) around the
       bootstrap statement. Deliberately not done now — disproportionate to the risk.
-Depends on: fastapi, sqlalchemy, app/config.py, app/models/user.py, app/security_password.py
+Depends on: fastapi, sqlalchemy, app/models/user.py, app/security_password.py
 Related: app/api/auth.py, app/security.py, app/security_password.py, frontend /admin (Phase 6)
-Security notes: Never log passwords. Production login is a bcrypt verify; the stub path is gated to
-    AUTH_MODE=stub and creates a password-less demo user (which production auth would reject).
-    The bootstrap can only ever promote on an ADMIN-LESS deployment — once any active admin
-    exists, no login can escalate anyone.
+Security notes: Never log passwords. Login is a bcrypt verify against a stored hash; a user with a
+    NULL password_hash (none exist post-cutover) can never authenticate (verify_password returns
+    False on a NULL hash). The bootstrap can only ever promote on an ADMIN-LESS deployment — once
+    any active admin exists, no login can escalate anyone.
 """
 
 from fastapi import HTTPException, status
@@ -35,27 +34,19 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session as DbSession
 from sqlalchemy.orm import aliased
 
-from app.config import get_settings
 from app.models.user import User
 from app.security_password import hash_password, verify_password
-
-STUB_USERNAME = "admin"
-STUB_PASSWORD = "admin"
-STUB_EMAIL = "admin@lexpar.ai"
 
 _INVALID = HTTPException(
     status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password."
 )
 
 
-def authenticate(db: DbSession, username: str, password: str) -> User:
-    """Validate credentials and return the user, or raise 401. Every successful login passes
-    through the admin bootstrap (first user on an admin-less deployment → admin)."""
-    settings = get_settings()
-    if settings.auth_mode == "stub":
-        user = _authenticate_stub(db, username, password)
-    else:
-        user = _authenticate_production(db, username, password)
+def authenticate(db: DbSession, email: str, password: str) -> User:
+    """Validate credentials (bcrypt) and return the user, or raise 401. Every successful login
+    passes through the admin bootstrap (first user on an admin-less deployment → admin). The login
+    form's `username` field carries the email (auth is email-based)."""
+    user = _authenticate_production(db, email, password)
     return ensure_admin_bootstrap(db, user)
 
 
@@ -103,7 +94,7 @@ def register_user(
     full_name: str | None = None,
     firm_name: str | None = None,
 ) -> User:
-    """Create a user with a hashed password (production auth). Rejects a duplicate email."""
+    """Create a user with a hashed password. Rejects a duplicate email."""
     normalized = email.strip().lower()
     if not normalized or "@" not in normalized:
         raise HTTPException(status_code=422, detail="A valid email is required.")
@@ -122,21 +113,3 @@ def register_user(
     # Register returns a token (the client is logged in immediately), so it IS a first login —
     # the first registrant on a fresh, admin-less deployment becomes the admin.
     return ensure_admin_bootstrap(db, user)
-
-
-def _authenticate_stub(db: DbSession, username: str, password: str) -> User:
-    """Legacy demo path (local dev only) — admin/admin, a password-less user row."""
-    if username != STUB_USERNAME or password != STUB_PASSWORD:
-        raise _INVALID
-    return ensure_stub_user(db)
-
-
-def ensure_stub_user(db: DbSession) -> User:
-    """Return the single stub user, creating it on first login."""
-    user = db.scalar(select(User).where(User.email == STUB_EMAIL))
-    if user is None:
-        user = User(email=STUB_EMAIL, full_name="Demo Attorney", firm_name="Solo Practice")
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-    return user

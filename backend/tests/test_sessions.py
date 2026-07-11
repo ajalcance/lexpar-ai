@@ -9,15 +9,20 @@ Related: app/services/session_service.py, app/services/scorecard_service.py
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import select
 
 from app.models.scorecard import Scorecard
+from app.models.user import User
 from app.schemas.case import CaseCreate
 from app.services import auth_service, case_service, session_service
+from tests.conftest import TEST_EMAIL
 
 
-def _seed_session(db):
-    """Create the stub user, a case, and a fresh session; return the session."""
-    user = auth_service.ensure_stub_user(db)
+def _seed_session(db, user=None):
+    """Create a case + fresh session for `user`, registering a default user if none is given.
+    HTTP-level tests pass the auth_headers user so the session is owned by the requester."""
+    if user is None:
+        user = auth_service.register_user(db, "seed@example.com", "seed-password-123")
     case = case_service.create_case(db, user, CaseCreate(title="Rivera v. Coastal", case_facts="F"))
     return session_service.create_session(db, user, case)
 
@@ -58,7 +63,10 @@ def test_unknown_status_is_rejected(db_session):
 
 
 def test_scorecard_gated_on_completed_session(client, db_session, auth_headers):
-    session = _seed_session(db_session)
+    # Own the session with the SAME user auth_headers authenticated as, so the owner-scoped
+    # scorecard route resolves it (409 not-completed) rather than 404 not-owned.
+    owner = db_session.scalar(select(User).where(User.email == TEST_EMAIL))
+    session = _seed_session(db_session, owner)
 
     # Before completion the scorecard is unavailable.
     early = client.get(f"/api/sessions/{session.id}/scorecard", headers=auth_headers)

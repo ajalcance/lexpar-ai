@@ -17,8 +17,11 @@ switch, not a code fork.
 - [docs/LESSONS.md](docs/LESSONS.md) — append-only log of past mistakes and their fixes, so they aren't repeated.
 - [tasks/PLAN.md](tasks/PLAN.md) — working plan/task log, written before non-trivial work and checked off as it proceeds.
 
-**Known placeholder:** auth is currently stubbed (`admin`/`admin`, `AUTH_MODE=stub`) — must
-not touch real attorney or case data until replaced (tracked in ARCHITECTURE.md §11).
+**Auth:** real bcrypt password auth (register + login-against-hash). The legacy `admin`/`admin`
+stub (`AUTH_MODE`) was removed at the production cutover — there is no demo bypass. Create the first
+account via `POST /api/auth/register` (or the login page's flow); the first registrant on an
+admin-less deployment auto-bootstraps to admin (see below). LiveKit dev keys are still a
+pre-deploy item (ARCHITECTURE.md §11).
 
 **Admin bootstrap:** the first user to authenticate on an admin-less deployment is promoted to
 admin automatically (`auth_service.ensure_admin_bootstrap`) — Court/rule-document setup is a pure

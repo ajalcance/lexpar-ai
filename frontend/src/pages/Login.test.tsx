@@ -1,7 +1,7 @@
 /**
  * File: src/pages/Login.test.tsx
- * Purpose: Critical-flow test for login (DEVELOPER_GUIDELINES §6) — admin/admin authenticates via
- *   the API and stores the token; a rejected login surfaces an error and stores nothing.
+ * Purpose: Critical-flow test for login (DEVELOPER_GUIDELINES §6) — real credentials authenticate
+ *   via the API and store the token; a rejected login surfaces an error and stores nothing.
  * Depends on: vitest, @testing-library/*, test/utils, pages/Login, store/auth, lib/api
  */
 
@@ -15,9 +15,9 @@ import * as api from '@/lib/api';
 
 const fakeUser = {
   id: 'u1',
-  email: 'admin@lexpar.ai',
-  fullName: 'Demo Attorney',
-  role: 'attorney' as const,
+  email: 'attorney@example.com',
+  fullName: 'Test Attorney',
+  role: 'admin' as const,
   firmName: 'Solo Practice',
 };
 
@@ -29,20 +29,20 @@ describe('Login', () => {
     vi.restoreAllMocks();
   });
 
-  it('signs in with admin/admin and stores the token', async () => {
+  it('signs in with real credentials and stores the token', async () => {
     vi.spyOn(api, 'login').mockResolvedValue('jwt-token');
     vi.spyOn(api, 'getCurrentUser').mockResolvedValue(fakeUser);
     const user = userEvent.setup();
     renderWithProviders(<Login />);
 
-    await user.type(screen.getByLabelText('Username'), 'admin');
-    await user.type(screen.getByLabelText('Password'), 'admin');
+    await user.type(screen.getByLabelText('Email'), 'attorney@example.com');
+    await user.type(screen.getByLabelText('Password'), 'test-password-123');
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
 
     await waitFor(() => {
       expect(useAuthStore.getState().token).toBe('jwt-token');
     });
-    expect(api.login).toHaveBeenCalledWith('admin', 'admin');
+    expect(api.login).toHaveBeenCalledWith('attorney@example.com', 'test-password-123');
   });
 
   it('rejects invalid credentials with an error message', async () => {
@@ -50,7 +50,7 @@ describe('Login', () => {
     const user = userEvent.setup();
     renderWithProviders(<Login />);
 
-    await user.type(screen.getByLabelText('Username'), 'admin');
+    await user.type(screen.getByLabelText('Email'), 'attorney@example.com');
     await user.type(screen.getByLabelText('Password'), 'wrong');
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
 

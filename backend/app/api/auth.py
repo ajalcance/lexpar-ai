@@ -7,10 +7,9 @@ Security notes: /login is the only unauthenticated route here; /me requires a va
     Never log request bodies (they carry credentials).
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session as DbSession
 
-from app.config import get_settings
 from app.db import get_db
 from app.models.user import User
 from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UserOut
@@ -22,10 +21,8 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 @router.post("/register", response_model=TokenResponse, status_code=201)
 def register(payload: RegisterRequest, db: DbSession = Depends(get_db)) -> TokenResponse:
-    # Real self-service signup (production auth). Disabled under the demo stub so the two paths
-    # can't be mixed. Returns a token so the client is logged in immediately.
-    if get_settings().auth_mode == "stub":
-        raise HTTPException(status_code=404, detail="Registration is disabled in demo (stub) mode.")
+    # Real self-service signup. Returns a token so the client is logged in immediately; the first
+    # registrant on an admin-less deployment auto-bootstraps to admin (§13).
     user = auth_service.register_user(
         db, payload.email, payload.password, payload.full_name, payload.firm_name
     )

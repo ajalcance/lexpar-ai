@@ -2531,3 +2531,46 @@ flagged these but was never executed. Verified still drifted at f766c30 (`ls inf
 
 Docs-only; no code or behavior change. Not committed to `main` directly — on a `docs/` branch per
 DEV_GUIDELINES §9.
+
+---
+
+### Retire stub auth → real bcrypt password auth (production cutover) — status: code done; first-user registration pending user credentials
+
+Precedes the first real-pleading upload. Removed `AUTH_MODE=stub` (admin/admin) as a supported
+path entirely — not just defaulted to production.
+
+**Audit (Step 1):** contained. Stub was read in 4 backend files (`config.py`, `auth_service.py`,
+`api/auth.py`, a `models/user.py` comment); tests authenticated almost entirely through the single
+`auth_headers` conftest fixture (admin/admin login), with direct stub refs in only ~4 test files.
+Docs referenced it in CLAUDE.md, ARCHITECTURE §4/§5/§8/§9/§11/§12, README, DEV_GUIDELINES §7,
+`.env.example`; frontend had a "Stub auth — admin/admin" hint + "Username" label. No seed/CI/startup
+dependency.
+
+**Decision — `AUTH_MODE` removed entirely** (not kept as a single-valued config): one mode remains,
+so a config knob implying a choice that no longer exists is dead surface, and keeping the stub
+constants/branch would keep the password-less-user footgun alive. Unconditional real auth is the
+cleaner, safer end state. A leftover `AUTH_MODE=` in any `.env` is silently ignored (`extra="ignore"`).
+
+**Cutover (Step 2):**
+- `auth_service.py` — dropped `_authenticate_stub`, `ensure_stub_user`, `STUB_*` constants, and the
+  mode branch; `authenticate()` is unconditionally bcrypt verify → admin bootstrap. `register_user`
+  unchanged (first registrant → admin via `ensure_admin_bootstrap`).
+- `config.py` — removed the `auth_mode` field. `api/auth.py` — removed the stub-gate that 404'd
+  `/register`. `models/user.py` — header comment corrected (NULL hash can never authenticate).
+- Tests — `conftest.auth_headers` now registers a real bcrypt user (`attorney@example.com`, first
+  registrant → admin); `test_auth.py` rewritten to register+login real creds (+ a new
+  `test_admin_admin_no_longer_authenticates`); `test_sessions._seed_session` uses `register_user`
+  and the HTTP scorecard test owns the session with the auth_headers user; `test_auth_production.py`
+  dropped the obsolete stub-gate test + redundant `production_mode` fixture; `test_courts_api`
+  docstrings de-stubbed.
+- Docs — CLAUDE.md, ARCHITECTURE §4/§5/§8/§9/§11 (§11 item checked off)/§12, README, DEV_GUIDELINES
+  §7, `.env.example` all updated to real-auth-only. Frontend `Login.tsx` relabeled Username→Email
+  (`type=email`), removed the admin/admin hint; `api.login`/`Login.test.tsx` updated.
+
+**Suites: backend 91, agents 181 offline (9 live deselected), frontend 65 Vitest — all green;
+ruff + type-check + lint clean.** Backend suite verified with NO Fireworks/OPENAI key present
+(mirrors CI). admin/admin now 401s (unknown email); the hash check has no bypass.
+
+**Step 3 (register the first real user) — PENDING:** a runtime action against the live backend/DB,
+needs the operator's real email + password. Not a code change (no commit). To be done once the user
+supplies credentials, then confirm login end-to-end and that admin/admin authenticates nowhere.

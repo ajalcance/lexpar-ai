@@ -27,8 +27,9 @@ docker compose -f infra/docker-compose.yml up
 
 ## Status
 
-Hackathon build in progress. Auth is currently stubbed to `admin`/`admin` (see `AUTH_MODE` in
-`.env.example`) — not production-ready. Tracked in `docs/ARCHITECTURE.md` §11.
+Hackathon build in progress. Auth is real bcrypt password auth — register the first account via
+`POST /api/auth/register` (the first registrant auto-bootstraps to admin). The legacy `admin`/`admin`
+stub has been removed. Remaining pre-deploy items are tracked in `docs/ARCHITECTURE.md` §11.
 
 ## License
 

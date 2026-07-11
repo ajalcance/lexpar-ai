@@ -176,19 +176,20 @@ a consistent **breadcrumb strip** (`components/Breadcrumbs.tsx`, e.g. `Cases ›
 instead of ad-hoc back buttons. Starting a session and viewing a case's past scorecards both live on
 the case-detail page, backed by `GET /api/cases/{id}/sessions`.
 
-### Login form (placeholder auth)
+### Login form (real password auth)
 
-Included now as real UI, wired to a stub backend — not a mock, an actual login form hitting an
-actual endpoint, just with hardcoded credentials behind it for now.
+An actual login form hitting a real endpoint, backed by real bcrypt password auth (§12).
 
-- Form posts `{ username, password }` to `POST /api/auth/login`.
-- Backend (see §5) accepts only `admin` / `admin` while `AUTH_MODE=stub`, returns a signed JWT.
+- Form posts `{ username, password }` to `POST /api/auth/login` (the `username` field carries the
+  attorney's email — auth is email-based). Accounts are created via `POST /api/auth/register`.
+- Backend (see §5) verifies the password against the bcrypt hash in `users.password_hash` and
+  returns a signed JWT. The legacy `admin`/`admin` stub was removed at the production cutover — there
+  is no demo bypass and no `AUTH_MODE` setting.
 - Frontend stores the token in memory (Zustand `auth` store) and attaches it as a Bearer token on
-  subsequent requests. Not localStorage — keeps it out of persistent browser storage even in
-  placeholder form, so the swap to real auth later doesn't also require a storage migration.
+  subsequent requests. Not localStorage — keeps it out of persistent browser storage.
 
-**⚠️ Flagged for replacement:** this must not ship to any real attorney or real case data while
-`AUTH_MODE=stub`. Tracked in §11 (Open items).
+The first registrant on an admin-less deployment auto-bootstraps to admin (§13), so Court/rule setup
+stays a pure-UI workflow with no script.
 
 ### Wiring status (frontend ↔ backend)
 
@@ -239,8 +240,8 @@ the one thing still absent:
 
 | Method | Path | Description | Auth |
 |---|---|---|---|
-| POST | `/api/auth/register` | Self-service signup (production auth only; §12) | no |
-| POST | `/api/auth/login` | Validates credentials (stub: `admin`/`admin`), issues JWT | no |
+| POST | `/api/auth/register` | Self-service signup — bcrypt hash, first registrant → admin (§12/§13) | no |
+| POST | `/api/auth/login` | Verifies password against the bcrypt hash, issues JWT | no |
 | GET | `/api/auth/me` | Returns current user from token (incl. `role`) | yes |
 | POST | `/api/cases` | Create a case (optional `court_id`, §13) | yes |
 | GET | `/api/cases` | List attorney's cases | yes |
@@ -569,7 +570,7 @@ CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email TEXT UNIQUE NOT NULL,
     full_name TEXT,
-    password_hash TEXT,             -- NULL while AUTH_MODE=stub
+    password_hash TEXT,             -- bcrypt hash (real auth); a NULL hash can never authenticate
     firm_name TEXT,
     role TEXT NOT NULL DEFAULT 'attorney',  -- 'attorney' | 'admin' (§13; first-login bootstrap)
     created_at TIMESTAMPTZ DEFAULT now()
@@ -681,7 +682,7 @@ S3-compatible (MinIO locally, DigitalOcean Spaces in production).
 | `{OC,JUDGE}_VOICE_{STABILITY,SIMILARITY_BOOST,STYLE,USE_SPEAKER_BOOST}` | ElevenLabs `voice_settings` expressiveness (§6.5). `style`=0 reverts to flat delivery; tune by ear |
 | `JUDGE_EXPRESSIVE_FINAL_RULING` / `JUDGE_V3_MODEL` | Track B (gated, default off): v3 + audio tags for the Judge's final ruling only (§6.5) |
 | `JWT_SECRET` | Token signing — **required, ≥ 32 chars**; the app refuses to start with a blank/missing/weak key (`openssl rand -hex 32`) |
-| `AUTH_MODE` | `stub` \| `production` |
+| _(auth mode)_ | Removed — auth is always real bcrypt password auth; there is no `AUTH_MODE` setting (a leftover value in `.env` is ignored) |
 | `CORS_ORIGINS` | Comma-separated browser origins allowed to call the API (e.g. the Vite dev server) |
 | `AGENT_SERVICE_TOKEN` | Scoped service credential for the agent's internal session-write routes (§5) — NOT user auth. Empty = internal routes locked |
 | `AGENT_BACKEND_URL` | (agents worker) Base URL of the backend the worker persists to (default `http://localhost:8000`) |
@@ -859,9 +860,10 @@ update §7's "Model in use now" for Opposing Counsel, and check the §11 box.
 
 ## 11. Open items / roadmap
 
-- [ ] Replace `AUTH_MODE=stub` (admin/admin) with real auth before any real attorney or real case
-      data touches the system. (Note: the agents worker's `AGENT_SERVICE_TOKEN` is already a separate,
-      scoped credential — not part of the stubbed user auth — so it survives that replacement.)
+- [x] Replace the `admin`/`admin` stub with real auth before real attorney/case data. **Done** at
+      the production cutover: real bcrypt password auth is now the only mode, `AUTH_MODE` was removed,
+      and the first registrant auto-bootstraps to admin. (The agents worker's `AGENT_SERVICE_TOKEN`
+      remains a separate, scoped credential — never part of user auth.)
 - [ ] Regenerate `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` to real random values before any
       non-local deployment. The current `devkey` / `secret` pair is safe **only** because LiveKit
       runs solely on localhost today (§10); exposing the server off-box with default keys lets anyone
@@ -912,12 +914,14 @@ An attorney uploads the pleading (PDF) and every objection/reply/ruling is groun
   pure RAG misses the big picture. Summary (spine) + retrieval (receipts) grounds both the objection
   ("that contradicts ¶2") and the ruling.
 
-### Real auth (production)
-`AUTH_MODE=production` replaces the `admin/admin` stub with real credentials: bcrypt hashes in
-`users.password_hash` (`security_password.py`, used directly — passlib 1.7.4 is incompatible with
-bcrypt ≥ 5.0, see LESSONS), `POST /api/auth/register` (self-service, hashed) + login-against-hash
-(email, case-insensitive). The stub path stays gated to `AUTH_MODE=stub` for local dev. This is the
-gate for real work product (§11): a real pleading is real attorney data.
+### Real auth
+Real bcrypt password auth is the **only** mode — the `admin/admin` stub and the `AUTH_MODE` setting
+were removed at the production cutover. Bcrypt hashes live in `users.password_hash`
+(`security_password.py`, used directly — passlib 1.7.4 is incompatible with bcrypt ≥ 5.0, see
+LESSONS); `POST /api/auth/register` (self-service, hashed) + login-against-hash (email,
+case-insensitive). A user with a NULL `password_hash` can never authenticate. This is the gate for
+real work product (§11): a real pleading is real attorney data, and there is no bypass around the
+hash check.
 
 ### New env vars (§9)
 `OBJECT_STORAGE_ACCESS_KEY` / `OBJECT_STORAGE_SECRET_KEY` / `OBJECT_STORAGE_REGION` (upload target),

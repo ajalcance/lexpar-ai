@@ -1,6 +1,6 @@
 """
 File: app/security_password.py
-Purpose: Password hashing for real auth (AUTH_MODE=production, ARCHITECTURE §11) — bcrypt, used
+Purpose: Password hashing for real auth (the only auth mode, ARCHITECTURE §12) — bcrypt, used
     directly. (We deliberately do NOT use passlib: passlib 1.7.4's import-time self-test is
     incompatible with bcrypt >= 5.0 and raises on any hash — see docs/LESSONS.md.) Isolated so the
     algorithm/cost is one place and the auth service depends on `hash_password`/`verify_password`.

@@ -76,9 +76,10 @@ class Settings(BaseSettings):
     elevenlabs_api_key: str = ""
 
     # Auth. No insecure default: a blank/missing/weak JWT_SECRET fails loudly at startup (below)
-    # rather than silently signing tokens with a guessable key.
+    # rather than silently signing tokens with a guessable key. There is only one auth mode now
+    # (real bcrypt password auth) — the legacy AUTH_MODE=stub admin/admin path was removed at the
+    # production cutover, so no auth_mode setting exists; a leftover AUTH_MODE in .env is ignored.
     jwt_secret: str = ""
-    auth_mode: str = "stub"
 
     # Scoped service credential for the agents worker (NOT user auth) — grants only the internal
     # session-write routes. Empty = no valid agent token (internal routes reject everything).

@@ -120,8 +120,8 @@ hand-written code, not less.
 We are not building a compliance program this week. We are making sure nothing we build this
 week has to be undone to build one later.
 
-- Every endpoint requires a bearer token — **even while token issuance is stubbed to
-  `admin`/`admin`.** The auth *check* is real; only the auth *provider* is a placeholder.
+- Every endpoint requires a bearer token. Auth is real bcrypt password auth (register +
+  login-against-hash); the legacy `admin`/`admin` stub was removed at the production cutover.
 - Input validation via Pydantic on every request, no exceptions.
 - Secrets live in environment variables only. `.env` is gitignored; `.env.example` documents
   the shape with no real values.

@@ -218,11 +218,12 @@ const toScorecard = (j: ScorecardJson): Scorecard => ({
 
 // --- API surface ----------------------------------------------------------------------------
 
-/** Authenticate and return the bearer token (stub backend accepts admin/admin). */
-export async function login(username: string, password: string): Promise<string> {
+/** Authenticate with email + password and return the bearer token. The backend's login field is
+ *  named `username` but carries the email (auth is email-based). */
+export async function login(email: string, password: string): Promise<string> {
   const data = await request<{ access_token: string }>('/api/auth/login', {
     method: 'POST',
-    body: { username, password },
+    body: { username: email, password },
     anonymous: true,
   });
   return data.access_token;

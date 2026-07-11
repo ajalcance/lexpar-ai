@@ -26,7 +26,7 @@ PLAIN_CHUNK = "Plain paragraph with no heading at all, also placeholder text."
 
 @pytest.fixture()
 def admin_headers(client, auth_headers, db_session):
-    """The stub user's first login IS the admin (§13 first-login bootstrap); set explicitly anyway
+    """The first registered user IS the admin (§13 first-login bootstrap); set explicitly anyway
     so this fixture stays correct even if the arrangement around it changes."""
     me = client.get("/api/auth/me", headers=auth_headers).json()
     user = db_session.get(User, uuid.UUID(me["id"]))

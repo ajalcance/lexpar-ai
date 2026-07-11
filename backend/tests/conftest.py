@@ -9,7 +9,6 @@ Related: tests/test_auth.py, tests/test_sessions.py, docs/DEVELOPER_GUIDELINES.m
 
 import os
 
-os.environ.setdefault("AUTH_MODE", "stub")
 os.environ.setdefault("AGENT_SERVICE_TOKEN", "test-agent-token")
 # JWT_SECRET is required (>= 32 chars) — provide a valid one for the test suite.
 os.environ.setdefault("JWT_SECRET", "test-jwt-secret-0123456789-abcdefghijklmnop")
@@ -57,9 +56,20 @@ def client(db_session: DbSession) -> TestClient:
     app.dependency_overrides.clear()
 
 
+# Shared test account (real bcrypt auth). Being the first registrant on each fresh in-memory DB,
+# this user auto-bootstraps to admin (§13 first-login rule) — the same privilege the old stub user
+# had, now via the real registration path.
+TEST_EMAIL = "attorney@example.com"
+TEST_PASSWORD = "test-password-123"
+
+
 @pytest.fixture()
 def auth_headers(client: TestClient) -> dict[str, str]:
-    """Log in as the stub user and return a ready-to-use Authorization header."""
-    resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
-    assert resp.status_code == 200
+    """Register the shared test user (real bcrypt) and return a ready-to-use Authorization header.
+    First registrant on the fresh DB → admin via the §13 bootstrap."""
+    resp = client.post(
+        "/api/auth/register",
+        json={"email": TEST_EMAIL, "password": TEST_PASSWORD, "full_name": "Test Attorney"},
+    )
+    assert resp.status_code == 201
     return {"Authorization": f"Bearer {resp.json()['access_token']}"}
