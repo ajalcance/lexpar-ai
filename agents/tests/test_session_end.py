@@ -144,3 +144,35 @@ def test_build_transcript_is_ordered_and_merged():
     rows = payload["transcript"]
     assert [r["speaker"] for r in rows] == ["attorney", "opposing_counsel"]
     assert rows[0]["content"] == "Hello world."
+
+
+# --- performance rubric (scorecard depth): judge grade wins, heuristic is the fail-safe ---------
+
+
+def test_judge_performance_score_overrides_heuristic():
+    payload = build_session_end_payload(
+        _state_with_sustained(2), "r", performance_score=71, performance_notes=[]
+    )
+    assert payload["overall_score"] == 71  # not 100 - 2*8
+
+
+def test_missing_performance_score_falls_back_to_heuristic():
+    payload = build_session_end_payload(_state_with_sustained(2), "r", performance_score=None)
+    assert payload["overall_score"] == 84
+
+
+def test_performance_notes_replace_hollow_no_objections_message():
+    state = SessionState()
+    payload = build_session_end_payload(
+        state, "r", performance_score=78, performance_notes=["Repeated the ultra vires point"]
+    )
+    assert payload["weaknesses"] == "- Repeated the ultra vires point"
+    assert "No objections were sustained" not in payload["weaknesses"]
+
+
+def test_performance_notes_append_after_sustained_grounds():
+    payload = build_session_end_payload(
+        _state_with_sustained(1), "r", performance_notes=["Did not adjust after the ruling"]
+    )
+    assert "Sustained objection:" in payload["weaknesses"]
+    assert payload["weaknesses"].endswith("- Did not adjust after the ruling")

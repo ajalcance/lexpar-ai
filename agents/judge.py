@@ -179,7 +179,25 @@ def _parse_assessment(content: str) -> dict:
         else []
     )
     closing = str(data.get("closing_ruling", "")).strip()
-    return {"rulings": rulings, "established_facts": facts, "closing_ruling": closing}
+    # Performance rubric (scorecard depth): fail-safe — a missing/garbage score parses to None
+    # (the deterministic scorecard heuristic takes over), never a fabricated grade.
+    score: int | None = None
+    raw_score = data.get("performance_score")
+    if isinstance(raw_score, (int, float)) and not isinstance(raw_score, bool):
+        score = max(0, min(100, int(raw_score)))
+    raw_notes = data.get("performance_notes", [])
+    notes = (
+        [str(n).strip() for n in raw_notes if str(n).strip()]
+        if isinstance(raw_notes, list)
+        else []
+    )
+    return {
+        "rulings": rulings,
+        "established_facts": facts,
+        "closing_ruling": closing,
+        "performance_score": score,
+        "performance_notes": notes,
+    }
 
 
 def _build_quick_ruling_messages(
@@ -318,7 +336,9 @@ def assess_session(state: SessionState, *, expressive: bool = False) -> dict:
             # gpt-oss reasons before emitting; the assessment (rule every objection + extract facts
             # + closing ruling) needs a bigger budget than the classifier's 512, else the hidden
             # reasoning eats it all and content is empty (docs/LESSONS.md empty-content bug).
-            max_tokens=1536,
+            # Raised 1536 → 2048 with the performance-rubric item (#4) — the floor scales with
+            # prompt complexity (LESSONS); a ceiling, so simpler sessions still stop early.
+            max_tokens=2048,
             response_format={"type": "json_object"},
         )
         result = _parse_assessment(content)
@@ -328,6 +348,8 @@ def assess_session(state: SessionState, *, expressive: bool = False) -> dict:
             "established_facts": [],
             "closing_ruling": _FALLBACK_CLOSING,
             "closing_ruling_spoken": _FALLBACK_CLOSING,
+            "performance_score": None,
+            "performance_notes": [],
             "chunk_ids": [],
             "flagged_citations": [],
         }

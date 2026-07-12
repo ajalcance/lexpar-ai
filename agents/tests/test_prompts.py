@@ -47,8 +47,18 @@ STATIC_GOLDENS = {
         "a whole, including a brief acknowledgment of the objections already ruled during the "
         "session. If you cite a rule, name only a section heading that appears in RELEVANT "
         "PROCEDURAL RULES; otherwise rule without naming a specific citation.\n"
+        "4. Grade the attorney's performance 0-100 (`performance_score`), judged on: command of "
+        "the record (arguing from the established facts and pleading, not invention), "
+        "responsiveness to rulings (adjusting after a sustained objection rather than repeating "
+        "the fault), argument structure (a coherent, advancing line of argument rather than "
+        "repetition), and procedural discipline (drawing few sustained objections). Grade like a "
+        "judge, not a cheerleader: 85+ only for a genuinely strong showing; a session that merely "
+        "avoided sustained objections is not automatically excellent. Also list 1-3 "
+        "`performance_notes` — specific, constructive weaknesses you observed in the transcript "
+        "(empty array only if the performance was genuinely without fault).\n"
         'Respond ONLY with JSON: {"rulings": ["sustained"|"overruled", ...], "established_facts": '
-        '["<fact>", ...], "closing_ruling": "<what you say aloud>"}. The rulings array must have '
+        '["<fact>", ...], "closing_ruling": "<what you say aloud>", "performance_score": <0-100>, '
+        '"performance_notes": ["<specific weakness>", ...]}. The rulings array must have '
         "exactly one entry per [pending] objection, in the same order (empty array if none are "
         "pending)."
     ),

@@ -220,3 +220,22 @@ def test_render_transcript_short_sessions_unchanged_no_marker():
     state = SessionState()
     state.add_turn("attorney", "brief")
     assert judge_mod._render_transcript(state) == "ATTORNEY: brief"
+
+
+def test_parse_assessment_clamps_and_defaults_performance_fields():
+    good = (
+        '{"rulings": [], "established_facts": [], "closing_ruling": "c", '
+        '"performance_score": 172, "performance_notes": ["  n1 ", ""]}'
+    )
+    parsed = judge_mod._parse_assessment(good)
+    assert parsed["performance_score"] == 100  # clamped
+    assert parsed["performance_notes"] == ["n1"]
+    missing = judge_mod._parse_assessment('{"rulings": [], "closing_ruling": "c"}')
+    assert missing["performance_score"] is None  # fail-safe: heuristic takes over
+    assert missing["performance_notes"] == []
+    garbage = judge_mod._parse_assessment(
+        '{"rulings": [], "closing_ruling": "c", '
+        '"performance_score": "great", "performance_notes": "n"}'
+    )
+    assert garbage["performance_score"] is None
+    assert garbage["performance_notes"] == []

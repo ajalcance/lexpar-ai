@@ -619,7 +619,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                 logger.exception("judge closing ruling could not be spoken")
             finally:
                 judge_idle.set()
-        payload = scorecard_builder.build_session_end_payload(state, ruling)
+        payload = scorecard_builder.build_session_end_payload(
+            state,
+            ruling,
+            performance_score=assessment.get("performance_score"),
+            performance_notes=assessment.get("performance_notes"),
+        )
         turn_count = len(state.transcript)
         try:
             await asyncio.to_thread(backend_client.complete_session, session_id)

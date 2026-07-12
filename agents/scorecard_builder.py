@@ -85,12 +85,31 @@ def build_transcript(state: SessionState) -> list[dict]:
     ]
 
 
-def build_session_end_payload(state: SessionState, judge_ruling: str) -> dict:
-    """The full POST /scorecard body: derived scorecard + the transcript batch."""
+def build_session_end_payload(
+    state: SessionState,
+    judge_ruling: str,
+    performance_score: int | None = None,
+    performance_notes: list[str] | None = None,
+) -> dict:
+    """The full POST /scorecard body: derived scorecard + the transcript batch.
+
+    `performance_score`/`performance_notes` come from the judge's end-of-session rubric
+    (assess_session item 4 — command of the record, responsiveness to rulings, argument
+    structure, procedural discipline). When present, the judge's grade IS the score and the notes
+    join the weaknesses — otherwise (model failure, older worker) the original deterministic
+    heuristic stands unchanged, so the scorecard can never come back empty or fabricated. This
+    fixes the hollow "always 100 / no weaknesses" scorecard: sustained objections are rarer now
+    that the bench rules on the merits, so they alone no longer measure the performance."""
+    score = performance_score if performance_score is not None else _overall_score(state)
+    weaknesses = _weaknesses(state)
+    if performance_notes:
+        observed = "\n".join(f"- {note}" for note in performance_notes)
+        no_sustained = not state.sustained_objections()
+        weaknesses = observed if no_sustained else f"{weaknesses}\n{observed}"
     return {
-        "overall_score": _overall_score(state),
+        "overall_score": score,
         "strengths": _strengths(state),
-        "weaknesses": _weaknesses(state),
+        "weaknesses": weaknesses,
         "judge_ruling": judge_ruling,
         "transcript": build_transcript(state),
     }
