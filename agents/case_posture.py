@@ -5,8 +5,10 @@ Purpose: Derive "the matter before the court" once at session start — a neutra
     summary + raw facts + proceeding type). This is the shared frame both Opposing Counsel and the
     Judge reason against (SessionState.matter → snapshot()), so OC opposes the attorney's position
     on a stable, case-grounded matter instead of inventing a side on a thin opening, and the judge
-    rules the real matter. Runs on the FAST model (same latency philosophy as the classifier). Pure
-    builder + parse; only derive_matter makes an API call.
+    rules the real matter. Runs on the JUDGE (reasoning) config — this frame silently steers every
+    OC stance and ruling all session, so its quality outranks the one-time ~2-5s at room join (a
+    fast-model mis-frame produced a bogus relevance sustain against the case's core issue, live).
+    Pure builder + parse; only derive_matter makes an API call.
 Depends on: agents/prompts.py, agents/llm_router.py, agents/session_state.py
 Related: agents/main.py (calls derive_matter at room join, flag-gated), agents/session_state.py
 Security notes: Feeds case facts/summary (attorney work product) to the model; never logged, sent
@@ -19,7 +21,7 @@ import json
 import logging
 
 import prompts
-from llm_router import build_endpoint, chat, objection_config
+from llm_router import build_endpoint, chat, judge_config
 from session_state import SessionState
 
 logger = logging.getLogger("lexpar.agents.posture")
@@ -67,7 +69,7 @@ def derive_matter(state: SessionState) -> str:
     if not (state.case_summary.strip() or state.case_facts.strip()):
         return ""  # nothing to frame a matter from
     try:
-        endpoint = build_endpoint(objection_config())
+        endpoint = build_endpoint(judge_config())
         content = chat(
             endpoint,
             build_matter_messages(state),

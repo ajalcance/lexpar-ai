@@ -132,6 +132,21 @@ export function insertByTime(lines: Transcript[], line: Transcript): Transcript[
   return [...lines.slice(0, i), line, ...lines.slice(i)];
 }
 
+/** Parse a "matter" event — the neutral framing of what this session decides, derived by the agent
+ *  at room join. Shown above the transcript so the attorney can SEE the frame the court is ruling
+ *  against (a mis-framed matter silently skews OC stances and rulings — visible = correctable). */
+export function parseMatterData(text: string): string | null {
+  try {
+    const data = JSON.parse(text);
+    if (data?.type !== 'matter' || typeof data.matter !== 'string' || !data.matter) {
+      return null;
+    }
+    return data.matter;
+  } catch {
+    return null;
+  }
+}
+
 /** Parse a "judge_speaking" boundary event → true/false, or null if it isn't one. The judge shares
  *  the Opposing-Counsel agent participant, so this is how the UI knows to label audio as the Judge. */
 export function parseJudgeSpeaking(text: string): boolean | null {

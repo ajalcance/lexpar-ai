@@ -628,13 +628,24 @@ When an objection fires and Opposing Counsel's line is spoken, the Judge immedia
   every turn, so on a thin opening (a recited case number, a pleasantry) it **invented a dispositive
   side** ("the petition should be dismissed") — possibly the wrong one, since nothing said which side
   the attorney was on. Fix: once at room join, `case_posture.derive_matter` frames the matter from
-  the pleading summary + case facts + proceeding type (one FAST-model call, best-effort, fail-safe to
-  empty) into `SessionState.matter`, surfaced at the top of `snapshot()` so **both** OC and the judge
-  share one case-grounded frame. OC is now told to oppose *the attorney's* position on that matter —
+  the pleading summary + case facts + proceeding type (one call on the JUDGE/reasoning config — the
+  frame steers every stance and ruling all session, so its quality outranks the one-time join
+  latency; best-effort, fail-safe to empty) into `SessionState.matter`, surfaced at the top of
+  `snapshot()` so **both** OC and the judge share one case-grounded frame. The matter is also
+  **published to the frontend** (`{"type":"matter"}` → a "Matter before the court" banner above the
+  live transcript): a mis-framed matter silently skews every OC stance and ruling (live, a
+  mis-frame produced a bogus relevance sustain against the case's core issue), so the frame must be
+  visible, not guessed at. OC is now told to oppose *the attorney's* position on that matter —
   correct by construction, defined relative to what the attorney actually argues — and, when the
   attorney has not yet staked a position, to **press for the basis** rather than invent one; the
   judge rules and assesses against the matter and the relief sought, and won't presume a matter that
   was never argued. `DERIVE_MATTER=false` restores per-turn reasoning from the summary + exchange.
+- **The bench owns the floor — outright.** The `judge_idle` gate keeps OC from *starting* a reply
+  over a ruling, but audio already buffered keeps playing — a stress test (attorney talking over
+  everyone) showed a late inline ruling overlapping OC's in-flight reply for seconds. Both the
+  inline ruling and the closing ruling now `session.interrupt(force=True)` immediately before the
+  judge speaks (after the canned objection line clears), like a real courtroom: when the bench
+  speaks, everyone stops. Best-effort (nothing to interrupt → no-op).
 - **Dropped-turn recovery (flag-gated `RECOVER_DROPPED_TURNS`, default on — `turn_recovery.py`):**
   the SDK DISCARDS a user turn that completes while non-interruptible agent speech is playing
   (`skipping reply to user input…`, returned before `on_user_turn_completed` — verified in the

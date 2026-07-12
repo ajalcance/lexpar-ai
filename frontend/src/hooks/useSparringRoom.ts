@@ -29,6 +29,7 @@ import {
   objectionEventToLine,
   parseJudgeSpeaking,
   parseObjectionData,
+  parseMatterData,
   parseOcThinking,
   parseRulingData,
   parseTranscriptData,
@@ -89,6 +90,10 @@ export function useSparringRoom(sessionId: string) {
   // OC is composing a (non-interruptible) reply — drives the "responding, please hold" cue that
   // bridges the silent generation gap so the attorney doesn't talk into it.
   const [ocThinking, setOcThinking] = useState(false);
+  // The matter before the court — the agent's neutral framing of what this session decides,
+  // published once at room join. Shown above the transcript so a mis-framed matter (which would
+  // silently skew OC stances and rulings) is visible and correctable. '' = none published.
+  const [matter, setMatter] = useState('');
   // The live written transcript — every committed line ordered by WHEN IT WAS SPOKEN
   // (insertByTime), matching the saved report: attorney statements (timestamped at speech START,
   // so an objection renders below the statement it interrupted), OC counter-arguments, objections
@@ -106,6 +111,7 @@ export function useSparringRoom(sessionId: string) {
     setTranscript([]); // clear any prior session's transcript lines
     setJudgeSpeaking(false);
     setOcThinking(false);
+    setMatter('');
     setActiveTrack(null);
     setAudioLevels({ you: 0, opposing_counsel: 0, judge: 0 });
     if (!sessionId) {
@@ -247,6 +253,12 @@ export function useSparringRoom(sessionId: string) {
           const thinking = parseOcThinking(text);
           if (thinking !== null) {
             setOcThinking(thinking);
+            return;
+          }
+          // The matter before the court (published once at room join) → banner above the transcript.
+          const framedMatter = parseMatterData(text);
+          if (framedMatter !== null) {
+            setMatter(framedMatter);
             return;
           }
           // Live written transcript: a committed speech turn (attorney / OC / judge order).
@@ -433,6 +445,7 @@ export function useSparringRoom(sessionId: string) {
     audioLevels,
     judgeSpeaking,
     ocThinking,
+    matter,
     isMuted,
     micBlocked,
     audioBlocked,

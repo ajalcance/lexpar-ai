@@ -10,6 +10,7 @@ import {
   insertByTime,
   objectionEventToLine,
   parseJudgeSpeaking,
+  parseMatterData,
   parseObjectionData,
   parseOcThinking,
   parseRulingData,
@@ -84,6 +85,21 @@ describe('rulingEventToLine', () => {
   it('omits the reason when empty', () => {
     const line = rulingEventToLine({ ruling: 'sustained', reason: '', timestamp: 1710 }, 's');
     expect(line.content).toBe('Sustained.');
+  });
+});
+
+describe('parseMatterData', () => {
+  it('parses a matter event', () => {
+    expect(
+      parseMatterData('{"type": "matter", "matter": "Whether the third-party mortgage is void."}'),
+    ).toBe('Whether the third-party mortgage is void.');
+  });
+
+  it('returns null for other events / empty / malformed', () => {
+    expect(parseMatterData('{"type": "transcript", "speaker": "judge", "content": "x"}')).toBeNull();
+    expect(parseMatterData('{"type": "matter", "matter": ""}')).toBeNull();
+    expect(parseMatterData('{"type": "matter"}')).toBeNull();
+    expect(parseMatterData('not json')).toBeNull();
   });
 });
 

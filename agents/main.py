@@ -371,6 +371,23 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             state.matter = await asyncio.to_thread(case_posture.derive_matter, state)
         except Exception:
             logger.warning("matter derivation failed for %s; proceeding without it", session_id)
+        if state.matter:
+            # Publish the frame so the attorney SEES what the court believes it is deciding —
+            # a mis-framed matter silently skews every OC stance and ruling (it did, live: a
+            # "corporate stock dispute" frame produced a bogus relevance sustain against the
+            # case's core issue). Visible = correctable; the room UI renders it above the
+            # transcript. Best-effort — the session proceeds unpublished on failure.
+            try:
+                event = {
+                    "type": "matter",
+                    "matter": state.matter,
+                    "timestamp": int(time.time() * 1000),
+                }
+                await ctx.room.local_participant.publish_data(
+                    json.dumps(event).encode("utf-8"), reliable=True, topic="transcript"
+                )
+            except Exception:
+                logger.warning("could not publish the matter for %s", session_id)
     classifier = ObjectionClassifier(state)
     # Safety net for turns the SDK drops during non-interruptible speech (turn_recovery.py):
     # every STT final lands in this buffer; the next committed turn reconciles it. None = off.
@@ -654,6 +671,14 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         state.add_turn("judge", spoken)
         try:
             await wait_for_clear()  # never speak over the canned objection line
+            # The bench owns the floor: when the judge speaks, everyone stops. The per-sentence
+            # gate keeps OC from STARTING over a ruling, but audio already buffered keeps
+            # playing — live (stress test), a late ruling overlapped OC's in-flight reply for
+            # seconds. Cut session speech outright before the ruling, like a real courtroom.
+            try:
+                await session.interrupt(force=True)
+            except Exception:
+                pass  # nothing to interrupt / already stopping — never block the ruling
             await _judge_say(spoken)
         except Exception:
             logger.exception("inline ruling could not be spoken (ledger already updated)")
@@ -766,6 +791,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             # Hold the speaking floor for the closing ruling too, so a still-streaming OC reply
             # can't overlap the bench's final word. Released in the finally.
             judge_idle.clear()
+            # Bench owns the floor (same as inline rulings): stop any buffered OC audio outright
+            # before the closing ruling — the gate alone can't stop audio already in flight.
+            try:
+                await session.interrupt(force=True)
+            except Exception:
+                pass
             try:
                 # Track B: the v3 participant speaks the tagged text; a degraded fallback speaks the
                 # clean text (never literal tags on flash). When the flag is off, spoken == clean.

@@ -3010,6 +3010,25 @@ pre-submission if time allows — finalize scope before starting.)
       3. stt_keyterms: recurring lowercase case vocabulary (≥2 occurrences, function words excluded)
          fills remaining cap slots after capitalized entities — "ultra vires" (heard "ultra bar"),
          "mortgage", "foreclosure" now boosted. Agents 249 + ruff clean.
+- [x] Stress-test failures (08:33 session): overlap, wrong sustains, OC decorum, matter visibility.
+      1. Judge+OC overlap: judge_idle stops OC STARTING, not audio already buffered — both inline
+         and closing rulings now session.interrupt(force=True) before the bench speaks (real-court:
+         when the judge talks, everyone stops).
+      2. Wrong sustains (case-number "assumes facts"; relevance against the case's core issue):
+         (a) housekeeping carve-outs — classifier never fires on case identification; the judge
+         overrules objections to it (prompts + byte-goldens together); (b) the mis-framed MATTER was
+         the deeper cause → derive_matter moved to the JUDGE/reasoning config, and the matter is now
+         PUBLISHED to the frontend ({"type":"matter"} → "Matter before the court" banner) so a bad
+         frame is visible/correctable, not silently steering rulings.
+      3. OC decorum (persona, not goldened): address the BENCH, no sarcasm/coaching ("Your gratitude
+         is noted…"), no manufactured counter-argument to pleasantries/housekeeping, never repeat
+         the "no claim advanced" point.
+      4. Voice: OC → Asher via env (ELEVENLABS_VOICE_ID=UaYTS0wayjmO9KD1LR4R) + expressive
+         OC_VOICE_* tuning. eleven_v3 for OC's LIVE replies is NOT viable (no realtime/websocket
+         support — the ws streaming path is what killed the dead-air bug); judge closing ruling can
+         use v3 today via JUDGE_EXPRESSIVE_FINAL_RULING=true.
+      Env recommendations recorded below. Agents 249 + ruff; frontend 77 + tsc/lint/build.
+      WATCH: decide=6.1s classifier latency (provider variance); "no verified sentences" silences.
 - [ ] (Tier-2 backlog) Add a `sessionCount` (and maybe `bestScore`) field to the Case payload to
       remove the Dashboard per-card `getCaseSessions` N+1 (the CaseCard rehearsal summary).
 

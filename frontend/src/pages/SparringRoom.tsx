@@ -56,6 +56,7 @@ export function SparringRoom() {
     micBlocked,
     audioBlocked,
     ocThinking,
+    matter,
     toggleMute,
     enableAudio,
     endSession,
@@ -209,6 +210,17 @@ export function SparringRoom() {
 
             {mode === 'live' && (
               <>
+                {/* The matter before the court — the frame the agents argue and rule against,
+                    published by the agent at room join. Visible so a mis-framed matter (which
+                    silently skews OC's stance and every ruling) is caught, not guessed at. */}
+                {matter && (
+                  <div className="rounded-md border border-amber-500/30 bg-muted/40 px-4 py-2">
+                    <p className="text-xs font-medium text-muted-foreground">
+                      Matter before the court
+                    </p>
+                    <p className="text-sm">{matter}</p>
+                  </div>
+                )}
                 {transcript.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
                     You're connected — argue aloud. Your statements, opposing counsel's
