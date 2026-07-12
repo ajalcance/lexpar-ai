@@ -167,6 +167,13 @@ STT_KEYTERMS = _getbool("STT_KEYTERMS", True)
 # actually spoken. Set <= 0 to leave the SDK default untouched.
 INTERRUPT_CANCEL_TIMEOUT_S = float(os.getenv("INTERRUPT_CANCEL_TIMEOUT_S", "1.5"))
 
+# Minimum seconds between objection fires (the classifier's re-fire time floor). The code default
+# (5s, DEFAULT_REFIRE_COOLDOWN — kept for offline harnesses/tests) let an objection land on nearly
+# EVERY substantive attorney turn live: each one cancels OC's forming counter-argument and skips
+# its reply, so OC only ever objected and never argued. 20s gives the courtroom a real rhythm —
+# object, ruling, then an arguing window. Tune by ear; lower for a more combative opponent.
+OBJECTION_REFIRE_COOLDOWN_S = float(os.getenv("OBJECTION_REFIRE_COOLDOWN_S", "20.0"))
+
 
 def _getfloat(name: str, default: float) -> float:
     """Parse a float env var; default when unset/invalid (a bad value must not kill the worker)."""

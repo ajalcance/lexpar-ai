@@ -318,9 +318,16 @@ class OpposingCounselAgent(Agent):
                 # to be mostly cancellations mislabeled as verifier rejections).
                 logger.warning("no verified sentences this turn — staying silent (fail closed)")
             else:
-                # Closed early (objection barge-in / bench interrupt / VAD) before the first
-                # sentence was voiced — expected under contention, not a verifier problem.
-                logger.info("OC reply cancelled before any sentence was voiced")
+                # Closed early before the first sentence was voiced — expected under contention.
+                # The hints name the canceller: objected=True → this turn's objection barge-in;
+                # judge_speaking=True → the bench-owns-the-floor interrupt; both False → the
+                # unexplained class (instrumented after live cancels with no matching dispatch).
+                logger.info(
+                    "OC reply cancelled before any sentence was voiced "
+                    "[objected=%s judge_speaking=%s]",
+                    self._turn_flags.get("objected", False),
+                    self._judge_idle is not None and not self._judge_idle.is_set(),
+                )
             if self._floor is not None:
                 # Floor dynamics: a reply that ended naturally resets the contest; one whose
                 # generator was closed early (VAD / session.interrupt()) is a cut-off CANDIDATE,
@@ -425,7 +432,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                 )
             except Exception:
                 logger.warning("could not publish the matter for %s", session_id)
-    classifier = ObjectionClassifier(state)
+    # refire_cooldown from env (default 20s): at the code default (5s) an objection fired on
+    # nearly every substantive turn, so OC only ever objected — never argued (config.py).
+    classifier = ObjectionClassifier(
+        state, refire_cooldown=config.OBJECTION_REFIRE_COOLDOWN_S
+    )
     # Safety net for turns the SDK drops during non-interruptible speech (turn_recovery.py):
     # every STT final lands in this buffer; the next committed turn reconciles it. None = off.
     recovery = turn_recovery.TurnRecovery() if config.RECOVER_DROPPED_TURNS else None

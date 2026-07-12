@@ -203,8 +203,15 @@ def stream_verified_reply(
         if failure is None:
             return  # stream finished clean
         if repairs_left <= 0:
+            # Class only, never content: "contradiction" = the verifier genuinely rejected the
+            # claim; "verifier-error" = the verifier call itself failed/unparseable (budget or
+            # endpoint trouble) — the fail-closed silences need this distinction to be debuggable.
+            failure_class = (
+                "contradiction" if failure.startswith("contradicts") else "verifier-error"
+            )
             logger.info(
-                "verification failure with no repairs left — truncating at %d sentences",
+                "verification failure (%s) with no repairs left — truncating at %d sentences",
+                failure_class,
                 len(spoken),
             )
             return

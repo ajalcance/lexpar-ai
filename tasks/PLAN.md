@@ -3099,6 +3099,17 @@ pre-submission if time allows — finalize scope before starting.)
       never your habit." WATCH: a few "cancelled before any sentence" lines without a matching
       objection dispatch remain unexplained — instrument the cancel path if they persist after
       this fix.
+- [x] 13:49 session: PASS calibration verified (2 caption PASSes, down from 9) but OC replies still
+      eaten by three mouths: objections on every substantive turn (5s refire cooldown), 3 unexplained
+      cancels, 2 verifier fail-closed silences. Fixes (40a7d18 follow-up):
+      1. OBJECTION_REFIRE_COOLDOWN_S env (default 20s, code default 5s untouched for harnesses) —
+         after an objection+ruling OC gets an arguing window instead of objecting again immediately.
+      2. Cancel log now names the canceller: [objected=… judge_speaking=…] — both False = the
+         unexplained class.
+      3. Verifier truncation log carries the failure CLASS (contradiction vs verifier-error) —
+         content never logged.
+      Greps should now include: "stopped early|verification failure" (streaming_verify's own logs
+      were never in our grep patterns).
 - [ ] (Tier-2 backlog) Add a `sessionCount` (and maybe `bestScore`) field to the Case payload to
       remove the Dashboard per-card `getCaseSessions` N+1 (the CaseCard rehearsal summary).
 - [ ] (Backlog) Show the case profile on CaseDetail; prefill profile fields from pleading
