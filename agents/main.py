@@ -164,6 +164,15 @@ class OpposingCounselAgent(Agent):
             async for sentence in astream_verified_reply(
                 self._state, attorney_turn, generate=_generate
             ):
+                # Re-check the floor PER SENTENCE, not just at reply start. A reply that already
+                # passed the opening gate can be paused by the attorney speaking and later resumed
+                # (the SDK's pause/resume on a sub-threshold interruption); if a ruling started in
+                # between, feeding more text would speak over the judge. Gating each sentence bounds
+                # any overlap to the audio already buffered, and if an objection fired on the
+                # attorney speech that caused the pause, session.interrupt() cancels this generator
+                # outright (the `finally` still records what was actually voiced).
+                if self._judge_idle is not None:
+                    await self._judge_idle.wait()
                 spoken.append(sentence)
                 yield sentence + " "  # trailing space so TTS never jams two sentences together
         finally:

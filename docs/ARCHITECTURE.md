@@ -558,7 +558,11 @@ When an objection fires and Opposing Counsel's line is spoken, the Judge immedia
   objection fires on the *same event-loop tick* the turn completes, `llm_node` also does a brief
   **settle-and-recheck** (`_OC_REPLY_SETTLE_S`) before committing: it yields, then re-tests
   `objected`/the floor, so the objection→`judge_rule` path deterministically wins the race instead
-  of OC beating it and streaming a reply the judge then talks over.
+  of OC beating it and streaming a reply the judge then talks over. The floor is also re-checked
+  **per sentence** inside the reply loop: a reply that passed the opening gate can be paused by the
+  attorney speaking and later resumed (the SDK's sub-threshold pause/resume), and if a ruling
+  started in between, an unchecked resume would speak over the judge — the per-sentence gate bounds
+  any overlap to audio already buffered.
 
 ### End-of-session judge assessment (spoken ruling + scorecard)
 
