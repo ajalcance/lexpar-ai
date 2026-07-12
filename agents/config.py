@@ -131,6 +131,31 @@ ELEVENLABS_STREAMING = _getbool("ELEVENLABS_STREAMING", True)
 FLOOR_DYNAMICS = _getbool("FLOOR_DYNAMICS", False)
 
 
+def _getfloat(name: str, default: float) -> float:
+    """Parse a float env var; default when unset/invalid (a bad value must not kill the worker)."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+# Turn-taking pacing (the fragmentation fix). Deepgram's plugin default endpointing is 25 ms —
+# any mid-sentence breath finalized the turn, so one spoken argument shredded into 3-4 turns and
+# OC replied to each fragment (the live "chattiness"). These are the three knobs, all env-tunable
+# on the droplet without a rebuild (same pattern as INTERRUPTION_MIN_DURATION):
+# - DEEPGRAM_ENDPOINTING_MS: silence (ms) before Deepgram emits a FINAL. Higher = fewer fragments,
+#   but finals also gate the argument-proceeding objection fallback, so too high delays objections.
+# - MIN/MAX_ENDPOINTING_DELAY: how long the session waits before committing end-of-turn (the
+#   semantic turn detector can extend within [min, max]). Raising min lets a brief pause continue
+#   the same turn instead of handing OC the floor.
+DEEPGRAM_ENDPOINTING_MS = int(_getfloat("DEEPGRAM_ENDPOINTING_MS", 300))
+MIN_ENDPOINTING_DELAY = _getfloat("MIN_ENDPOINTING_DELAY", 0.8)
+MAX_ENDPOINTING_DELAY = _getfloat("MAX_ENDPOINTING_DELAY", 6.0)
+
+
 # ElevenLabs voice_settings (expressiveness). These were previously UNSET, so ElevenLabs used each
 # voice's flat dashboard defaults — the main cause of monotone delivery. `style` is the primary
 # expressiveness dial (0 = flat/old behavior; higher = more expressive but adds inference latency);

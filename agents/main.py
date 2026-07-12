@@ -363,10 +363,17 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                 "min_duration": config.INTERRUPTION_MIN_DURATION,
             },
         },
+        # Turn pacing (config.py): a brief pause continues the SAME turn instead of committing it
+        # and handing OC the floor; the semantic turn detector may extend up to the max.
+        min_endpointing_delay=config.MIN_ENDPOINTING_DELAY,
+        max_endpointing_delay=config.MAX_ENDPOINTING_DELAY,
+        # Endpointing raised from the plugin's 25 ms default — a mid-sentence breath was
+        # finalizing the turn, shredding one spoken argument into 3-4 turns (config.py).
         stt=deepgram.STT(
             model=config.DEEPGRAM_MODEL,
             interim_results=True,
             api_key=config.DEEPGRAM_API_KEY,
+            endpointing_ms=config.DEEPGRAM_ENDPOINTING_MS,
         ),
         # The pipeline requires an llm; OpposingCounselAgent.llm_node overrides how it is used, so
         # this base client isn't actually driven today. Resolve its key the SAME way llm_router does
