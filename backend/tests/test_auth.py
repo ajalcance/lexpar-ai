@@ -128,3 +128,21 @@ def test_bootstrap_is_idempotent_across_repeat_logins(client, auth_headers):
     assert again.status_code == 200
     me = client.get("/api/auth/me", headers=auth_headers).json()
     assert me["role"] == "admin"
+
+
+def test_register_gate_blocks_signup_but_not_login(client, monkeypatch):
+    # ALLOW_REGISTRATION=false (public deployment with accounts provisioned): the unauthenticated
+    # register route closes — but existing accounts still log in.
+    from app.config import get_settings
+
+    _register(client)  # provision the account while registration is open
+    monkeypatch.setattr(get_settings(), "allow_registration", False)
+    blocked = client.post(
+        "/api/auth/register", json={"email": "late@example.com", "password": TEST_PASSWORD}
+    )
+    assert blocked.status_code == 403
+    assert "disabled" in blocked.json()["detail"]
+    login = client.post(
+        "/api/auth/login", json={"username": TEST_EMAIL, "password": TEST_PASSWORD}
+    )
+    assert login.status_code == 200

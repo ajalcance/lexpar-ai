@@ -7,9 +7,10 @@ Security notes: /login is the only unauthenticated route here; /me requires a va
     Never log request bodies (they carry credentials).
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session as DbSession
 
+from app.config import get_settings
 from app.db import get_db
 from app.models.user import User
 from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UserOut
@@ -21,6 +22,13 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 @router.post("/register", response_model=TokenResponse, status_code=201)
 def register(payload: RegisterRequest, db: DbSession = Depends(get_db)) -> TokenResponse:
+    # Deployment-gated (ALLOW_REGISTRATION): this route is unauthenticated and every account it
+    # mints can start voice sessions that burn GPU + provider credits — on a public deployment
+    # with its accounts already provisioned, open signup is a cost/abuse hole, so it closes.
+    if not get_settings().allow_registration:
+        raise HTTPException(
+            status_code=403, detail="Registration is disabled on this deployment."
+        )
     # Real self-service signup. Returns a token so the client is logged in immediately; the first
     # registrant on an admin-less deployment auto-bootstraps to admin (§13).
     user = auth_service.register_user(

@@ -85,6 +85,11 @@ class Settings(BaseSettings):
     # session-write routes. Empty = no valid agent token (internal routes reject everything).
     agent_service_token: str = ""
 
+    # Self-service signup gate. Default True for local dev; set ALLOW_REGISTRATION=false on any
+    # PUBLIC deployment once its accounts are provisioned — the register route is unauthenticated,
+    # and every account it mints can burn GPU + provider credits (voice sessions are expensive).
+    allow_registration: bool = True
+
     # CORS — comma-separated list of allowed browser origins (the frontend dev server).
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
