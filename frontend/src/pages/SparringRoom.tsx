@@ -55,6 +55,7 @@ export function SparringRoom() {
     isMuted,
     micBlocked,
     audioBlocked,
+    ocThinking,
     toggleMute,
     enableAudio,
     endSession,
@@ -110,18 +111,25 @@ export function SparringRoom() {
           {isConnected && !ending && (
             <Badge
               variant={
-                judgeSpeaking || activeSpeaker === 'judge' || activeSpeaker === 'opposing_counsel'
+                judgeSpeaking ||
+                activeSpeaker === 'judge' ||
+                activeSpeaker === 'opposing_counsel' ||
+                ocThinking
                   ? 'destructive'
                   : 'secondary'
               }
             >
               {/* activeSpeaker === 'judge' is structural (the judge participant's own audio);
-                  judgeSpeaking is the fallback-path synthetic label. */}
+                  judgeSpeaking is the fallback-path synthetic label. ocThinking bridges the silent
+                  gap while OC composes its (non-interruptible) reply — it yields to the real
+                  "speaking" label once OC's audio starts. */}
               {judgeSpeaking || activeSpeaker === 'judge'
                 ? 'Judge speaking'
                 : activeSpeaker === 'opposing_counsel'
                   ? 'Opposing counsel speaking'
-                  : 'Listening'}
+                  : ocThinking
+                    ? 'Opposing counsel responding — please hold'
+                    : 'Listening'}
             </Badge>
           )}
           {/* Mute is hidden during the finale — the attorney is done arguing while the judge rules. */}

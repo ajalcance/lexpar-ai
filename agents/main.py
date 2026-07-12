@@ -104,8 +104,20 @@ class OpposingCounselAgent(Agent):
         floor=None,
         speak_judge_order=None,
         publish_transcript=None,
+        publish_oc_thinking=None,
     ):
-        super().__init__(instructions="You are opposing counsel in a courtroom rehearsal session.")
+        super().__init__(
+            instructions="You are opposing counsel in a courtroom rehearsal session.",
+            # NON-INTERRUPTIBLE, like the judge and the canned objection. OC's counter-argument was
+            # the ONLY agent speech the attorney's VAD could cut — and cutting it before its
+            # generation-latency-delayed first audio was the sole cause of silent OC lines (the
+            # attorney fills the ~3-5s gap, VAD cancels OC before a frame plays). In a real
+            # courtroom you don't talk over opposing counsel's argument; the bench owns the floor.
+            # Objections still barge in on the ATTORNEY via the explicit session.interrupt() path,
+            # which this does not touch. A "responding" cue (publish_oc_thinking) covers the silent
+            # composition gap so the attorney knows to hold instead of talking into it.
+            allow_interruptions=False,
+        )
         self._state = state
         self._turn_flags = turn_flags  # {"objected": bool} — shared with judge_rule (main.py)
         # {"attorney_started_at": datetime|None} — set on the user_state→speaking signal in
@@ -125,6 +137,9 @@ class OpposingCounselAgent(Agent):
         # Injected async (speaker, content, ts_ms) -> None — emits a committed speech turn on the
         # data channel for the live written transcript. None in offline harnesses/tests.
         self._publish_transcript = publish_transcript
+        # Injected async (bool) -> None — signals "OC is composing a reply" so the UI can tell the
+        # attorney to hold during the silent generation gap (OC is now non-interruptible).
+        self._publish_oc_thinking = publish_oc_thinking
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
         # Record ONE coherent attorney turn per completed utterance. Deepgram emits many `is_final`
@@ -175,6 +190,10 @@ class OpposingCounselAgent(Agent):
         # overlapping a ruling (e.g. a ruling on one STT-final vs. OC's reply to the next).
         if self._judge_idle is not None:
             await self._judge_idle.wait()
+        # OC is now composing (non-interruptible) — tell the UI so the attorney holds through the
+        # silent generation gap instead of talking into it. Cleared in the finally.
+        if self._publish_oc_thinking is not None:
+            await self._publish_oc_thinking(True)
         attorney_turn = _last_user_text(chat_ctx)
         spoken: list[str] = []
         # Floor dynamics (flag-gated): if the attorney cut OC off last turn (corroborated), OC gets
@@ -221,6 +240,9 @@ class OpposingCounselAgent(Agent):
                 yield sentence + " "  # trailing space so TTS never jams two sentences together
             completed = True
         finally:
+            if self._publish_oc_thinking is not None:
+                # composing done — spoken, interrupted, or empty
+                await self._publish_oc_thinking(False)
             # In a `finally` so the reply is recorded EVEN IF it's interrupted mid-stream — VAD /
             # session.interrupt() closes this async generator, and without this a cut-off OC reply
             # would leave NO trace in the transcript (the reason OC looked absent from the record).
@@ -433,6 +455,15 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             )
         except Exception:
             logger.debug("transcript publish failed (non-fatal)")
+
+    async def publish_oc_thinking(thinking: bool) -> None:
+        # "Opposing counsel is composing" boundary for the UI — bridges the silent generation gap
+        # now that OC's reply is non-interruptible, so the attorney holds instead of talking over.
+        try:
+            msg = json.dumps({"type": "oc_thinking", "thinking": thinking}).encode("utf-8")
+            await ctx.room.local_participant.publish_data(msg, reliable=True, topic="objection")
+        except Exception:
+            pass
 
     # The Judge is a REAL second room participant (identity "judge", own connection + audio track,
     # judge_participant.py): speaker attribution is correct by construction — the frontend sees the
@@ -737,7 +768,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     await session.start(
         agent=OpposingCounselAgent(
             state, turn_flags, turn_timing, session_id, judge_idle, floor, speak_judge_order,
-            publish_transcript,
+            publish_transcript, publish_oc_thinking,
         ),
         room=ctx.room
     )

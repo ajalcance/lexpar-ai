@@ -11,6 +11,7 @@ import {
   objectionEventToLine,
   parseJudgeSpeaking,
   parseObjectionData,
+  parseOcThinking,
   parseRulingData,
   parseTranscriptData,
   rulingEventToLine,
@@ -183,5 +184,19 @@ describe('insertByTime', () => {
   it('is stable: equal timestamps keep arrival order', () => {
     const out = insertByTime([line('first', '2026-07-12T00:00:04Z')], line('second', '2026-07-12T00:00:04Z'));
     expect(out.map((l) => l.id)).toEqual(['first', 'second']);
+  });
+});
+
+describe('parseOcThinking', () => {
+  it('parses an oc_thinking boundary', () => {
+    expect(parseOcThinking('{"type": "oc_thinking", "thinking": true}')).toBe(true);
+    expect(parseOcThinking('{"type": "oc_thinking", "thinking": false}')).toBe(false);
+  });
+
+  it('returns null for other events / malformed, and is not confused with judge_speaking', () => {
+    expect(parseOcThinking('{"type": "judge_speaking", "speaking": true}')).toBeNull();
+    expect(parseOcThinking('{"type": "oc_thinking"}')).toBeNull(); // no boolean
+    expect(parseOcThinking('not json')).toBeNull();
+    expect(parseJudgeSpeaking('{"type": "oc_thinking", "thinking": true}')).toBeNull();
   });
 });

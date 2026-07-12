@@ -29,6 +29,7 @@ import {
   objectionEventToLine,
   parseJudgeSpeaking,
   parseObjectionData,
+  parseOcThinking,
   parseRulingData,
   parseTranscriptData,
   rulingEventToLine,
@@ -85,6 +86,9 @@ export function useSparringRoom(sessionId: string) {
   const [micBlocked, setMicBlocked] = useState(false);
   const [audioBlocked, setAudioBlocked] = useState(false);
   const [judgeSpeaking, setJudgeSpeaking] = useState(false);
+  // OC is composing a (non-interruptible) reply — drives the "responding, please hold" cue that
+  // bridges the silent generation gap so the attorney doesn't talk into it.
+  const [ocThinking, setOcThinking] = useState(false);
   // The live written transcript — every committed line ordered by WHEN IT WAS SPOKEN
   // (insertByTime), matching the saved report: attorney statements (timestamped at speech START,
   // so an objection renders below the statement it interrupted), OC counter-arguments, objections
@@ -101,6 +105,7 @@ export function useSparringRoom(sessionId: string) {
   useEffect(() => {
     setTranscript([]); // clear any prior session's transcript lines
     setJudgeSpeaking(false);
+    setOcThinking(false);
     setActiveTrack(null);
     setAudioLevels({ you: 0, opposing_counsel: 0, judge: 0 });
     if (!sessionId) {
@@ -236,6 +241,12 @@ export function useSparringRoom(sessionId: string) {
           const speaking = parseJudgeSpeaking(text);
           if (speaking !== null) {
             setJudgeSpeaking(speaking);
+            return;
+          }
+          // OC composing (non-interruptible) → drive the "responding, please hold" cue.
+          const thinking = parseOcThinking(text);
+          if (thinking !== null) {
+            setOcThinking(thinking);
             return;
           }
           // Live written transcript: a committed speech turn (attorney / OC / judge order).
@@ -421,6 +432,7 @@ export function useSparringRoom(sessionId: string) {
     activeTrack,
     audioLevels,
     judgeSpeaking,
+    ocThinking,
     isMuted,
     micBlocked,
     audioBlocked,

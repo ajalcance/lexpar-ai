@@ -599,3 +599,27 @@ gate the argument-proceeding objection fallback, so endpointing raised too far d
 General rule: when several timing races appear in the same subsystem, ask what is GENERATING the
 tight timing before (or at least while) fixing each race — and audit every latency-relevant plugin
 default against your domain's speech rhythm, not the plugin's demo use case.
+
+### [Agents/Voice] Silent OC lines were a turn-taking model bug, not a TTS bug — the only interruptible speech got cut
+**Wrong:** OC's end-of-turn counter-argument was left INTERRUPTIBLE (the AgentSession default) while
+everything else that speaks was non-interruptible — the canned objection (`allow_interruptions=
+False`) and the judge (its own track). In a full-duplex voice app with a slow reply (72B + per-
+sentence verification + TTS first-byte = ~3–5 s to first audio), the human attorney naturally fills
+that silent gap with speech, whose VAD then cancels OC's reply BEFORE a single audio frame plays →
+silent OC line + a `cut-off candidate` + sometimes a 5 s `speech not done in time` timeout that also
+inflated objection latency. We chased this for several sessions as a TTS problem (streaming
+websocket, `auto_mode`, buffering, warm-up) — all real improvements, but downstream: the mechanism
+was that OC's reply was the ONE thing the attorney could cut, and it was cut nearly every turn (6× in
+2 min). Diagnostic that finally isolated it: line up "what is reliably heard" (objections, judge —
+both non-interruptible) against "what is silent" (OC reply — interruptible); the interruptibility
+column IS the bug.
+**Right:** Make OC's reply non-interruptible too (`Agent(allow_interruptions=False)`), matching the
+courtroom: the attorney has the floor to argue; opposing counsel interrupts only via objections (the
+explicit `session.interrupt()` path, untouched by `allow_interruptions`); when OC gives its argument
+the attorney waits, as one does in court. Bridge the silent generation gap with a `{"oc_thinking"}`
+UI cue so the attorney holds instead of talking into it. General rule: in a real-time voice system,
+"which utterances can be interrupted, by whom" is a first-class design decision, not a default to
+inherit — audit it explicitly, and when several speakers share one audio surface, the reliably-heard
+ones will be exactly the non-interruptible ones. Also: when a class of failure survives several
+targeted fixes, stop fixing the mechanism you assumed and re-derive which property actually
+partitions the working cases from the broken ones.

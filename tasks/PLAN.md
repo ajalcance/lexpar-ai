@@ -2907,3 +2907,16 @@ pre-submission if time allows — finalize scope before starting.)
       sparring room renders the full live exchange (attorney/OC/objections/rulings/judge order),
       arrival-ordered, auto-scrolling (frontend commit below). Still pending: register form,
       resume-session UX polish
+
+
+### Voice turn-taking — OC counter-argument non-interruptible (courtroom floor model) — status: done
+- [x] OpposingCounselAgent(allow_interruptions=False): OC's reply can't be VAD-cut by the attorney
+      (the sole cause of silent OC lines — the only interruptible agent speech). Objections still
+      barge in via the explicit session.interrupt() path.
+- [x] {oc_thinking} data-channel cue + frontend "Opposing counsel responding — please hold" badge
+      to bridge the silent generation gap.
+- [x] agents 225 + frontend 74 tests pass; ruff/tsc/lint/build clean. Docs: ARCH §6.5 + LESSONS.
+
+**Result:** All agent speech is now reliably heard (objections, judge, AND OC replies). Floor
+dynamics is now largely redundant (attorney can't cut OC off) — FLOOR_DYNAMICS can be set false.
+Needs one live validation: OC replies play fully, no talking over OC cuts it, objections still fire.

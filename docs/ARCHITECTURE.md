@@ -516,6 +516,18 @@ When an objection fires and Opposing Counsel's line is spoken, the Judge immedia
   already ruled, so a second full argument would be redundant, re-object *after* the ruling, and
   race it through the TTS queue. The full reply still runs on turns with no objection (normal
   cross-examination). Tracked by a per-turn `objected` flag set on fire, checked/reset in `llm_node`.
+- **OC's counter-argument is NON-INTERRUPTIBLE (the courtroom floor model).** `OpposingCounselAgent`
+  is constructed `allow_interruptions=False`, so once OC begins its end-of-turn reply the attorney's
+  VAD can't cut it — exactly like the canned objection and the judge. This was the **single root
+  cause of silent OC lines**: OC's reply is the only agent speech VAD could cut, its first audio is
+  delayed by generation latency (72B + per-sentence verification + TTS first-byte), and the attorney
+  naturally filled that ~3–5 s gap with speech that cancelled OC before a frame played (6 cut-offs
+  in one 2-min session). The model now mirrors a real courtroom: the attorney has the floor to
+  argue; OC interrupts only via **objections** (the explicit `session.interrupt()` path, unchanged);
+  when OC gives its counter-argument the attorney waits. A `{"type":"oc_thinking"}` boundary
+  published around generation drives an "Opposing counsel responding — please hold" cue that bridges
+  the silent composition gap (the moment the attorney used to talk into). This makes floor dynamics
+  (§ below) largely dormant — the attorney can no longer cut OC off — so `FLOOR_DYNAMICS` can be off.
 - **One objection channel, not two (the word "objection" ⇒ a ruling).** Objections come ONLY from
   the structured barge-in (the classifier fires → ledger → the judge rules). OC's end-of-turn spoken
   reply is **counter-argument only** and must never lodge a formal objection or say "objection" /

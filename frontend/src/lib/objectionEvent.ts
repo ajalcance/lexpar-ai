@@ -146,6 +146,21 @@ export function parseJudgeSpeaking(text: string): boolean | null {
   }
 }
 
+/** Parse an "oc_thinking" boundary → true/false, or null. OC's reply is non-interruptible, so this
+ *  tells the UI to show "Opposing counsel is responding…" during the silent composition gap and
+ *  cue the attorney to hold. */
+export function parseOcThinking(text: string): boolean | null {
+  try {
+    const data = JSON.parse(text);
+    if (data?.type !== 'oc_thinking' || typeof data.thinking !== 'boolean') {
+      return null;
+    }
+    return data.thinking;
+  } catch {
+    return null;
+  }
+}
+
 /** Map an inline ruling onto a Transcript so TranscriptLine renders it as a judge line. */
 export function rulingEventToLine(event: RulingEvent, sessionId: string): Transcript {
   const label = event.ruling.charAt(0).toUpperCase() + event.ruling.slice(1);
