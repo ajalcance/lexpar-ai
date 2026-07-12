@@ -2871,3 +2871,37 @@ the interrupted point; repeated cut-offs draw the judge's "Counsel, you will all
 to be heard." Echo/VAD blips can't trigger it (corroboration + veto). Enable with
 FLOOR_DYNAMICS=true in .env.prod; needs one live validation session (talk over OC once → floor
 request; twice → judge order; normal exchange → no new behavior).
+
+### Enterprise audit Tier 1 — pre-submission fixes — status: done
+- [x] Disconnect identity-check + 15s grace (`main.py`): judge-participant blips no longer end the
+      session; attorney refresh can rejoin ("Resume session" stays alive). Commit 24dc005.
+- [x] Conversation memory (`SessionState.recent_exchange`, 10 turns / 2000 chars): OC reply +
+      continuation and the judge's quick ruling now see the live exchange (with a do-not-repeat
+      instruction); fixes OC repeating itself and the judge ruling out of context. Commit 03e9aa3.
+- [x] Registration gate (`ALLOW_REGISTRATION`, default true; prod example false): closes the open
+      unauthenticated signup on public deployments. Backend 92 tests pass. Commit 7df6f34.
+
+**Result:** All three audit Tier-1 items closed; agents 217 tests + backend 92 tests pass. Droplet
+needs: rebuild agents + backend, add ALLOW_REGISTRATION=false to .env.prod.
+
+### Enterprise audit Tier 2 — pre-commercialization backlog — status: pending
+(From the 2026-07-12 audit. Fix before commercial launch; several are candidates to do
+pre-submission if time allows — finalize scope before starting.)
+- [ ] Established-facts ledger never grows mid-session (only at finalization) — incremental fact
+      extraction so verification/rulings see a live record
+- [ ] Unbounded assessment prompt: `_render_transcript` renders every turn — cap/summarize for
+      long sessions
+- [ ] Turn fragmentation: STT endpointing splits one spoken argument into 3-4 turns (root cause of
+      OC chattiness) — tune Deepgram endpointing / turn-detector settings
+- [ ] RAG hardening: per-session retrieval caching (latency + Fireworks cost), multi-pleading
+      case_summary (last-writer-wins today), retrieval relevance telemetry
+- [ ] Abuse/ops: rate limiting (none anywhere), per-user quotas, per-session cost metering
+- [ ] Data protection: encryption at rest (Postgres/MinIO hold work product), retention/deletion
+      policy, Postgres volume backups (none today), audit logging
+- [ ] Observability: metrics + alerting (logs-only today), session-health dashboard
+- [ ] Scorecard depth: score driven only by sustained objections (most sessions now score 100) —
+      richer rubric (argument structure, responsiveness to rulings, use of the record)
+- [ ] Proceeding-type extensibility: PROCEEDING_ELIGIBLE_GROUNDS duplicated backend/agents — shared
+      schema before adding types
+- [ ] Frontend: register form (API-only today), live transcript view (placeholder text in sparring
+      room), resume-session UX polish

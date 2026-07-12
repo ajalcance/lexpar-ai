@@ -546,3 +546,38 @@ always has priority (it's the court); OC simply waits its turn. General rule: th
 speaker its own audio track to escape a shared queue, you've also opted out of that queue's implicit
 serialization — you must add an explicit floor/mutex back, or independent tracks will overlap exactly
 when timing gets tight.
+
+### [Agents/LLM] Stateless prompt rebuilds = amnesiac agents — conversation memory must be explicit
+**Wrong:** Every OC reply and inline judge ruling rebuilt its messages fresh from
+`SessionState.snapshot()` — which deliberately carries only the DURABLE record (case facts,
+established facts, objection ledger), not the conversation. So OC never saw its own prior replies:
+a live pass showed it opening five consecutive turns with "The record does not support that…",
+unable to reference anything it had said, escalate a line of attack, or notice it was repeating
+itself. The inline judge likewise ruled on a bare fragment with no view of the exchange that led to
+the objection. The trap: the persona prompt LISTED "the live transcript" as an available input — a
+prompt can promise context all it wants; if the message builder never assembles it, the model never
+sees it. Audit what the builder actually sends, not what the persona claims.
+**Right:** `SessionState.recent_exchange(max_turns=10, max_chars=2000)` — the last turns,
+speaker-labelled, oldest first, char-capped (oldest dropped first) — appended to OC's reply +
+continuation contexts and the judge's quick-ruling context, WITH an explicit "do not repeat points
+you have already made" instruction (memory without the instruction still repeats). `snapshot()`
+stays untouched (verifier + prompt goldens stable); an empty transcript adds no block, so offline
+harnesses are byte-identical. General rule: in a rebuild-from-state prompt architecture, every kind
+of context an agent needs — durable record AND conversational flow — must be an explicit block
+someone assembles; nothing is remembered for free.
+
+### [Agents/LiveKit] Room-event backstops must check WHICH participant fired them
+**Wrong:** The `participant_disconnected` backstop (finalize the session so the scorecard lands if
+the attorney closes the tab) fired on ANY participant leaving. Two failure modes: (1) the judge
+participant is the worker's OWN second connection (§6.5) — a transient network blip on it
+force-completed a live session mid-argument; (2) an attorney browser REFRESH disconnected and
+reconnected in seconds, but the session had already been finalized — status left `in_progress`, so
+the frontend's "Resume session" button pointed at a completed session. The deceptive part: the
+backstop works perfectly in the happy-path test (close the tab, scorecard lands), so nothing looks
+wrong until a blip happens mid-demo.
+**Right:** Identity-check the event (`participant.identity == JUDGE_IDENTITY` → ignore) and give
+the attorney a grace window (15 s) — after it, finalize only if no attorney is back in the room.
+Finalization was already idempotent, so the grace task is safe alongside the other backstops.
+General rule: a room/connection event handler that takes irreversible action must always ask WHO
+triggered it and WHETHER the condition still holds when the action runs — events describe a moment,
+not a state.

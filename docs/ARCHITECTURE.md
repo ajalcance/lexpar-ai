@@ -242,7 +242,7 @@ the one thing still absent:
 
 | Method | Path | Description | Auth |
 |---|---|---|---|
-| POST | `/api/auth/register` | Self-service signup — bcrypt hash, first registrant → admin (§12/§13) | no |
+| POST | `/api/auth/register` | Self-service signup — bcrypt hash, first registrant → admin (§12/§13). **Gated by `ALLOW_REGISTRATION`** (default true; set false on public deployments once accounts exist → 403, login unaffected) | no |
 | POST | `/api/auth/login` | Verifies password against the bcrypt hash, issues JWT | no |
 | GET | `/api/auth/me` | Returns current user from token (incl. `role`) | yes |
 | POST | `/api/cases` | Create a case (optional `court_id`, §13) | yes |
@@ -577,6 +577,18 @@ When an objection fires and Opposing Counsel's line is spoken, the Judge immedia
   objection **supersedes** the courtesy dance (object → rule → continue). All decisions log
   distinct lines (`cut-off candidate` / `floor request` / `judge order intervention`) for live
   auditing; `FLOOR_DYNAMICS=false` restores byte-identical behavior.
+- **Conversation memory (`SessionState.recent_exchange`):** `snapshot()` deliberately holds only
+  the durable record (facts + ledger), so per-turn prompts were rebuilt **amnesiac** — OC could
+  not see its own prior replies (it repeated the same sentence across five turns live) and the
+  inline judge ruled on a fragment with no view of the exchange. `recent_exchange(max_turns=10,
+  max_chars=2000)` renders the last turns speaker-labelled, oldest first, char-capped; it rides in
+  OC's reply + continuation contexts (with an explicit do-not-repeat instruction) and the judge's
+  quick-ruling context. Empty transcript → no block, so offline harnesses are byte-identical.
+- **Disconnect handling (identity-checked + grace):** `participant_disconnected` finalizes the
+  session ONLY for the attorney, and only after a 15 s grace window in which a browser refresh /
+  transient drop can rejoin ("Resume session" stays alive). The judge participant's own
+  disconnects are ignored — it is the worker's second connection (§6.5), and a blip on it must
+  never end a live session. Finalization stays idempotent.
 
 ### End-of-session judge assessment (spoken ruling + scorecard)
 
