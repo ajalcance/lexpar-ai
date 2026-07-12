@@ -25,6 +25,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RuleDocumentRow } from '@/components/RuleDocumentRow';
 import * as api from '@/lib/api';
+import { DESTRUCTIVE_ACTIONS_ENABLED } from '@/lib/flags';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth';
 
@@ -301,7 +302,7 @@ export function Admin() {
         </CardContent>
       </Card>
 
-      {selectedCourt && (
+      {selectedCourt && DESTRUCTIVE_ACTIONS_ENABLED && (
         <CourtDangerZone
           courtId={selectedCourt.id}
           courtName={selectedCourt.name}

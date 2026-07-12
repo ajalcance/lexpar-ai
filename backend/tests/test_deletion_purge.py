@@ -405,3 +405,19 @@ def test_case_purge_cascades_everything(client, auth_headers, db_session, monkey
         select(CaseChunk).where(CaseChunk.case_id == case_id)
     ).all()
     assert deleted_keys == ["cases/x/p.pdf"]
+
+
+def test_destructive_actions_disabled_returns_403(client, auth_headers, db_session, monkeypatch):
+    # Competition safeguard: with DESTRUCTIVE_ACTIONS_ENABLED=false, archive + purge are refused
+    # site-wide (a shared-credential visitor can't delete/hide the demo data).
+    from app.config import get_settings
+
+    case = client.post(
+        "/api/cases", headers=auth_headers, json={"title": "Demo case", "case_facts": "F"}
+    ).json()
+    monkeypatch.setattr(get_settings(), "destructive_actions_enabled", False)
+
+    assert client.delete(f"/api/cases/{case['id']}", headers=auth_headers).status_code == 403
+    assert client.post(f"/api/cases/{case['id']}/purge", headers=auth_headers).status_code == 403
+    # The case is untouched — still readable.
+    assert client.get(f"/api/cases/{case['id']}", headers=auth_headers).status_code == 200

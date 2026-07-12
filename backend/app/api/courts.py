@@ -30,7 +30,11 @@ from app.config import get_settings
 from app.db import SessionLocal, get_db
 from app.models.user import User
 from app.schemas.court import CourtCreate, CourtOut, CourtRuleDocumentOut, PurgeImpactOut
-from app.security import get_current_user, require_admin
+from app.security import (
+    get_current_user,
+    require_admin,
+    require_destructive_actions_enabled,
+)
 from app.services import court_knowledge_service, court_service, storage_service
 
 router = APIRouter(prefix="/api/courts", tags=["courts"])
@@ -213,6 +217,7 @@ def archive_rule_document(
     document_id: uuid.UUID,
     _admin: User = Depends(require_admin),
     db: DbSession = Depends(get_db),
+    _guard: None = Depends(require_destructive_actions_enabled),
 ) -> CourtRuleDocumentOut:
     """SOFT tier: exclude from retrieval, keep everything (reversible; provenance resolvable)."""
     document = _require_document(db, court_id, document_id)
@@ -256,6 +261,7 @@ def purge_rule_document(
     document_id: uuid.UUID,
     _admin: User = Depends(require_admin),
     db: DbSession = Depends(get_db),
+    _guard: None = Depends(require_destructive_actions_enabled),
 ) -> None:
     """HARD tier: chunks + row + stored file, gone. Provenance rows survive as tombstones (their
     chunk-id strings stop resolving — the audit display degrades to counts, never errors)."""
@@ -268,6 +274,7 @@ def archive_court(
     court_id: uuid.UUID,
     _admin: User = Depends(require_admin),
     db: DbSession = Depends(get_db),
+    _guard: None = Depends(require_destructive_actions_enabled),
 ) -> CourtOut:
     """Retire a forum (soft): cascades soft-archive to its rule documents; referencing cases keep
     their court_id and simply run without rules grounding (fail-open)."""
@@ -281,6 +288,7 @@ def purge_court(
     court_id: uuid.UUID,
     _admin: User = Depends(require_admin),
     db: DbSession = Depends(get_db),
+    _guard: None = Depends(require_destructive_actions_enabled),
 ) -> None:
     """HARD tier for a whole forum — 409 while ANY case references it (purge/reassign first).
     Fetches ARCHIVED-INCLUSIVE (plain db.get, not get_court, which filters archived rows) — an

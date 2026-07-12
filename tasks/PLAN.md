@@ -3116,6 +3116,16 @@ pre-submission if time allows — finalize scope before starting.)
       segments + alternating overrule/sustain cues + a real-Philippine-jurisprudence disclaimer
       (G.R. 218738, publicly available). Lets a non-lawyer judge just log in and read. README judges
       section points at it. Frontend 80 tests + tsc/lint/build clean. Stacks on mobile.
+- [x] Disable destructive actions on the public demo (competition safeguard). The shared admin
+      login is effectively public via the submission, so a visitor could archive/purge the demo
+      case/court and break it for judges. New `DESTRUCTIVE_ACTIONS_ENABLED` flag (default TRUE):
+      backend `security.require_destructive_actions_enabled` → 403 on all six archive/purge routes
+      (case, court, rule-doc × archive+purge) — the REAL control; frontend hides the Danger Zones
+      (`lib/flags.ts`, CaseDetail/Admin/RuleDocumentRow). One `.env.prod` var drives both (compose
+      passes it as the VITE_ build arg). Backend 103, frontend 81, all green.
+- [ ] **REMINDER — after the AMD hackathon judging closes:** re-enable destructive actions. Remove
+      `DESTRUCTIVE_ACTIONS_ENABLED=false` from `.env.prod` (or set true) and rebuild+recreate
+      backend + frontend. Then the normal archive/purge/danger-zone flow is restored for real use.
 - [ ] (Tier-2 backlog) Add a `sessionCount` (and maybe `bestScore`) field to the Case payload to
       remove the Dashboard per-card `getCaseSessions` N+1 (the CaseCard rehearsal summary).
 - [ ] (Backlog) Show the case profile on CaseDetail; prefill profile fields from pleading

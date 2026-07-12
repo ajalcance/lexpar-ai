@@ -26,6 +26,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import * as api from '@/lib/api';
+import { DESTRUCTIVE_ACTIONS_ENABLED } from '@/lib/flags';
 import {
   PROCEEDING_TYPE_LABELS,
   type ProceedingType,
@@ -191,6 +192,7 @@ export function CaseDetail() {
         </CardContent>
       </Card>
 
+      {DESTRUCTIVE_ACTIONS_ENABLED && (
       <Card className="border-destructive/40">
         <CardHeader>
           <CardTitle className="text-lg text-destructive">Danger zone</CardTitle>
@@ -269,6 +271,7 @@ export function CaseDetail() {
           {dangerError && <p className="text-sm text-destructive">{dangerError}</p>}
         </CardContent>
       </Card>
+      )}
     </div>
   );
 }

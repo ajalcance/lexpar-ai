@@ -136,6 +136,10 @@ services:
       args:
         # Baked into the bundle at build time; same-origin as the app (Caddy proxies /api/*).
         VITE_API_BASE_URL: https://${PUBLIC_DOMAIN:?set PUBLIC_DOMAIN in .env.prod}
+        # Feature flags (default enabled). The public demo sets DESTRUCTIVE_ACTIONS_ENABLED=false
+        # in .env.prod to hide the archive/purge UI (the backend enforces the same flag).
+        VITE_DESTRUCTIVE_ACTIONS_ENABLED: ${DESTRUCTIVE_ACTIONS_ENABLED:-true}
+        VITE_SHOW_DEMO_SCRIPT: ${VITE_SHOW_DEMO_SCRIPT:-true}
     restart: unless-stopped
 
   # The only public HTTP/S entrypoint. Auto-TLS via Let's Encrypt on the sslip.io domains.

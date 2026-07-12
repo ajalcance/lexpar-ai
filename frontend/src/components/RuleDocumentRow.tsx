@@ -16,6 +16,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import * as api from '@/lib/api';
+import { DESTRUCTIVE_ACTIONS_ENABLED } from '@/lib/flags';
 import type { CourtRuleDocument } from '@/lib/types';
 
 const STATUS_VARIANT = {
@@ -115,9 +116,11 @@ export function RuleDocumentRow({ courtId, doc }: Props) {
             >
               {replace.isPending ? 'Replacing…' : 'Replace…'}
             </Button>
-            <Button variant="outline" size="sm" disabled={busy} onClick={() => archive.mutate()}>
-              Archive
-            </Button>
+            {DESTRUCTIVE_ACTIONS_ENABLED && (
+              <Button variant="outline" size="sm" disabled={busy} onClick={() => archive.mutate()}>
+                Archive
+              </Button>
+            )}
           </>
         )}
         {doc.archived && !doc.superseded && (
@@ -125,7 +128,7 @@ export function RuleDocumentRow({ courtId, doc }: Props) {
             Restore
           </Button>
         )}
-        {!confirmingPurge ? (
+        {DESTRUCTIVE_ACTIONS_ENABLED && !confirmingPurge ? (
           <Button
             variant="ghost"
             size="sm"

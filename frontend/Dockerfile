@@ -19,6 +19,12 @@ COPY . .
 
 ARG VITE_API_BASE_URL
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+# Build-time feature flags (Vite inlines these). Both default to enabled; the public demo sets
+# VITE_DESTRUCTIVE_ACTIONS_ENABLED=false to hide the archive/purge UI (backend also enforces).
+ARG VITE_DESTRUCTIVE_ACTIONS_ENABLED
+ENV VITE_DESTRUCTIVE_ACTIONS_ENABLED=${VITE_DESTRUCTIVE_ACTIONS_ENABLED}
+ARG VITE_SHOW_DEMO_SCRIPT
+ENV VITE_SHOW_DEMO_SCRIPT=${VITE_SHOW_DEMO_SCRIPT}
 
 RUN npm run build
 

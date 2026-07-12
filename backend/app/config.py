@@ -90,6 +90,12 @@ class Settings(BaseSettings):
     # and every account it mints can burn GPU + provider credits (voice sessions are expensive).
     allow_registration: bool = True
 
+    # Destructive-action gate (archive + purge of cases, courts, rule documents). Default True for
+    # local dev; set DESTRUCTIVE_ACTIONS_ENABLED=false on a PUBLIC/shared-credential deployment (the
+    # hackathon demo) so a visitor holding the shared admin login can't delete or hide the demo data
+    # out from under the judges. Enforced server-side (security.require_destructive_actions).
+    destructive_actions_enabled: bool = True
+
     # CORS — comma-separated list of allowed browser origins (the frontend dev server).
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 

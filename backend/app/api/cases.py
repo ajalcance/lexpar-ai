@@ -25,7 +25,11 @@ from app.db import SessionLocal, get_db
 from app.models.user import User
 from app.schemas.case import CaseCreate, CaseDocumentOut, CaseOut
 from app.schemas.session import SessionOut
-from app.security import get_current_user, require_admin
+from app.security import (
+    get_current_user,
+    require_admin,
+    require_destructive_actions_enabled,
+)
 from app.services import (
     case_knowledge_service,
     case_service,
@@ -209,6 +213,7 @@ def archive_case(
     case_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: DbSession = Depends(get_db),
+    _guard: None = Depends(require_destructive_actions_enabled),
 ) -> None:
     """SOFT tier (owner action, the default): the case disappears from lists/detail; sessions,
     scorecards, documents, and provenance stay intact. Reversible at the DB level."""
@@ -221,6 +226,7 @@ def purge_case(
     case_id: uuid.UUID,
     _admin: User = Depends(require_admin),
     db: DbSession = Depends(get_db),
+    _guard: None = Depends(require_destructive_actions_enabled),
 ) -> None:
     """HARD tier (ADMIN-only): genuinely delete the case and everything under it (sessions,
     transcripts, scorecards, provenance, documents, chunks, stored files). For test/mistake

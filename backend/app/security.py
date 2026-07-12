@@ -83,3 +83,15 @@ def require_admin(current_user: User = Depends(get_current_user)) -> User:
             detail="Administrator role required.",
         )
     return current_user
+
+
+def require_destructive_actions_enabled() -> None:
+    """Gate archive/purge routes: 403 when DESTRUCTIVE_ACTIONS_ENABLED=false (a
+    public/shared-credential deployment, e.g. the hackathon demo) so nobody can delete or hide the
+    demo data. Reads settings at call time so it's togglable per deployment and in tests. Default
+    enabled — local dev and tests are unaffected."""
+    if not get_settings().destructive_actions_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Archiving and purging are temporarily disabled on this deployment.",
+        )
