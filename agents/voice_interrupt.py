@@ -99,7 +99,12 @@ async def handle_interim(
         classifier.state.add_turn(
             "opposing_counsel", objection_transcript(decision), was_interruption=True
         )
-        await session.interrupt()
+        # force=True: an objection forcibly takes the floor, like in a real courtroom. OC's own
+        # counter-argument is now NON-interruptible (allow_interruptions=False), and a plain
+        # session.interrupt() RAISES on a non-interruptible speech ("does not allow interruptions",
+        # per the SDK) — which crashed the whole barge-in before the canned line, the ruling, or
+        # the dispatch log if OC happened to be mid-reply. force bypasses that check.
+        await session.interrupt(force=True)
         # Start the ruling NOW (concurrently) so quick_ruling generation OVERLAPS the canned line's
         # playback instead of running after it — otherwise the "Sustained" landed ~2-3s late (canned
         # playback + generation), after the attorney had resumed. The judge speaks on its own

@@ -38,10 +38,15 @@ class FakeSession:
 
     def __init__(self):
         self.interrupts = 0
+        self.forced_interrupts = 0
         self.said: list[str] = []
 
-    async def interrupt(self):
+    async def interrupt(self, *, force=False):
+        # Matches the real AgentSession.interrupt signature — the objection barge-in must pass
+        # force=True so it can cut OC's now-non-interruptible reply (a plain interrupt RAISES).
         self.interrupts += 1
+        if force:
+            self.forced_interrupts += 1
 
     async def say(self, text, allow_interruptions=True):
         self.said.append(text)
@@ -87,6 +92,7 @@ def test_handle_interim_barges_in_and_publishes_on_fire():
     )
     assert decision.fire is True
     assert session.interrupts == 1
+    assert session.forced_interrupts == 1  # objections force-interrupt (cut a non-interruptible OC)
     assert session.said == ["Objection — leading."]
     assert publisher.published == [decision]  # event published at the barge-in moment
     # The fire is recorded in the ledger (pending, for the judge to rule on) and shows in the

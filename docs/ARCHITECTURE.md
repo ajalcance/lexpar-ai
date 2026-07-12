@@ -523,7 +523,9 @@ When an objection fires and Opposing Counsel's line is spoken, the Judge immedia
   delayed by generation latency (72B + per-sentence verification + TTS first-byte), and the attorney
   naturally filled that ~3–5 s gap with speech that cancelled OC before a frame played (6 cut-offs
   in one 2-min session). The model now mirrors a real courtroom: the attorney has the floor to
-  argue; OC interrupts only via **objections** (the explicit `session.interrupt()` path, unchanged);
+  argue; OC interrupts only via **objections** (the explicit `session.interrupt(force=True)` path —
+  `force` is REQUIRED: a plain interrupt RAISES on non-interruptible speech per the SDK, so the
+  objection must forcibly take the floor to cut a mid-reply OC, see LESSONS);
   when OC gives its counter-argument the attorney waits. A `{"type":"oc_thinking"}` boundary
   published around generation drives an "Opposing counsel responding — please hold" cue that bridges
   the silent composition gap (the moment the attorney used to talk into). This makes floor dynamics

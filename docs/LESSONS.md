@@ -623,3 +623,22 @@ inherit — audit it explicitly, and when several speakers share one audio surfa
 ones will be exactly the non-interruptible ones. Also: when a class of failure survives several
 targeted fixes, stop fixing the mechanism you assumed and re-derive which property actually
 partitions the working cases from the broken ones.
+
+### [Agents/Voice] Making one speech non-interruptible silently breaks the EXPLICIT interrupt of it
+**Wrong:** Set OC's reply `allow_interruptions=False` (the courtroom floor fix) and assumed the
+objection barge-in's `await session.interrupt()` would still cut it — reasoning that an explicit,
+programmatic interrupt is different from a VAD interrupt. It is not, in this SDK: `SpeechHandle.
+interrupt(force=False)` **raises `RuntimeError("does not allow interruptions")`** on a
+non-interruptible speech. So the instant OC was mid-reply and an objection fired, `handle_interim`
+threw at the interrupt call — BEFORE the canned "Objection!", before `judge_rule`, before the
+`objection dispatch` log. Symptom on the box: objections silently vanished (still *recorded*, so the
+end-of-session assessment ruled them as text), the judge "stopped ruling," and the logs showed no
+`objection dispatch` at all — a regression in the exact subsystem that had been working, caused by a
+change two commits away in a different file. The failing grep didn't include `error`, so the raised
+RuntimeError (an unhandled task exception) was invisible.
+**Right:** The objection is the one thing that forcibly takes the floor — `session.interrupt(
+force=True)`, which bypasses the allow_interruptions check. General rule: the moment you make ANY
+speaker non-interruptible, audit every explicit `interrupt()` that could target it — the SDK RAISES
+rather than no-ops, so a caller that used to succeed now crashes its whole handler. And keep test
+doubles' signatures in lockstep with the real API (the FakeSession.interrupt had to grow `force`),
+or the unit tests pass while the real call path throws.
