@@ -318,6 +318,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         voice_id=config.ELEVENLABS_VOICE_ID,
         voice_settings=elevenlabs.VoiceSettings(**config.OC_VOICE_SETTINGS),
         api_key=config.ELEVENLABS_API_KEY,
+        # First-audio latency on the streaming websocket: generate per flushed sentence instead of
+        # buffering ~120 chars — without this OC's first words were seconds of dead air, the
+        # attorney talked over the silence, and every interrupt stalled 5s on soundless speech
+        # ("speech not done in time"). See config.ELEVENLABS_AUTO_MODE.
+        auto_mode=config.ELEVENLABS_AUTO_MODE,
     )
 
     # The Judge speaks with a DISTINCT voice (like a real courtroom — tellable apart by ear). One

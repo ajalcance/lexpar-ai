@@ -124,6 +124,15 @@ def _getbool(name: str, default: bool) -> bool:
 # to the HTTP path — a one-line rollback if the websocket ever misbehaves. See docs/LESSONS.md.
 ELEVENLABS_STREAMING = _getbool("ELEVENLABS_STREAMING", True)
 
+# auto_mode on the streaming websocket: generate audio IMMEDIATELY per flushed segment instead of
+# buffering ~120+ chars (the plugin's chunk_length_schedule) before the first byte. Our pipeline
+# feeds the socket one COMPLETE verified sentence at a time — exactly the feed pattern ElevenLabs
+# recommends auto_mode for. Without it, a short first sentence sat buffered for seconds of dead
+# air: the attorney talked over the silence, and the interrupt then waited the full 5s
+# speech-timeout on audio that never started ("speech not done in time" ×6 in one live session,
+# text-without-voice OC lines, and ~5s of hidden stall inside every objection's interrupt+say).
+ELEVENLABS_AUTO_MODE = _getbool("ELEVENLABS_AUTO_MODE", True)
+
 # Natural floor-contest dynamics (floor_dynamics.py): when the attorney talks over OC, OC asks for
 # the floor and completes its point; on repeated cut-offs the judge intervenes ("order"). Default
 # OFF — the live path is byte-identical until FLOOR_DYNAMICS=true is set explicitly, and one env
