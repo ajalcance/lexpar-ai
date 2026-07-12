@@ -43,6 +43,7 @@ from livekit.plugins import deepgram, elevenlabs, openai, silero
 
 import backend_client
 import config
+import floor_dynamics
 import judge
 import llm_router
 import opposing_counsel
@@ -95,6 +96,8 @@ class OpposingCounselAgent(Agent):
         turn_timing: dict,
         session_id: str = "",
         judge_idle=None,
+        floor=None,
+        speak_judge_order=None,
     ):
         super().__init__(instructions="You are opposing counsel in a courtroom rehearsal session.")
         self._state = state
@@ -109,6 +112,10 @@ class OpposingCounselAgent(Agent):
         # SET when the judge is idle; llm_node awaits it before speaking so OC never starts a reply
         # while the bench is ruling. The judge always has the floor (it's the court).
         self._judge_idle = judge_idle
+        # Floor dynamics (flag-gated, floor_dynamics.py): FloorTracker instance or None, plus the
+        # injected judge-order speaker (async () -> None, holds the judge floor internally).
+        self._floor = floor
+        self._speak_judge_order = speak_judge_order
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
         # Record ONE coherent attorney turn per completed utterance. Deepgram emits many `is_final`
@@ -126,6 +133,11 @@ class OpposingCounselAgent(Agent):
         self._turn_timing["attorney_started_at"] = None
         if text:
             self._state.add_turn("attorney", text, spoken_at=started)
+            if self._floor is not None:
+                # Floor dynamics: the speech that cut OC off became a REAL committed turn — this
+                # is the corroboration that promotes a cut-off candidate to a retry (an echo/VAD
+                # blip never reaches here, so it can never trigger the courtesy dance).
+                self._floor.attorney_turn_committed()
 
     async def llm_node(self, chat_ctx, tools, model_settings):
         # Courtroom flow: if an objection already fired on this turn, Opposing Counsel already spoke
@@ -151,6 +163,23 @@ class OpposingCounselAgent(Agent):
             await self._judge_idle.wait()
         attorney_turn = _last_user_text(chat_ctx)
         spoken: list[str] = []
+        # Floor dynamics (flag-gated): if the attorney cut OC off last turn (corroborated), OC gets
+        # ONE retry — it asks for the floor and completes the interrupted point. On a streak of
+        # cut-offs the JUDGE intervenes instead ("order"), so OC needn't ask — the bench just gave
+        # it the floor. The cutoff note carries the interrupted point into the prompt (OC's
+        # messages are rebuilt fresh each turn, so without it the retry would be amnesiac).
+        cutoff_note = ""
+        retry = self._floor.take_retry() if self._floor is not None else None
+        if retry is not None:
+            partial, original_turn = retry
+            cutoff_note = floor_dynamics.cutoff_note(partial, original_turn)
+            if self._floor.should_judge_intervene() and self._speak_judge_order is not None:
+                logger.info("floor dynamics: judge order intervention")
+                await self._speak_judge_order()
+            else:
+                logger.info("floor dynamics: OC floor request")
+                spoken.append(floor_dynamics.OC_FLOOR_REQUEST)
+                yield floor_dynamics.OC_FLOOR_REQUEST + " "
         # Ground the reply in the pleading: retrieve the passages relevant to this turn (§12) via
         # the session-bound generator. Blocking generate/verify runs in a worker thread inside the
         # bridge; the event loop stays responsive. On a mid-stream verification failure the pipeline
@@ -158,8 +187,9 @@ class OpposingCounselAgent(Agent):
         session_id = self._session_id
 
         def _generate(state, turn):
-            return opposing_counsel.stream_reply(state, turn, session_id)
+            return opposing_counsel.stream_reply(state, turn, session_id, cutoff_note)
 
+        completed = False
         try:
             async for sentence in astream_verified_reply(
                 self._state, attorney_turn, generate=_generate
@@ -175,6 +205,7 @@ class OpposingCounselAgent(Agent):
                     await self._judge_idle.wait()
                 spoken.append(sentence)
                 yield sentence + " "  # trailing space so TTS never jams two sentences together
+            completed = True
         finally:
             # In a `finally` so the reply is recorded EVEN IF it's interrupted mid-stream — VAD /
             # session.interrupt() closes this async generator, and without this a cut-off OC reply
@@ -197,6 +228,16 @@ class OpposingCounselAgent(Agent):
                     )
             else:
                 logger.warning("no verified sentences this turn — staying silent (fail closed)")
+            if self._floor is not None:
+                # Floor dynamics: a reply that ended naturally resets the contest; one whose
+                # generator was closed early (VAD / session.interrupt()) is a cut-off CANDIDATE,
+                # carrying the partial already voiced + the turn it answered (the retry's memory).
+                # Promotion waits for the interrupting speech to become a real attorney turn.
+                if completed:
+                    self._floor.reply_completed()
+                else:
+                    logger.info("floor dynamics: cut-off candidate recorded")
+                    self._floor.reply_cut_off(" ".join(spoken), attorney_turn)
 
 
 async def entrypoint(ctx: agents.JobContext) -> None:
@@ -246,6 +287,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     # judge clears it while ruling; OC's llm_node awaits it, so the two never talk over each other.
     judge_idle = asyncio.Event()
     judge_idle.set()
+    # Floor dynamics (flag-gated): the cut-off → floor-request → judge-order state machine.
+    floor = floor_dynamics.FloorTracker() if config.FLOOR_DYNAMICS else None
 
     # ElevenLabs' multi-stream-input websocket (the plugin's `.stream()` path) yields no audio on a
     # FREE-tier account (socket opens then closes 1006) — the historical reason we wrapped the TTS
@@ -394,6 +437,19 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     async def _judge_say(text: str) -> None:
         await judge_voice.say(text)
 
+    async def speak_judge_order() -> None:
+        # Floor dynamics: the bench polices repeated cut-offs. Recorded as a judge turn (so the
+        # saved transcript reads like the room sounded) but it never touches the objection ledger,
+        # so rulings/scorecard are unaffected. Holds the judge floor like every other bench line.
+        judge_idle.clear()
+        try:
+            state.add_turn("judge", floor_dynamics.JUDGE_ORDER_LINE)
+            await _judge_say(floor_dynamics.JUDGE_ORDER_LINE)
+        except Exception:
+            logger.exception("judge order line could not be spoken")
+        finally:
+            judge_idle.set()
+
     async def judge_rule(objection, fragment: str, wait_for_clear) -> None:
         # Inline ruling (§6.5): fast-model call → apply to the ledger IMMEDIATELY → judge speaks
         # "Sustained/Overruled — <reason>" right after OC's objection line. Generation runs
@@ -405,6 +461,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         # hold() while this runs (voice_interrupt), so no new objection can fire over the judge;
         # the timeout below bounds how long that hold can last if the model call hangs.
         turn_flags["objected"] = True  # skip the redundant end-of-turn OC reply (Issue 1)
+        if floor is not None:
+            floor.objection_fired()  # objection supersedes the floor-request courtesy dance
         # Take the speaking floor from the moment the objection fires until the ruling is fully
         # spoken, so OC can't reply to a subsequent STT-final while the bench is still ruling. Held
         # across generation + speech; the finally ALWAYS releases it (timeout, error, or success).
@@ -493,6 +551,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             "INTERRUPTION_MIN_DURATION",
             ev.resumed,
         )
+        if floor is not None:
+            floor.false_interruption()  # the SDK says it was noise — veto the cut-off candidate
 
     @session.on("user_state_changed")
     def _track_attorney_turn_start(ev) -> None:
@@ -599,7 +659,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     ctx.add_shutdown_callback(_on_shutdown)
 
     await session.start(
-        agent=OpposingCounselAgent(state, turn_flags, turn_timing, session_id, judge_idle),
+        agent=OpposingCounselAgent(
+            state, turn_flags, turn_timing, session_id, judge_idle, floor, speak_judge_order
+        ),
         room=ctx.room
     )
 

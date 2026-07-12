@@ -563,6 +563,20 @@ When an objection fires and Opposing Counsel's line is spoken, the Judge immedia
   attorney speaking and later resumed (the SDK's sub-threshold pause/resume), and if a ruling
   started in between, an unchecked resume would speak over the judge — the per-sentence gate bounds
   any overlap to audio already buffered.
+- **Floor dynamics (flag-gated `FLOOR_DYNAMICS`, default off — `floor_dynamics.py`):** natural
+  floor-contest behavior instead of silent turn-taking. When the attorney talks over OC's reply,
+  the cut-off is recorded as a **candidate** (with the partial already voiced + the turn it
+  answered — OC's prompt is rebuilt fresh each turn, so this IS the retry's memory) and promoted
+  only when the interrupting speech becomes a **committed attorney turn**; the SDK's
+  `agent_false_interruption` vetoes it, so an echo can never trigger the dance. On the next turn OC
+  asks for the floor ("Your honor, may I be heard?" — canned, unverified, no factual claims) and
+  *completes the interrupted point* via a `cutoff_note` in its prompt; **one retry per point**. At
+  2 corroborated cut-offs the **judge intervenes instead** ("Counsel, you will allow opposing
+  counsel to be heard." — spoken holding the judge floor, recorded as a judge turn, never touching
+  the objection ledger so rulings/scorecard are unaffected), with a 3-minute cooldown. A structured
+  objection **supersedes** the courtesy dance (object → rule → continue). All decisions log
+  distinct lines (`cut-off candidate` / `floor request` / `judge order intervention`) for live
+  auditing; `FLOOR_DYNAMICS=false` restores byte-identical behavior.
 
 ### End-of-session judge assessment (spoken ruling + scorecard)
 

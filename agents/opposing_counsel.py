@@ -35,18 +35,27 @@ _OC_REPLY_MAX_TOKENS = 140
 
 
 def build_messages(
-    state: SessionState, attorney_turn: str, excerpts: str = "", rules: str = ""
+    state: SessionState,
+    attorney_turn: str,
+    excerpts: str = "",
+    rules: str = "",
+    cutoff_note: str = "",
 ) -> list[dict[str, str]]:
     """Assemble the chat messages (persona + session record + optional retrieved pleading excerpts
     + optional retrieved procedural rules + the attorney's latest turn). `excerpts` (§12) and
     `rules` (§13) stay two clearly-separated blocks — case-specific fact vs generally-applicable
-    rule must be distinguishable to the model."""
+    rule must be distinguishable to the model. `cutoff_note` (floor dynamics) carries the memory of
+    an interrupted reply into the retry — empty leaves the messages byte-identical to before."""
     context = f"SESSION RECORD (what is on the record so far):\n{state.snapshot()}"
     if excerpts:
         context += f"\n\n{excerpts}"
     if rules:
         context += f"\n\n{rules}"
-    user = f'The attorney just argued:\n"{attorney_turn}"\n\n{prompts.render("oc_reply_style")}'
+    note = f"{cutoff_note}\n\n" if cutoff_note else ""
+    user = (
+        f'The attorney just argued:\n"{attorney_turn}"\n\n'
+        f'{note}{prompts.render("oc_reply_style")}'
+    )
     return [
         {"role": "system", "content": prompts.render("opposing_counsel")},
         {"role": "system", "content": context},
@@ -88,7 +97,7 @@ def generate_reply(state: SessionState, attorney_turn: str) -> str:
 
 
 def stream_reply(
-    state: SessionState, attorney_turn: str, session_id: str = ""
+    state: SessionState, attorney_turn: str, session_id: str = "", cutoff_note: str = ""
 ) -> Iterator[str]:
     """Stream Opposing Counsel's next reply as text deltas. Makes a live API call. If `session_id`
     is given, retrieves BOTH the pleading passages (§12) and the forum's procedural-rule passages
@@ -108,7 +117,7 @@ def stream_reply(
     spoken: list[str] = []
     for delta in chat_stream(
         endpoint,
-        build_messages(state, attorney_turn, excerpts, rules),
+        build_messages(state, attorney_turn, excerpts, rules, cutoff_note),
         temperature=0.7,
         max_tokens=_OC_REPLY_MAX_TOKENS,
     ):

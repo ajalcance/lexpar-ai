@@ -124,6 +124,12 @@ def _getbool(name: str, default: bool) -> bool:
 # to the HTTP path — a one-line rollback if the websocket ever misbehaves. See docs/LESSONS.md.
 ELEVENLABS_STREAMING = _getbool("ELEVENLABS_STREAMING", True)
 
+# Natural floor-contest dynamics (floor_dynamics.py): when the attorney talks over OC, OC asks for
+# the floor and completes its point; on repeated cut-offs the judge intervenes ("order"). Default
+# OFF — the live path is byte-identical until FLOOR_DYNAMICS=true is set explicitly, and one env
+# line turns it back off (same rollback pattern as ELEVENLABS_STREAMING).
+FLOOR_DYNAMICS = _getbool("FLOOR_DYNAMICS", False)
+
 
 # ElevenLabs voice_settings (expressiveness). These were previously UNSET, so ElevenLabs used each
 # voice's flat dashboard defaults — the main cause of monotone delivery. `style` is the primary

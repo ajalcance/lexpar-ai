@@ -2854,3 +2854,20 @@ bring-up (user-driven via copy-paste SSH commands).
 thing still unproven), build the demo Court + Case, and claim the first admin account (fresh cloud
 DB has zero users → first registrant bootstraps to admin; the compromised chat-era password never
 existed on this DB).
+
+### Floor dynamics — natural courtroom floor contest (flag-gated) — status: done
+- [x] `floor_dynamics.py`: FloorTracker (candidate → corroborate → promote; veto on false
+      interruption; one retry per point; judge-order streak=2 + 180s cooldown; objection supersedes)
+      + canned lines + cutoff_note (the retry's memory — OC prompts are rebuilt fresh each turn)
+- [x] `main.py` wiring: cut-off detection in llm_node's finally (completed flag), retry/judge-order
+      at reply start, corroboration in on_user_turn_completed, veto in agent_false_interruption,
+      supersede in judge_rule, speak_judge_order (holds judge_idle, transcript-recorded, ledger-inert)
+- [x] `opposing_counsel.py`: cutoff_note param (byte-identical when empty)
+- [x] `config.FLOOR_DYNAMICS` default OFF; .env.prod.example documents enabling
+- [x] 10 unit tests (tests/test_floor_dynamics.py); 211 pass; ruff clean; ARCH §6.5 documented
+
+**Result:** When the attorney talks over OC, OC asks "Your honor, may I be heard?" and completes
+the interrupted point; repeated cut-offs draw the judge's "Counsel, you will allow opposing counsel
+to be heard." Echo/VAD blips can't trigger it (corroboration + veto). Enable with
+FLOOR_DYNAMICS=true in .env.prod; needs one live validation session (talk over OC once → floor
+request; twice → judge order; normal exchange → no new behavior).
