@@ -117,7 +117,7 @@ export function CaseUpload() {
               id="title"
               value={title}
               onChange={(event) => setTitle(event.target.value)}
-              placeholder="Rivera v. Coastal Logistics"
+              placeholder={'Name your case — e.g. "Smith v. Jones"'}
               required
             />
           </div>
@@ -127,7 +127,7 @@ export function CaseUpload() {
               id="caseNumber"
               value={caseNumber}
               onChange={(event) => setCaseNumber(event.target.value)}
-              placeholder="G.R. No. 218738 / Civil Case No. 2001-11-164"
+              placeholder="Docket or case number, if you have one"
             />
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -137,7 +137,7 @@ export function CaseUpload() {
                 id="petitioner"
                 value={petitioner}
                 onChange={(event) => setPetitioner(event.target.value)}
-                placeholder="Metropolitan Bank & Trust Company"
+                placeholder="The party bringing the case"
                 required
               />
             </div>
@@ -147,7 +147,7 @@ export function CaseUpload() {
                 id="respondent"
                 value={respondent}
                 onChange={(event) => setRespondent(event.target.value)}
-                placeholder="Salazar Realty Corporation"
+                placeholder="The party defending against it"
                 required
               />
             </div>
@@ -179,7 +179,7 @@ export function CaseUpload() {
               id="reliefSought"
               value={reliefSought}
               onChange={(event) => setReliefSought(event.target.value)}
-              placeholder="Nullification of the mortgage and foreclosure; quieting of title."
+              placeholder="What you're asking the court to grant"
               rows={2}
               required
             />
@@ -190,7 +190,7 @@ export function CaseUpload() {
               id="caseFacts"
               value={caseFacts}
               onChange={(event) => setCaseFacts(event.target.value)}
-              placeholder="Anything not in the pleading — posture, stipulations, points of emphasis…"
+              placeholder="Optional — anything useful that isn't in the pleading"
               rows={4}
             />
           </div>
