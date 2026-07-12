@@ -118,6 +118,20 @@ export function transcriptEventToLine(event: TranscriptEvent, sessionId: string)
   };
 }
 
+/** Insert a line into a spokenAt-ordered list (stable: equal timestamps go AFTER existing lines).
+ *  The live view orders by WHEN things were said, not when packets arrived — attorney turns are
+ *  timestamped at speech START but published at turn END, so arrival order showed an objection
+ *  above the statement it interrupted and a cancelled OC reply above the attorney's own words.
+ *  Ordering by spokenAt makes the live view read exactly like the saved report. */
+export function insertByTime(lines: Transcript[], line: Transcript): Transcript[] {
+  const at = Date.parse(line.spokenAt);
+  let i = lines.length;
+  while (i > 0 && Date.parse(lines[i - 1].spokenAt) > at) {
+    i -= 1;
+  }
+  return [...lines.slice(0, i), line, ...lines.slice(i)];
+}
+
 /** Parse a "judge_speaking" boundary event → true/false, or null if it isn't one. The judge shares
  *  the Opposing-Counsel agent participant, so this is how the UI knows to label audio as the Judge. */
 export function parseJudgeSpeaking(text: string): boolean | null {

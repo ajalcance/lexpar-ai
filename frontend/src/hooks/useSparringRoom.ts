@@ -25,6 +25,7 @@ import type { VisualizedTrack } from '@/hooks/useAudioVisualization';
 import * as api from '@/lib/api';
 import { connectToRoom, disconnectFromRoom } from '@/lib/livekit';
 import {
+  insertByTime,
   objectionEventToLine,
   parseJudgeSpeaking,
   parseObjectionData,
@@ -84,9 +85,10 @@ export function useSparringRoom(sessionId: string) {
   const [micBlocked, setMicBlocked] = useState(false);
   const [audioBlocked, setAudioBlocked] = useState(false);
   const [judgeSpeaking, setJudgeSpeaking] = useState(false);
-  // The live written transcript — every committed line in ARRIVAL order (stable, no re-sorting so
-  // lines never jump): attorney statements, OC counter-arguments, objections (red), inline
-  // rulings, and the judge's order line. Objection/ruling events carry their own styling.
+  // The live written transcript — every committed line ordered by WHEN IT WAS SPOKEN
+  // (insertByTime), matching the saved report: attorney statements (timestamped at speech START,
+  // so an objection renders below the statement it interrupted), OC counter-arguments, objections
+  // (red), inline rulings, the judge's order line, and the closing ruling.
   const [transcript, setTranscript] = useState<Transcript[]>([]);
   const roomRef = useRef<Room | null>(null);
   // Resolves the endSession() promise when the agent's `end_complete` arrives (ruling delivered +
@@ -240,7 +242,7 @@ export function useSparringRoom(sessionId: string) {
           const turn = parseTranscriptData(text);
           if (turn) {
             if (markSeen(`transcript:${turn.speaker}:${turn.timestamp}`)) {
-              setTranscript((prev) => [...prev, transcriptEventToLine(turn, sessionId)]);
+              setTranscript((prev) => insertByTime(prev, transcriptEventToLine(turn, sessionId)));
             }
             return;
           }
@@ -250,7 +252,7 @@ export function useSparringRoom(sessionId: string) {
             // Dedup on the agent's stable timestamp: a redelivered packet or a double-registered
             // listener must not double-render one objection (the live double-hearsay bug).
             if (markSeen(`objection:${event.timestamp}`)) {
-              setTranscript((prev) => [...prev, objectionEventToLine(event, sessionId)]);
+              setTranscript((prev) => insertByTime(prev, objectionEventToLine(event, sessionId)));
             }
             return;
           }
@@ -258,7 +260,7 @@ export function useSparringRoom(sessionId: string) {
           const ruling = parseRulingData(text);
           if (ruling) {
             if (markSeen(`ruling:${ruling.timestamp}`)) {
-              setTranscript((prev) => [...prev, rulingEventToLine(ruling, sessionId)]);
+              setTranscript((prev) => insertByTime(prev, rulingEventToLine(ruling, sessionId)));
             }
             return;
           }

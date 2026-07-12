@@ -637,6 +637,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             state.add_established_fact(fact)
         ruling = assessment["closing_ruling"]  # CLEAN — persisted, displayed, citation-checked
         state.add_turn("judge", ruling)
+        # The closing ruling is spoken but was never published as text — the live view ended with
+        # the last inline ruling and the written closing appeared only in the saved report.
+        await publish_transcript("judge", ruling)
         if speak:
             # Hold the speaking floor for the closing ruling too, so a still-streaming OC reply
             # can't overlap the bench's final word. Released in the finally.

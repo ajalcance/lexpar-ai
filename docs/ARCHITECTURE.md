@@ -537,10 +537,16 @@ When an objection fires and Opposing Counsel's line is spoken, the Judge immedia
   the attorney's statement (`on_user_turn_completed`, timestamped at speech START), OC's
   counter-argument (`llm_node` finally), and the judge's order line — via `main.publish_transcript`.
   The barge-in objection and inline ruling are NOT re-sent (they already ride their own events, so
-  both would double-render). The frontend (`useSparringRoom`) accumulates all of these into ONE
-  transcript list **in arrival order** (no re-sorting, so lines never jump) and renders them through
-  the existing `TranscriptLine` in the sparring room — replacing the old placeholder, so the screen
-  shows the argument as text in real time, not just objection bubbles.
+  both would double-render); the **closing ruling IS published** (it's spoken during the finale but
+  previously appeared as text only in the saved report). The frontend (`useSparringRoom`)
+  accumulates all of these into ONE transcript list ordered by **when each line was spoken**
+  (`insertByTime`, stable on ties) — matching the saved report's ordering: attorney turns are
+  timestamped at speech START but arrive at turn END, so arrival order rendered an objection above
+  the statement it interrupted (seen live). Rendered through the existing `TranscriptLine` in the
+  sparring room — replacing the old placeholder, so the screen shows the argument as text in real
+  time, not just objection bubbles. Related report-side fix: `coalesce_transcript` merges
+  **attorney fragments only** — consecutive judge/OC turns are distinct complete utterances, and
+  merging them swallowed the closing ruling into the last inline ruling (one giant bubble).
 - **Duplicate render guard:** objection/ruling/transcript events carry a stable `timestamp`; the
   frontend dedups on `type:key` using a set held in a **ref** (shared across effect re-runs), so a
   redelivered packet or a double-registered listener can't double-render one line.

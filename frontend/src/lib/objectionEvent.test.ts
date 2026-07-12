@@ -7,6 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  insertByTime,
   objectionEventToLine,
   parseJudgeSpeaking,
   parseObjectionData,
@@ -154,5 +155,33 @@ describe('parseTranscriptData', () => {
     expect(line.wasInterruption).toBe(false);
     expect(line.content).toBe('The record does not support that.');
     expect(line.sessionId).toBe('session-1');
+  });
+});
+
+describe('insertByTime', () => {
+  const line = (id: string, iso: string): import('@/lib/types').Transcript => ({
+    id,
+    sessionId: 's',
+    speaker: 'attorney',
+    content: id,
+    wasInterruption: false,
+    spokenAt: iso,
+  });
+
+  it('appends when newest (the common case)', () => {
+    const out = insertByTime([line('a', '2026-07-12T00:00:01Z')], line('b', '2026-07-12T00:00:02Z'));
+    expect(out.map((l) => l.id)).toEqual(['a', 'b']);
+  });
+
+  it('inserts an earlier-spoken line above later ones (attorney turn committed after an objection)', () => {
+    // objection fired mid-statement (t=5), attorney turn committed later but STARTED at t=3
+    const objection = line('objection', '2026-07-12T00:00:05Z');
+    const out = insertByTime([objection], line('statement', '2026-07-12T00:00:03Z'));
+    expect(out.map((l) => l.id)).toEqual(['statement', 'objection']);
+  });
+
+  it('is stable: equal timestamps keep arrival order', () => {
+    const out = insertByTime([line('first', '2026-07-12T00:00:04Z')], line('second', '2026-07-12T00:00:04Z'));
+    expect(out.map((l) => l.id)).toEqual(['first', 'second']);
   });
 });

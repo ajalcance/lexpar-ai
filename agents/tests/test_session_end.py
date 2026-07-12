@@ -176,3 +176,21 @@ def test_performance_notes_append_after_sustained_grounds():
     )
     assert "Sustained objection:" in payload["weaknesses"]
     assert payload["weaknesses"].endswith("- Did not adjust after the ruling")
+
+
+def test_coalesce_merges_only_attorney_fragments_never_judge_or_oc():
+    # A live report showed the judge's CLOSING ruling silently merged into the last inline ruling
+    # (one giant bubble). Consecutive judge rulings and consecutive OC replies are DISTINCT
+    # complete utterances — only attorney STT fragments merge.
+    state = SessionState()
+    state.add_turn("judge", "Overruled. The record contains the mortgage.", spoken_at=_dt(1))
+    state.add_turn(
+        "judge", "Having ruled on all objections, the court will proceed.", spoken_at=_dt(2)
+    )
+    state.add_turn("opposing_counsel", "The record does not support that.", spoken_at=_dt(3))
+    state.add_turn(
+        "opposing_counsel", "Counsel urges a conclusion without authority.", spoken_at=_dt(4)
+    )
+    out = coalesce_transcript(state.transcript)
+    assert len(out) == 4  # nothing merged
+    assert [t.speaker for t in out] == ["judge", "judge", "opposing_counsel", "opposing_counsel"]

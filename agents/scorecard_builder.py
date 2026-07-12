@@ -50,9 +50,12 @@ def coalesce_transcript(turns: list[TranscriptTurn]) -> list[TranscriptTurn]:
          committed at turn-end; ordering by spoken_at (attorney turns are timestamped at their
          START, see main.on_user_turn_completed) puts the objection/ruling AFTER the statement it
          responds to, not before it.
-      2. MERGE consecutive fragments of continuous speech from the same speaker into one turn — STT
-         + turn detection split one spoken stretch into several ("You" / "Your honor…"). Discrete
-         barge-ins (was_interruption) are never merged: each objection stays its own line.
+      2. MERGE consecutive fragments of continuous ATTORNEY speech into one turn — STT + turn
+         detection split one spoken stretch into several ("You" / "Your honor…"). ONLY the
+         attorney fragments: OC replies and judge rulings are each committed as one complete turn,
+         so consecutive ones are DISTINCT utterances — a live report showed the judge's closing
+         ruling silently merged into the last inline ruling (one giant bubble). Discrete barge-ins
+         (was_interruption) are never merged: each objection stays its own line.
     Pure; operates on copies so `state.transcript` is untouched (it stays the raw capture)."""
     ordered = sorted(turns, key=lambda t: t.spoken_at)
     merged: list[TranscriptTurn] = []
@@ -60,7 +63,8 @@ def coalesce_transcript(turns: list[TranscriptTurn]) -> list[TranscriptTurn]:
         prev = merged[-1] if merged else None
         can_merge = (
             prev is not None
-            and prev.speaker == turn.speaker
+            and prev.speaker == "attorney"
+            and turn.speaker == "attorney"
             and not prev.was_interruption
             and not turn.was_interruption
         )
