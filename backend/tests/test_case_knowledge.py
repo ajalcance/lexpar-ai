@@ -53,10 +53,23 @@ def _keyword_embedder(keywords):
 
 
 def _seed_case(db_session):
-    # §13: cases now reference the forum whose rules ground them.
+    # §13: cases now reference the forum whose rules ground them. The owner must be a REAL user
+    # row — the suite enforces foreign keys (conftest PRAGMA), so a fabricated user_id no longer
+    # slides through the way it did before the live case-purge FK bug was found.
+    from app.models.user import User
+
+    owner = User(
+        id=uuid.uuid4(),
+        email=f"owner-{uuid.uuid4().hex[:8]}@example.com",
+        password_hash="x",
+        full_name="Owner",
+    )
     court = Court(id=uuid.uuid4(), name="Test Court")
-    db_session.add(court)
-    case = Case(id=uuid.uuid4(), user_id=uuid.uuid4(), title="Rivera v. Coastal", court_id=court.id)
+    db_session.add_all([owner, court])
+    # Flush the parents FIRST: without relationship() the unit of work has no cross-table insert
+    # ordering, and the cases row can hit the DB before its user/court under enforced FKs.
+    db_session.flush()
+    case = Case(id=uuid.uuid4(), user_id=owner.id, title="Rivera v. Coastal", court_id=court.id)
     db_session.add(case)
     db_session.commit()
     return case

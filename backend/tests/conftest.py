@@ -15,7 +15,7 @@ os.environ.setdefault("JWT_SECRET", "test-jwt-secret-0123456789-abcdefghijklmnop
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
-from sqlalchemy import create_engine  # noqa: E402
+from sqlalchemy import create_engine, event  # noqa: E402
 from sqlalchemy.orm import Session as DbSession  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
@@ -33,6 +33,16 @@ def db_session() -> DbSession:
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+
+    # SQLite does NOT enforce foreign keys by default — a delete-order bug (child rows still
+    # referencing a deleted parent) passed the whole suite and then failed live on Postgres
+    # (the case-purge ForeignKeyViolation; see LESSONS). Enforce FKs so tests match production.
+    @event.listens_for(engine, "connect")
+    def _enforce_sqlite_fks(dbapi_connection, _record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
     Base.metadata.create_all(bind=engine)
     testing_session_local = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     session = testing_session_local()

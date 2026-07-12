@@ -106,14 +106,19 @@ def purge_case(db: DbSession, case: Case) -> None:
         db.execute(delete(Scorecard).where(Scorecard.session_id.in_(session_ids)))
         db.execute(delete(Transcript).where(Transcript.session_id.in_(session_ids)))
         db.execute(delete(Session).where(Session.id.in_(session_ids)))
-    documents = db.scalars(
-        select(CaseDocument).where(CaseDocument.case_id == case.id)
-    ).all()
-    storage_paths = [d.storage_path for d in documents]
+    storage_paths = list(
+        db.scalars(
+            select(CaseDocument.storage_path).where(CaseDocument.case_id == case.id)
+        ).all()
+    )
+    # Core deletes ONLY, in explicit child→parent order — each executes immediately. The previous
+    # mix (Core for chunks, ORM db.delete() for documents + case) failed on real Postgres: with no
+    # relationship() configured the ORM flush has no inter-mapper dependency and emitted
+    # `DELETE FROM cases` before the documents delete → ForeignKeyViolation. Invisible in tests
+    # until SQLite FK enforcement was turned on (conftest PRAGMA; see LESSONS).
     db.execute(delete(CaseChunk).where(CaseChunk.case_id == case.id))
-    for document in documents:
-        db.delete(document)
-    db.delete(case)
+    db.execute(delete(CaseDocument).where(CaseDocument.case_id == case.id))
+    db.execute(delete(Case).where(Case.id == case.id))
     db.commit()
     from app.services import storage_service
 

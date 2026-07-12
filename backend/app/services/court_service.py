@@ -84,14 +84,20 @@ def purge_court(db: DbSession, court: Court) -> None:
                 f"{'…' if len(referencing) > 5 else ''}). Purge or reassign them first."
             ),
         )
-    documents = db.scalars(
-        select(CourtRuleDocument).where(CourtRuleDocument.court_id == court.id)
-    ).all()
+    storage_paths = list(
+        db.scalars(
+            select(CourtRuleDocument.storage_path).where(
+                CourtRuleDocument.court_id == court.id
+            )
+        ).all()
+    )
+    # Core deletes ONLY, child→parent (same Postgres FK-order fix as the case purge — ORM
+    # db.delete() without relationship() gives the flush no inter-mapper ordering; see LESSONS).
+    # The single bulk documents delete also clears the superseded_by_id self-FK lineage safely:
+    # all rows of the court go in one statement.
     db.execute(delete(CourtRuleChunk).where(CourtRuleChunk.court_id == court.id))
-    storage_paths = [d.storage_path for d in documents]
-    for document in documents:
-        db.delete(document)
-    db.delete(court)
+    db.execute(delete(CourtRuleDocument).where(CourtRuleDocument.court_id == court.id))
+    db.execute(delete(Court).where(Court.id == court.id))
     db.commit()
     from app.services import storage_service
 

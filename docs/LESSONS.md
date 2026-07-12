@@ -695,3 +695,21 @@ unestablished fact as though proven; misstating/mischaracterizing the record, pl
 straying from the matter before the court), and say explicitly "do not default to either
 disposition." General rule for judge-like prompts: every "usually X" needs its "but Y when…"
 counterpart, or the model turns the tendency into a rule.
+
+### [Backend/DB] Purge failed only on Postgres — SQLite tests don't enforce foreign keys
+**Wrong:** `purge_case` deleted children with Core `delete()` but the documents and the case row
+with ORM `db.delete()`. Without `relationship()` configured, the ORM flush has NO cross-mapper
+ordering — it emitted `DELETE FROM cases` while `case_documents` rows still referenced it. Every
+test passed because the suite runs on in-memory SQLite, which does NOT enforce foreign keys by
+default; production Postgres threw `ForeignKeyViolation` on the first real purge ("Request
+failed" in the UI, and the frontend's fallback message hid the status because HTTP/2 has no
+status text). The same latent class sat in `purge_court` (identical pattern) and
+`purge_rule_document` (the `superseded_by_id` self-FK pointing at a purged replacement).
+**Right:** (1) In multi-table hard-delete paths use Core `delete()` statements ONLY, in explicit
+child→parent order — each executes immediately; never mix in ORM `db.delete()` unless
+relationships define the ordering. Clear self-FK references (`UPDATE … SET superseded_by_id=NULL`)
+before deleting the referenced row. (2) The real fix is in the harness: the test fixture now runs
+`PRAGMA foreign_keys=ON` on every SQLite connection, so tests enforce the same constraints as
+production — this immediately surfaced fixture shortcuts (a Case seeded with a fabricated
+user_id) that had been masking the gap. General rule: when tests use a different database than
+production, align the constraint behavior, or green tests prove nothing about integrity.

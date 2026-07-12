@@ -25,7 +25,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session as DbSession
 
 from app.models.court_rule import CourtRuleChunk, CourtRuleDocument
@@ -376,7 +376,16 @@ def purge_rule_document(db: DbSession, document: CourtRuleDocument) -> None:
         delete(CourtRuleChunk).where(CourtRuleChunk.court_rule_document_id == document.id)
     )
     storage_path = document.storage_path
-    db.delete(document)
+    # Clear any superseded_by_id self-FK pointing AT this document first (Postgres enforces it —
+    # purging a replacement that an older, superseded document references would otherwise violate
+    # the FK; same class as the case-purge ordering bug, see LESSONS). With the superseding
+    # document gone, the older document simply becomes restorable again. Core deletes only.
+    db.execute(
+        update(CourtRuleDocument)
+        .where(CourtRuleDocument.superseded_by_id == document.id)
+        .values(superseded_by_id=None)
+    )
+    db.execute(delete(CourtRuleDocument).where(CourtRuleDocument.id == document.id))
     db.commit()
     try:
         storage_service.delete_object(storage_path)
