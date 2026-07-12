@@ -54,7 +54,9 @@ def test_new_session_context_carries_no_prior_session_content(client, auth_heade
     case_id = _make_case(client, auth_headers, facts="CASE_FACTS_MARKER")
     # Session A: a full rehearsal with a distinctive argument + a distinctive scorecard weakness.
     a = _new_session(client, auth_headers, case_id)
-    _run_and_score(client, a, line="SECRET_ARGUMENT_FROM_SESSION_A", weakness="WEAKNESS_A", score=30)
+    _run_and_score(
+        client, a, line="SECRET_ARGUMENT_FROM_SESSION_A", weakness="WEAKNESS_A", score=30
+    )
 
     # Session B on the SAME case: its join context must be case-only — nothing from A.
     b = _new_session(client, auth_headers, case_id)
@@ -65,7 +67,7 @@ def test_new_session_context_carries_no_prior_session_content(client, auth_heade
     assert "WEAKNESS_A" not in blob  # A's scorecard never leaks forward
 
 
-def test_writing_a_transcript_adds_nothing_to_the_retrieval_corpus(client, auth_headers, db_session):
+def test_writing_a_transcript_adds_nothing_to_retrieval_corpus(client, auth_headers, db_session):
     case_id = _make_case(client, auth_headers, facts="Facts.")
     before = db_session.scalar(select(func.count()).select_from(CaseChunk))
     a = _new_session(client, auth_headers, case_id)
@@ -73,8 +75,8 @@ def test_writing_a_transcript_adds_nothing_to_the_retrieval_corpus(client, auth_
         client, a, line="an argument that must never become retrievable", weakness="w", score=50
     )
     after = db_session.scalar(select(func.count()).select_from(CaseChunk))
-    # Transcripts live in the `transcripts` table for history only — never embedded into case_chunks,
-    # so a later rehearsal's retrieval can never surface a prior rehearsal's spoken argument.
+    # Transcripts live in the `transcripts` table for history only — never embedded into
+    # case_chunks, so a later rehearsal's retrieval can't surface a prior rehearsal's argument.
     assert after == before
 
 
