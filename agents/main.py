@@ -302,8 +302,15 @@ class OpposingCounselAgent(Agent):
                         "OC reply lodged an objection in counter-argument (unruled) — tighten "
                         "oc_reply_style/opposing_counsel prompt if this recurs"
                     )
-            else:
+            elif completed:
+                # The reply ran to completion and the verifier rejected every sentence — the real
+                # fail-closed case worth a warning (a live flood of the old combined log turned out
+                # to be mostly cancellations mislabeled as verifier rejections).
                 logger.warning("no verified sentences this turn — staying silent (fail closed)")
+            else:
+                # Closed early (objection barge-in / bench interrupt / VAD) before the first
+                # sentence was voiced — expected under contention, not a verifier problem.
+                logger.info("OC reply cancelled before any sentence was voiced")
             if self._floor is not None:
                 # Floor dynamics: a reply that ended naturally resets the contest; one whose
                 # generator was closed early (VAD / session.interrupt()) is a cut-off CANDIDATE,
