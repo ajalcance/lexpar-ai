@@ -3089,6 +3089,16 @@ pre-submission if time allows — finalize scope before starting.)
       speech cancels — the INTERRUPT_CANCEL_TIMEOUT_S=1.5 patch (verified working at 09:10) isn't
       active in the RUNNING agents container despite being at HEAD; suspect a stale agents image.
       Container check + clean rebuild in the deploy notes.
+- [x] OC over-PASSing (9 of 14 turns in the 13:20 session — "no audio from OC"). Live probe on the
+      droplet exonerated the model (first_delta 0.14-0.43s, correct Metrobank-side content on the
+      grown context), and the matter banner verified correctly framed (profile fix confirmed). The
+      mechanism was the PASS instruction's "incomplete fragment" escape hatch: live turns arrive as
+      STT fragments, so the model kept its seat mid-argument. oc_reply_style (+golden) rewritten:
+      PASS ONLY for housekeeping/pleasantries; any substantive claim — even partial — gets a
+      merits response; "when in doubt, respond rather than PASS." Persona: "PASS is the exception,
+      never your habit." WATCH: a few "cancelled before any sentence" lines without a matching
+      objection dispatch remain unexplained — instrument the cancel path if they persist after
+      this fix.
 - [ ] (Tier-2 backlog) Add a `sessionCount` (and maybe `bestScore`) field to the Case payload to
       remove the Dashboard per-card `getCaseSessions` N+1 (the CaseCard rehearsal summary).
 - [ ] (Backlog) Show the case profile on CaseDetail; prefill profile fields from pleading
