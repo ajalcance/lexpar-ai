@@ -12,7 +12,7 @@ Built for the **AMD Developer Hackathon — Act II** (Track 3 · Unicorn).
 
 | | |
 |---|---|
-| 🎥 **Demo video** | _<!-- paste the submission video URL here -->_ |
+| 🎥 **Demo video** | On the lablab submission page — a full, live-recorded session |
 | 🌐 **Live app** | **https://165-245-129-142.sslip.io/login** — runs on an AMD Instinct MI300X |
 | 🔑 **Credentials** | Provided with the submission (self-service registration is disabled on the public deploy) |
 
