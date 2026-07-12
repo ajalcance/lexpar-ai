@@ -49,6 +49,8 @@ import llm_router
 import opposing_counsel
 import prompts
 import scorecard_builder
+import stt_keyterms
+import turn_recovery
 from judge_participant import JUDGE_IDENTITY, JudgeParticipant
 from judge_voice import JudgeVoice
 from objection_classifier import ObjectionClassifier
@@ -105,6 +107,7 @@ class OpposingCounselAgent(Agent):
         speak_judge_order=None,
         publish_transcript=None,
         publish_oc_thinking=None,
+        turn_recovery=None,
     ):
         super().__init__(
             instructions="You are opposing counsel in a courtroom rehearsal session.",
@@ -140,6 +143,9 @@ class OpposingCounselAgent(Agent):
         # Injected async (bool) -> None — signals "OC is composing a reply" so the UI can tell the
         # attorney to hold during the silent generation gap (OC is now non-interruptible).
         self._publish_oc_thinking = publish_oc_thinking
+        # TurnRecovery (or None when RECOVER_DROPPED_TURNS is off / in offline harnesses): the
+        # safety net for turns the SDK drops during non-interruptible speech (turn_recovery.py).
+        self._turn_recovery = turn_recovery
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
         # Record ONE coherent attorney turn per completed utterance. Deepgram emits many `is_final`
@@ -155,6 +161,27 @@ class OpposingCounselAgent(Agent):
         # turn; the observer re-arms on the next fresh utterance (None → turn-end fallback is safe).
         started = self._turn_timing.get("attorney_started_at")
         self._turn_timing["attorney_started_at"] = None
+        # Recover any turn the SDK DROPPED before this one: a user turn completing during
+        # non-interruptible agent speech is discarded before this hook ever runs (see
+        # turn_recovery.py / LESSONS) — its STT finals are still in the buffer, uncovered by this
+        # committed text. Flush them first (their timestamps predate this turn) so the record,
+        # OC's context, and the live view keep every spoken argument.
+        if self._turn_recovery is not None:
+            leftovers = self._turn_recovery.reconcile(text)
+            if leftovers:
+                logger.warning(
+                    "recovered %d attorney turn fragment(s) dropped during "
+                    "non-interruptible speech",
+                    len(leftovers),
+                )
+            for pending in leftovers:
+                self._state.add_turn("attorney", pending.text, spoken_at=pending.spoken_at)
+                if self._publish_transcript is not None:
+                    await self._publish_transcript(
+                        "attorney",
+                        pending.text,
+                        int(pending.spoken_at.timestamp() * 1000),
+                    )
         if text:
             self._state.add_turn("attorney", text, spoken_at=started)
             if self._publish_transcript is not None:
@@ -294,16 +321,25 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     # Non-fatal: if it fails, start empty rather than crash.
     case_facts = ""
     case_summary = ""
+    case_title = ""
     court_id = ""
     proceeding_type = ""
     try:
         context = await asyncio.to_thread(backend_client.get_session_context, session_id)
         case_facts = context.get("case_facts", "")
         case_summary = context.get("case_summary", "")
+        case_title = context.get("case_title", "")
         court_id = context.get("court_id", "")
         proceeding_type = context.get("proceeding_type", "")
     except Exception:
         logger.warning("could not load case context for %s; starting with empty facts", session_id)
+
+    # Case-aware STT vocabulary (stt_keyterms.py, flag STT_KEYTERMS): this case's party names /
+    # entities, boosted as Deepgram nova-3 keyterms (nova-3-only — the plugin raises on other
+    # models). Empty (no materials / flag off / other model) → the STT runs unboosted as before.
+    keyterms: list[str] = []
+    if config.STT_KEYTERMS and config.DEEPGRAM_MODEL.startswith("nova-3"):
+        keyterms = stt_keyterms.extract_keyterms(case_title, case_facts, case_summary)
 
     state = SessionState(
         case_facts=case_facts,
@@ -325,6 +361,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         except Exception:
             logger.warning("matter derivation failed for %s; proceeding without it", session_id)
     classifier = ObjectionClassifier(state)
+    # Safety net for turns the SDK drops during non-interruptible speech (turn_recovery.py):
+    # every STT final lands in this buffer; the next committed turn reconciles it. None = off.
+    recovery = turn_recovery.TurnRecovery() if config.RECOVER_DROPPED_TURNS else None
     # Shared with OpposingCounselAgent.llm_node: set when an objection fires on a turn so the
     # end-of-turn full reply is skipped (object → rule → continue, no redundant re-argument).
     turn_flags = {"objected": False}
@@ -419,11 +458,16 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         max_endpointing_delay=config.MAX_ENDPOINTING_DELAY,
         # Endpointing raised from the plugin's 25 ms default — a mid-sentence breath was
         # finalizing the turn, shredding one spoken argument into 3-4 turns (config.py).
+        # Case-aware STT vocabulary: `keyterms` computed above from the case materials — live, STT
+        # mangled exactly these terms ("TCT" → "VLT", "SARC" → "SIRC") and OC/the classifier argued
+        # faithfully from the misheard words, indistinguishable from hallucination. The kwarg is
+        # passed only when non-empty (keyterm is nova-3-only; the plugin raises otherwise).
         stt=deepgram.STT(
             model=config.DEEPGRAM_MODEL,
             interim_results=True,
             api_key=config.DEEPGRAM_API_KEY,
             endpointing_ms=config.DEEPGRAM_ENDPOINTING_MS,
+            **({"keyterm": keyterms} if keyterms else {}),
         ),
         # The pipeline requires an llm; OpposingCounselAgent.llm_node overrides how it is used, so
         # this base client isn't actually driven today. Resolve its key the SAME way llm_router does
@@ -625,6 +669,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         # recorded separately in the agent's on_user_turn_completed hook (one coherent turn),
         # so we do NOT add per-fragment turns here. `is_final` enables the comparative-grounds
         # fallback (Option A) for completed finals only — interims stay cheap at the regex gate.
+        if recovery is not None and event.is_final:
+            # Buffer every final (synchronously — ordered against turn completion) so a turn the
+            # SDK drops during non-interruptible speech can be recovered (turn_recovery.py).
+            recovery.note_final(
+                event.transcript, turn_timing.get("attorney_started_at")
+            )
         coro = handle_interim(
             session,
             classifier,
@@ -671,6 +721,19 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         if finalized["done"]:
             return
         finalized["done"] = True
+        # Flush any finals still buffered from a dropped turn that no committed turn followed —
+        # the record must be complete BEFORE the judge assesses it (turn_recovery.py).
+        if recovery is not None:
+            drained = recovery.drain()
+            if drained:
+                logger.warning(
+                    "recovered %d attorney turn fragment(s) at session end", len(drained)
+                )
+            for pending in drained:
+                state.add_turn("attorney", pending.text, spoken_at=pending.spoken_at)
+                await publish_transcript(
+                    "attorney", pending.text, int(pending.spoken_at.timestamp() * 1000)
+                )
         if not any(turn.speaker == "attorney" for turn in state.transcript):
             return
         assessment = await asyncio.to_thread(
@@ -781,7 +844,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     await session.start(
         agent=OpposingCounselAgent(
             state, turn_flags, turn_timing, session_id, judge_idle, floor, speak_judge_order,
-            publish_transcript, publish_oc_thinking,
+            publish_transcript, publish_oc_thinking, recovery,
         ),
         room=ctx.room
     )

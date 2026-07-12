@@ -146,6 +146,18 @@ FLOOR_DYNAMICS = _getbool("FLOOR_DYNAMICS", False)
 # roll back to reasoning from the case summary + exchange alone.
 DERIVE_MATTER = _getbool("DERIVE_MATTER", True)
 
+# Recover attorney turns the SDK drops (turn_recovery.py): a user turn that completes while
+# non-interruptible agent speech is playing is DISCARDED before on_user_turn_completed (verified in
+# the installed SDK) — the second casualty of OC non-interruptibility (docs/LESSONS.md). Buffered
+# STT finals not covered by the next committed turn are flushed into the record instead of lost.
+# Default ON; false restores the previous (lossy) behavior in one env line.
+RECOVER_DROPPED_TURNS = _getbool("RECOVER_DROPPED_TURNS", True)
+
+# Case-aware STT vocabulary (stt_keyterms.py): boost THIS case's party names / entities as Deepgram
+# nova-3 `keyterm`s so domain terms stop being misheard ("TCT" → "VLT" live). Default ON; false
+# runs the STT unboosted exactly as before.
+STT_KEYTERMS = _getbool("STT_KEYTERMS", True)
+
 
 def _getfloat(name: str, default: float) -> float:
     """Parse a float env var; default when unset/invalid (a bad value must not kill the worker)."""

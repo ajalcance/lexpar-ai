@@ -2977,6 +2977,22 @@ pre-submission if time allows — finalize scope before starting.)
       writing a transcript adds 0 retrieval chunks; scorecards not aggregated) + an agent-side
       in-memory guard in `test_session_state.py` (no ledger bleed across two SessionStates — catches
       a mutable-default regression). Backend 98, agents 237.
+- [x] Dropped-turn recovery + case-aware STT keyterms (agents-only, both flag-gated). Live session
+      showed attorney arguments missing from the transcript, OC repeating itself, and an objection
+      "out of nowhere" — diagnosed (against the installed SDK) as the SDK DISCARDING user turns that
+      complete during non-interruptible agent speech (returns before on_user_turn_completed; 2nd
+      casualty of OC non-interruptibility, see LESSONS). Fixes:
+      - `turn_recovery.py` (flag RECOVER_DROPPED_TURNS, default on): buffer every STT final; the
+        next committed turn reconciles (own finals covered), leftovers = the dropped turn →
+        committed + published with original timestamps; session-end drain before assessment.
+      - `stt_keyterms.py` (flag STT_KEYTERMS, default on): deterministic party-name/entity
+        extraction from case title/facts/summary → Deepgram nova-3 `keyterm` boosts ("TCT"→"VLT",
+        "SARC"→"SIRC" mishears made OC look hallucinatory; it argued from the misheard words).
+      Agents 247 + ruff clean. Docs: ARCH §6.5 (two bullets) + env table, LESSONS entry.
+      NOTE (watch on next live run): 4× "no verified sentences — staying silent" (the fail-closed
+      verifier silencing OC drafts — should drop once OC's context is complete) and one 5s
+      "speech not done in time after interruption" (force-interrupt of streaming TTS slow to
+      cancel — objection latency spike; tune if it recurs).
 - [ ] (Tier-2 backlog) Add a `sessionCount` (and maybe `bestScore`) field to the Case payload to
       remove the Dashboard per-card `getCaseSessions` N+1 (the CaseCard rehearsal summary).
 

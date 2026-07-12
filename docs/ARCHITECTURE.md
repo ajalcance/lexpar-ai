@@ -635,6 +635,22 @@ When an objection fires and Opposing Counsel's line is spoken, the Judge immedia
   attorney has not yet staked a position, to **press for the basis** rather than invent one; the
   judge rules and assesses against the matter and the relief sought, and won't presume a matter that
   was never argued. `DERIVE_MATTER=false` restores per-turn reasoning from the summary + exchange.
+- **Dropped-turn recovery (flag-gated `RECOVER_DROPPED_TURNS`, default on — `turn_recovery.py`):**
+  the SDK DISCARDS a user turn that completes while non-interruptible agent speech is playing
+  (`skipping reply to user input…`, returned before `on_user_turn_completed` — verified in the
+  installed SDK). With OC non-interruptible that meant whole attorney arguments vanished: not in the
+  record, not in OC's context (OC pressed the same point repeatedly — starvation, not a prompt bug),
+  not in the live view, while objections fired on the interims dangled unanchored. Every STT final
+  is buffered; the next committed turn reconciles the buffer (its own finals are covered by the
+  committed text) and the leftovers — the dropped turn — are committed and published with their
+  original stretch-start timestamps; a session-end drain completes the record before the judge's
+  assessment. See LESSONS (2nd casualty of OC non-interruptibility).
+- **Case-aware STT vocabulary (flag-gated `STT_KEYTERMS`, default on — `stt_keyterms.py`):** this
+  case's party names/entities (deterministically extracted from the case title, facts, and pleading
+  summary — no LLM, no hardcoded vocabulary) are passed as Deepgram nova-3 `keyterm` boosts.
+  Live, STT mangled exactly these terms ("TCT"→"VLT", "SARC"→"SIRC") and OC/the classifier argued
+  faithfully from the misheard words — indistinguishable from hallucination in the transcript.
+  nova-3-only (the plugin raises otherwise); no terms → the STT runs unboosted as before.
 - **Conversation memory (`SessionState.recent_exchange`):** `snapshot()` deliberately holds only
   the durable record (facts + ledger), so per-turn prompts were rebuilt **amnesiac** — OC could
   not see its own prior replies (it repeated the same sentence across five turns live) and the
@@ -883,6 +899,8 @@ S3-compatible (MinIO locally, DigitalOcean Spaces in production).
 | `{OC,JUDGE}_VOICE_{STABILITY,SIMILARITY_BOOST,STYLE,USE_SPEAKER_BOOST}` | ElevenLabs `voice_settings` expressiveness (§6.5). `style`=0 reverts to flat delivery; tune by ear |
 | `JUDGE_EXPRESSIVE_FINAL_RULING` / `JUDGE_V3_MODEL` | Track B (gated, default off): v3 + audio tags for the Judge's final ruling only (§6.5) |
 | `DERIVE_MATTER` | Frame "the matter before the court" at room join (`case_posture.py`, §6.5) — the shared OC/judge posture. Default **on**; `false` rolls back to per-turn reasoning from the case summary + exchange |
+| `RECOVER_DROPPED_TURNS` | Recover attorney turns the SDK discards during non-interruptible speech (`turn_recovery.py`, §6.5). Default **on**; `false` restores the lossy behavior |
+| `STT_KEYTERMS` | Boost this case's party names/terms as Deepgram nova-3 keyterms (`stt_keyterms.py`, §6.5). Default **on**; `false` runs STT unboosted |
 | `JWT_SECRET` | Token signing — **required, ≥ 32 chars**; the app refuses to start with a blank/missing/weak key (`openssl rand -hex 32`) |
 | _(auth mode)_ | Removed — auth is always real bcrypt password auth; there is no `AUTH_MODE` setting (a leftover value in `.env` is ignored) |
 | `CORS_ORIGINS` | Comma-separated browser origins allowed to call the API (e.g. the Vite dev server) |

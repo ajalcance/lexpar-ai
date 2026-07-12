@@ -659,3 +659,24 @@ been staked yet, press for the basis instead of inventing a motion. General rule
 should oppose *what the user actually argues*, anchored to a case-derived frame, not a re-guessed
 stance; when the input is empty, model the real-world behavior (probe/press), never fabricate a
 posture to have something to say.
+
+### [Agents/SDK] Attorney turns silently DROPPED during non-interruptible speech (2nd casualty)
+**Wrong:** After OC went non-interruptible, a live session showed attorney arguments missing from
+the transcript, OC repeating "counsel has not articulated the basis…" verbatim, and an objection
+"out of nowhere" — which read as OC hallucinating. The actual mechanism (verified in the installed
+SDK, agent_activity.py): when a user turn completes while `current_speech.allow_interruptions` is
+False, the SDK logs `skipping reply to user input…` and RETURNS **before** `on_user_turn_completed`
+— where our transcript commit lived. The turn is discarded entirely: not in the record, not in OC's
+context (so OC was context-starved, not broken), not in the live view; meanwhile the objection
+classifier HAD fired on the interims, leaving a ruling anchored to a statement that no longer
+exists. Second casualty of the same interruptibility change that broke the objection interrupt
+(f1bb84f) — the first raised loudly; this one lost data silently.
+**Right:** Never let the record depend on reply scheduling. `turn_recovery.py` buffers every STT
+final; the next committed turn reconciles the buffer (its own finals are covered) and anything left
+is the dropped turn — flushed into the record with its original timestamps (plus a session-end
+drain before assessment). Flag `RECOVER_DROPPED_TURNS`. General rule: `on_user_turn_completed` is a
+REPLY hook, not a capture hook — the SDK skips it whenever it decides not to reply. Also from the
+same session: STT mishears of case terms ("TCT"→"VLT", "SARC"→"SIRC") made OC look like it invented
+facts — it argued faithfully from the misheard words. Case-aware `keyterm` boosting (stt_keyterms.py,
+nova-3-only, flag STT_KEYTERMS) attacks that at the source; check STT fidelity before concluding an
+agent is hallucinating.
