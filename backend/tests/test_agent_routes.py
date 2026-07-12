@@ -14,6 +14,10 @@ SCORECARD_PAYLOAD = {
     "strengths": "Clear framing of the good-faith argument.",
     "weaknesses": "Drifted from the record once.",
     "judge_ruling": "The position holds up with cleaner sequencing.",
+    "criteria": [
+        {"name": "Command of the record", "score": 82},
+        {"name": "Responsiveness to rulings", "score": 90},
+    ],
     "transcript": [
         {"speaker": "attorney", "content": "Good faith throughout.", "was_interruption": False},
         {"speaker": "opposing_counsel", "content": "Objection.", "was_interruption": True},
@@ -94,6 +98,8 @@ def test_full_session_end_then_user_reads_scorecard_and_transcript(client, auth_
     assert scorecard.status_code == 200
     assert scorecard.json()["overall_score"] == 84
     assert scorecard.json()["judge_ruling"] == SCORECARD_PAYLOAD["judge_ruling"]
+    # The per-dimension rubric breakdown round-trips (agent → DB → user).
+    assert scorecard.json()["criteria"] == SCORECARD_PAYLOAD["criteria"]
 
     # And the session detail returns the batch-written transcript in order.
     session = client.get(f"/api/sessions/{session_id}", headers=auth_headers).json()

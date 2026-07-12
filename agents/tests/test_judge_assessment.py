@@ -239,3 +239,31 @@ def test_parse_assessment_clamps_and_defaults_performance_fields():
     )
     assert garbage["performance_score"] is None
     assert garbage["performance_notes"] == []
+
+
+def test_parse_assessment_normalizes_performance_criteria():
+    good = judge_mod._parse_assessment(
+        '{"rulings": [], "closing_ruling": "c", "performance_criteria": '
+        '{"command_of_record": 210, "responsiveness": 60, "argument_structure": -5, '
+        '"procedural_discipline": 90}}'
+    )
+    # Ordered [{name, score}], clamped, keys mapped to their display labels.
+    assert good["performance_criteria"] == [
+        {"name": "Command of the record", "score": 100},
+        {"name": "Responsiveness to rulings", "score": 60},
+        {"name": "Argument structure", "score": 0},
+        {"name": "Procedural discipline", "score": 90},
+    ]
+    # Fail-safe: missing field, a non-numeric entry, and a non-dict payload all degrade to [] /
+    # a dropped entry, never a fabricated bar.
+    assert judge_mod._parse_assessment('{"rulings": [], "closing_ruling": "c"}')[
+        "performance_criteria"
+    ] == []
+    partial = judge_mod._parse_assessment(
+        '{"rulings": [], "closing_ruling": "c", "performance_criteria": '
+        '{"command_of_record": 80, "responsiveness": "n/a"}}'
+    )
+    assert partial["performance_criteria"] == [{"name": "Command of the record", "score": 80}]
+    assert judge_mod._parse_assessment(
+        '{"rulings": [], "closing_ruling": "c", "performance_criteria": [1, 2]}'
+    )["performance_criteria"] == []

@@ -108,6 +108,12 @@ export interface Transcript {
   spokenAt: string;
 }
 
+/** One rubric dimension of the judge's performance breakdown (name + 0-100 sub-score). */
+export interface ScoreCriterion {
+  name: string;
+  score: number;
+}
+
 /** The post-session assessment. Mirrors the `scorecards` table. */
 export interface Scorecard {
   id: string;
@@ -116,6 +122,8 @@ export interface Scorecard {
   strengths: string;
   weaknesses: string;
   judgeRuling: string;
+  /** Per-dimension rubric breakdown; empty when the judge gave no breakdown. */
+  criteria: ScoreCriterion[];
   createdAt: string;
 }
 

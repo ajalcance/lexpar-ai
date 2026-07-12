@@ -20,11 +20,21 @@ class TranscriptTurnIn(BaseModel):
     spoken_at: datetime | None = None
 
 
+class CriterionIn(BaseModel):
+    """One rubric dimension of the judge's performance breakdown (name + 0-100 sub-score)."""
+
+    name: str
+    score: float = Field(ge=0, le=100)
+
+
 class ScorecardWriteIn(BaseModel):
     overall_score: float = Field(ge=0, le=100)
     strengths: str
     weaknesses: str
     judge_ruling: str
+    # Per-dimension rubric breakdown (command of the record, responsiveness, etc.). Additive and
+    # optional: an older worker that omits it persists an empty breakdown, not an error.
+    criteria: list[CriterionIn] = []
     transcript: list[TranscriptTurnIn] = []
 
 

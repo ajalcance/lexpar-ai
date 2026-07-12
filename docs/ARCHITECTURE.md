@@ -216,7 +216,16 @@ the one thing still absent:
   `lib/audioBars.ts`), the context resuming off the existing audio-unlock signal. The dots ride the
   coarse `participant.audioLevel` from `ActiveSpeakersChanged` (no extra analyser). No new npm
   dependency (Web Audio via `livekit-client`); reduced-motion drops to a static frame. Builds on the
-  §6.5 active-speaker attribution.
+  §6.5 active-speaker attribution. While `ocThinking` is set (the `{"type":"oc_thinking"}` boundary,
+  below) the wave box is idle and the OC dot is dark — no audio flows yet — so the visual adds a
+  peripheral companion to the text badge: a soft red halo breathes around the wave box and the
+  Opposing Counsel dot pulses (declarative CSS `animate-oc-pulse`, ~1.6s ease; steady glow under
+  reduced motion), filling the silent-composition gap the badge alone is easy to miss during. The
+  presence-dot role colors (blue = You, red = Opposing Counsel, amber = Judge) are a shared identity:
+  `TranscriptLine` reuses them as a leading speaker dot + role-tinted bubble border so the transcript
+  and this visual read as one system. The idle status badge reflects mic state — a live green pulse +
+  "Listening" when the mic is hot, "Muted" when it isn't (it no longer misleadingly reads "Listening"
+  while muted).
 - **Session-end verdict finale (`SessionFinale`).** On "End session" the room stays connected while
   the judge composes and speaks the closing ruling (the §6.5 handshake — the browser only navigates
   once `end_complete` arrives, *after* the ruling has played). That window is no longer a dead spot:
@@ -228,8 +237,11 @@ the one thing still absent:
   own not-ready polling is unchanged (a later, post-navigation backstop).
 - **Completed sessions render real data.** When the agent worker (or `session_end_harness.py`) posts
   `complete` + `scorecard`, the session goes `completed` and the persisted scorecard + transcript are
-  written. `Scorecard.tsx` then renders the **real** heuristic score, strengths, weaknesses, and
-  verbatim judge ruling (GET `/api/sessions/{id}/scorecard`), plus a **Transcript** section built
+  written. `Scorecard.tsx` then renders the **real** score (as a color-banded `ScoreDial` radial
+  gauge — red <50 / amber 50–74 / green ≥75, so a 42 and a 91 no longer look identical), a
+  **Performance breakdown** of the judge's four rubric dimensions as per-criterion bars (from the
+  scorecard's `criteria` — omitted when empty), colored strengths/weaknesses, and the verbatim
+  judge ruling (GET `/api/sessions/{id}/scorecard`), plus a **Transcript** section built
   from the real persisted turns (GET `/api/sessions/{id}`, reusing `TranscriptLine` with the
   objection styling). Multi-line strengths/weaknesses use `whitespace-pre-line` so the per-fact and
   per-objection bullet lines survive. Verified end-to-end offline via the harness (Gap 5).
@@ -634,7 +646,10 @@ When an objection fires and Opposing Counsel's line is spoken, the Judge immedia
 At session end the Judge makes **one** structured call (`judge.assess_session`) that: rules each
 objection **still pending** `sustained`/`overruled`, extracts the 2–5 facts the attorney genuinely
 established (→ scorecard **strengths**), **grades the performance 0–100 on a four-part rubric**
-(command of the record, responsiveness to rulings, argument structure, procedural discipline) with
+(command of the record, responsiveness to rulings, argument structure, procedural discipline) —
+returning both the holistic overall score and a 0–100 sub-score per dimension in
+`performance_criteria` (→ the scorecard's **Performance breakdown** bars; normalized by
+`judge._parse_criteria`, fail-safe to no breakdown) — with
 1–3 specific `performance_notes` (→ scorecard **score** and **weaknesses**), and returns the
 closing ruling — which **acknowledges the objections already ruled from the bench during the
 session** rather than re-ruling them (inline rulings are final). The rubric exists because the old
@@ -784,6 +799,7 @@ CREATE TABLE scorecards (
     strengths TEXT,
     weaknesses TEXT,
     judge_ruling TEXT,
+    criteria JSON NOT NULL DEFAULT '[]',  -- per-dimension rubric breakdown [{name, score}] (migration 0006)
     created_at TIMESTAMPTZ DEFAULT now()
 );
 ```

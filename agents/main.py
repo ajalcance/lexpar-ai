@@ -697,6 +697,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             ruling,
             performance_score=assessment.get("performance_score"),
             performance_notes=assessment.get("performance_notes"),
+            performance_criteria=assessment.get("performance_criteria"),
         )
         turn_count = len(state.transcript)
         try:

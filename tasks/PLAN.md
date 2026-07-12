@@ -2916,6 +2916,49 @@ pre-submission if time allows — finalize scope before starting.)
 - [x] {oc_thinking} data-channel cue + frontend "Opposing counsel responding — please hold" badge
       to bridge the silent generation gap.
 - [x] agents 225 + frontend 74 tests pass; ruff/tsc/lint/build clean. Docs: ARCH §6.5 + LESSONS.
+- [x] Reinforce the oc_thinking cue in `SparringVisualizer` — the text badge was easy to miss.
+      During `ocThinking` a soft red halo breathes around the wave box + the OC presence dot pulses
+      (declarative CSS `animate-oc-pulse` in index.css; steady glow under reduced motion; the badge
+      stays the real signal). Gated on the existing `ocThinking`; frontend 74 tests still pass,
+      tsc/lint/build clean. Docs: ARCH visualization bullet.
+- [x] Sparring-room UI/UX identity pass. (1) Shared role colors — `TranscriptLine` now carries a
+      leading colored speaker dot + role-tinted bubble border (blue=You, red=OC, amber=Judge)
+      matching the `SparringVisualizer` presence dots, so the transcript and the live-audio visual
+      read as one system and the exchange scans at a glance. (2) Correctness — the idle status badge
+      used to read "Listening" even while muted (misleading: the attorney wasn't being heard); it now
+      shows "Muted" when muted and a live green pulse + "Listening" only when the mic is hot.
+      Additive/CSS-only; frontend 74 tests pass, tsc/lint/build clean.
+- [x] App-wide UI/UX polish pass (frontend-only, additive). Done one by one:
+      1. Scorecard payoff — bare `text-5xl` number → `ScoreDial` radial gauge, color-banded
+         (red <50 / amber 50–74 / green ≥75) with `/100` + a band label, so a 42 and a 91 no longer
+         look identical (`components/ScoreDial.tsx`).
+      2. Strengths/Weaknesses cards — green (check) / amber (caution) accents + icons, extending the
+         role-color system so they're scannable instead of two identical gray blocks.
+      3. Loading states — new shared `components/ui/skeleton.tsx`; replaced bare "Loading…" text on
+         Scorecard (the ~30s scoring poll now shows a spinner + skeleton layout), Dashboard (skeleton
+         cards), and the SparringRoom connecting state (spinner). Pulse/spin are motion-safe only.
+      4. Dashboard — friendlier empty state (icon + inline CTA) and a per-case rehearsal summary
+         ("N rehearsals · last {date}") via a `CaseCard` that fetches `getCaseSessions`. NOTE: this
+         is one query per card (N+1) — fine at current scale + TanStack-cached; the clean fix is a
+         session-count field on the Case payload (backend), left as backlog below.
+      Dashboard test updated to mock `getCaseSessions`. Frontend 74 tests pass; tsc/lint/build clean.
+- [x] Cross-stack rubric: surface the judge's 4-criterion rubric on the scorecard as per-criterion
+      bars. Full stack, one pass, all suites green (agents 228, backend 95, frontend 75):
+      - Agent: `judge_assessment{,_expressive}.md` now ask for a `performance_criteria` object
+        (0-100 per dimension: command_of_record / responsiveness / argument_structure /
+        procedural_discipline); prompt + byte-goldens moved together. `judge._parse_criteria`
+        normalizes it to an ordered `[{name, score}]` (fail-safe: missing/garbage → dropped/[]),
+        threaded through `scorecard_builder.build_session_end_payload` (`criteria` key) + `main.py`.
+      - Backend: `ScorecardWriteIn.criteria` (+`CriterionIn`), `scorecards.criteria` JSON column
+        (migration **0006_scorecard_criteria**, backfilled `'[]'`), persisted in `write_scorecard`,
+        exposed via `ScorecardOut.criteria` (+`CriterionOut`).
+      - Frontend: `Scorecard.criteria` type + `toScorecard` mapping; `Scorecard.tsx` renders a
+        **Performance breakdown** card of per-criterion bars, colored by the shared `scoreColor`
+        band (omitted when empty). Overall score kept holistic (independent of the sub-scores).
+      NOTE: droplet needs `alembic upgrade head` (0006) before an agent posts a scorecard with
+      criteria — additive/backfilled, so old scorecards keep working.
+- [ ] (Tier-2 backlog) Add a `sessionCount` (and maybe `bestScore`) field to the Case payload to
+      remove the Dashboard per-card `getCaseSessions` N+1 (the CaseCard rehearsal summary).
 
 **Result:** All agent speech is now reliably heard (objections, judge, AND OC replies). Floor
 dynamics is now largely redundant (attorney can't cut OC off) — FLOOR_DYNAMICS can be set false.

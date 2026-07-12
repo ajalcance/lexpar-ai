@@ -1,8 +1,11 @@
 /**
  * File: src/components/TranscriptLine.tsx
- * Purpose: Renders a single transcript line, styled by speaker. The one line flagged as an
- *   interruption (an opposing-counsel objection) gets a distinct destructive treatment — an
- *   "OBJECTION" badge and red accent — so barge-ins are visually unmistakable.
+ * Purpose: Renders a single transcript line, styled by speaker. Each role carries a color identity
+ *   shared with the SparringVisualizer presence dots (blue = You, red = Opposing Counsel,
+ *   amber = Judge) — a leading colored dot on the label + a role-tinted bubble border — so the
+ *   transcript scans at a glance and reads as one system with the live-audio visual. The one line
+ *   flagged as an interruption (an opposing-counsel objection) gets a distinct destructive
+ *   treatment — an "OBJECTION" badge and red accent — so barge-ins are visually unmistakable.
  * Depends on: components/ui/badge, lib/types.ts, lib/utils (cn)
  * Related: pages/SparringRoom.tsx, hooks/useSparringSession.ts
  * Security notes: Displays transcript content (attorney work product) for the live session
@@ -27,9 +30,16 @@ const SPEAKER_ALIGN: Record<SpeakerRole, string> = {
 };
 
 const SPEAKER_BUBBLE: Record<SpeakerRole, string> = {
-  attorney: 'bg-card',
-  opposing_counsel: 'bg-secondary',
-  judge: 'bg-muted italic',
+  attorney: 'bg-card border-blue-500/40',
+  opposing_counsel: 'bg-secondary border-red-500/40',
+  judge: 'bg-muted italic border-amber-500/40',
+};
+
+/** Role color identity, shared with SparringVisualizer's presence dots. */
+const SPEAKER_DOT: Record<SpeakerRole, string> = {
+  attorney: 'bg-blue-500',
+  opposing_counsel: 'bg-red-500',
+  judge: 'bg-amber-500',
 };
 
 interface TranscriptLineProps {
@@ -48,6 +58,10 @@ export function TranscriptLine({ line, flaggedCitations = [] }: TranscriptLinePr
   return (
     <div className={cn('flex flex-col gap-1', SPEAKER_ALIGN[speaker])}>
       <div className="flex items-center gap-2">
+        <span
+          aria-hidden
+          className={cn('size-2 rounded-full', wasInterruption ? 'bg-red-500' : SPEAKER_DOT[speaker])}
+        />
         <span className="text-xs font-medium text-muted-foreground">
           {SPEAKER_LABEL[speaker]}
         </span>

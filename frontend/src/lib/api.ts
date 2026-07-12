@@ -148,6 +148,7 @@ interface ScorecardJson {
   strengths: string | null;
   weaknesses: string | null;
   judge_ruling: string | null;
+  criteria: { name: string; score: number }[] | null;
   created_at: string;
 }
 interface TranscriptJson {
@@ -213,6 +214,7 @@ const toScorecard = (j: ScorecardJson): Scorecard => ({
   strengths: j.strengths ?? '',
   weaknesses: j.weaknesses ?? '',
   judgeRuling: j.judge_ruling ?? '',
+  criteria: j.criteria ?? [],
   createdAt: j.created_at,
 });
 

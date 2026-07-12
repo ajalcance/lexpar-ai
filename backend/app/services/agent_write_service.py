@@ -130,6 +130,7 @@ def write_scorecard(db: DbSession, session_id: uuid.UUID, data: ScorecardWriteIn
         strengths=data.strengths,
         weaknesses=data.weaknesses,
         judge_ruling=data.judge_ruling,
+        criteria=[{"name": c.name, "score": c.score} for c in data.criteria],
     )
     db.add(scorecard)
     db.commit()

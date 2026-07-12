@@ -94,6 +94,7 @@ def build_session_end_payload(
     judge_ruling: str,
     performance_score: int | None = None,
     performance_notes: list[str] | None = None,
+    performance_criteria: list[dict] | None = None,
 ) -> dict:
     """The full POST /scorecard body: derived scorecard + the transcript batch.
 
@@ -103,7 +104,11 @@ def build_session_end_payload(
     join the weaknesses — otherwise (model failure, older worker) the original deterministic
     heuristic stands unchanged, so the scorecard can never come back empty or fabricated. This
     fixes the hollow "always 100 / no weaknesses" scorecard: sustained objections are rarer now
-    that the bench rules on the merits, so they alone no longer measure the performance."""
+    that the bench rules on the merits, so they alone no longer measure the performance.
+
+    `performance_criteria` is the per-dimension 0-100 breakdown ([{name, score}], already normalized
+    by judge._parse_criteria) — passed straight through for the scorecard's rubric bars. It is
+    purely additive: an empty/absent list simply means no breakdown is shown (never an error)."""
     score = performance_score if performance_score is not None else _overall_score(state)
     weaknesses = _weaknesses(state)
     if performance_notes:
@@ -115,5 +120,6 @@ def build_session_end_payload(
         "strengths": _strengths(state),
         "weaknesses": weaknesses,
         "judge_ruling": judge_ruling,
+        "criteria": performance_criteria or [],
         "transcript": build_transcript(state),
     }

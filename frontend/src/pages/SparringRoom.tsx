@@ -15,7 +15,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Mic, MicOff } from 'lucide-react';
+import { Loader2, Mic, MicOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Breadcrumbs } from '@/components/Breadcrumbs';
@@ -118,18 +118,31 @@ export function SparringRoom() {
                   ? 'destructive'
                   : 'secondary'
               }
+              className="gap-1.5"
             >
               {/* activeSpeaker === 'judge' is structural (the judge participant's own audio);
                   judgeSpeaking is the fallback-path synthetic label. ocThinking bridges the silent
                   gap while OC composes its (non-interruptible) reply — it yields to the real
-                  "speaking" label once OC's audio starts. */}
-              {judgeSpeaking || activeSpeaker === 'judge'
-                ? 'Judge speaking'
-                : activeSpeaker === 'opposing_counsel'
-                  ? 'Opposing counsel speaking'
-                  : ocThinking
-                    ? 'Opposing counsel responding — please hold'
-                    : 'Listening'}
+                  "speaking" label once OC's audio starts. When idle the badge reflects mic state:
+                  a live green pulse + "Listening" when hot, or "Muted" when the attorney isn't
+                  being heard (previously it misleadingly still read "Listening" while muted). */}
+              {judgeSpeaking || activeSpeaker === 'judge' ? (
+                'Judge speaking'
+              ) : activeSpeaker === 'opposing_counsel' ? (
+                'Opposing counsel speaking'
+              ) : ocThinking ? (
+                'Opposing counsel responding — please hold'
+              ) : isMuted ? (
+                'Muted'
+              ) : (
+                <>
+                  <span
+                    aria-hidden
+                    className="size-1.5 rounded-full bg-green-500 motion-safe:animate-pulse"
+                  />
+                  Listening
+                </>
+              )}
             </Badge>
           )}
           {/* Mute is hidden during the finale — the attorney is done arguing while the judge rules. */}
@@ -184,10 +197,14 @@ export function SparringRoom() {
               levels={audioLevels}
               enabled={mode === 'live'}
               audioReady={!audioBlocked}
+              ocThinking={ocThinking}
             />
 
             {mode === 'connecting' && (
-              <p className="text-sm text-muted-foreground">Connecting to the courtroom…</p>
+              <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="size-4 motion-safe:animate-spin" />
+                Connecting to the courtroom…
+              </p>
             )}
 
             {mode === 'live' && (

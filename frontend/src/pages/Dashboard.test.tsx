@@ -26,6 +26,8 @@ describe('Dashboard', () => {
 
   it('lists a case linking to its detail page', async () => {
     vi.spyOn(api, 'getCases').mockResolvedValue([CASE]);
+    // Each card fetches its own sessions for the rehearsal summary.
+    vi.spyOn(api, 'getCaseSessions').mockResolvedValue([]);
     renderWithProviders(<Dashboard />);
 
     const link = await screen.findByRole('link', { name: /Doe v\. Roe/ });

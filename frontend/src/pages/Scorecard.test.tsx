@@ -20,6 +20,10 @@ const fakeScorecard = {
   strengths: 'Clear framing of the good-faith argument.',
   weaknesses: 'Drifted from the record.',
   judgeRuling: 'The position holds up with cleaner sequencing.',
+  criteria: [
+    { name: 'Command of the record', score: 82 },
+    { name: 'Responsiveness to rulings', score: 90 },
+  ],
   createdAt: '2026-07-07T00:00:00Z',
 };
 
@@ -44,6 +48,20 @@ describe('Scorecard', () => {
     expect(screen.getByText('Weaknesses')).toBeInTheDocument();
     expect(screen.getByText(fakeScorecard.strengths)).toBeInTheDocument();
     expect(screen.getByText(fakeScorecard.judgeRuling)).toBeInTheDocument();
+    // The per-dimension rubric breakdown renders one labeled bar per criterion.
+    expect(screen.getByText('Performance breakdown')).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Command of the record' })).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Responsiveness to rulings' })).toBeInTheDocument();
+  });
+
+  it('omits the performance breakdown when the judge gave no criteria', async () => {
+    vi.spyOn(api, 'getScorecard').mockResolvedValue({ ...fakeScorecard, criteria: [] });
+    vi.spyOn(api, 'getSessionTranscript').mockResolvedValue([]);
+    mockProvenance();
+    renderWithProviders(<Scorecard />);
+
+    expect(await screen.findByText('78')).toBeInTheDocument();
+    expect(screen.queryByText('Performance breakdown')).not.toBeInTheDocument();
   });
 
   it('preserves the newlines in multi-line strengths (whitespace-pre-line)', async () => {

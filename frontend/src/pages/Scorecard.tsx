@@ -10,6 +10,7 @@
 
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import {
   Card,
@@ -18,7 +19,9 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Breadcrumbs, type Crumb } from '@/components/Breadcrumbs';
+import { ScoreDial, scoreColor } from '@/components/ScoreDial';
 import { TranscriptLine } from '@/components/TranscriptLine';
 import * as api from '@/lib/api';
 import { ApiError } from '@/lib/api';
@@ -83,9 +86,18 @@ export function Scorecard() {
 
   if (isLoading) {
     return (
-      <p className="text-sm text-muted-foreground">
-        Scoring your session… the judge is finalizing your scorecard.
-      </p>
+      <div className="flex flex-col gap-6">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="size-4 motion-safe:animate-spin" />
+          Scoring your session… the judge is finalizing your scorecard.
+        </div>
+        <Skeleton className="size-40 self-center rounded-full" />
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Skeleton className="h-28" />
+          <Skeleton className="h-28" />
+        </div>
+        <Skeleton className="h-40" />
+      </div>
     );
   }
 
@@ -121,24 +133,70 @@ export function Scorecard() {
       <h1 className="text-2xl font-semibold">Scorecard</h1>
 
       <Card>
-        <CardHeader>
+        <CardContent className="flex flex-col items-center gap-2 pt-6">
           <CardDescription>Overall score</CardDescription>
-          <CardTitle className="text-5xl">{scorecard.overallScore}</CardTitle>
-        </CardHeader>
+          <ScoreDial score={scorecard.overallScore} />
+        </CardContent>
       </Card>
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      {scorecard.criteria.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Strengths</CardTitle>
+            <CardTitle className="text-lg">Performance breakdown</CardTitle>
+            <CardDescription>
+              The judge's grade across the four dimensions it weighs.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            {scorecard.criteria.map((criterion) => {
+              const value = Math.max(0, Math.min(100, Math.round(criterion.score)));
+              const color = scoreColor(value);
+              return (
+                <div key={criterion.name} className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between text-sm">
+                    <span>{criterion.name}</span>
+                    <span className="font-medium tabular-nums" style={{ color }}>
+                      {value}
+                    </span>
+                  </div>
+                  <div
+                    className="h-2 overflow-hidden rounded-full bg-muted"
+                    role="progressbar"
+                    aria-valuenow={value}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-label={criterion.name}
+                  >
+                    <div
+                      className="h-full rounded-full motion-safe:transition-[width] motion-safe:duration-700"
+                      style={{ width: `${value}%`, backgroundColor: color }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Card className="border-green-500/30">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <CheckCircle2 className="size-4 text-green-500" aria-hidden />
+              Strengths
+            </CardTitle>
           </CardHeader>
           <CardContent className="text-sm whitespace-pre-line text-muted-foreground">
             {scorecard.strengths}
           </CardContent>
         </Card>
-        <Card>
+        <Card className="border-amber-500/30">
           <CardHeader>
-            <CardTitle className="text-lg">Weaknesses</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <AlertTriangle className="size-4 text-amber-500" aria-hidden />
+              Weaknesses
+            </CardTitle>
           </CardHeader>
           <CardContent className="text-sm whitespace-pre-line text-muted-foreground">
             {scorecard.weaknesses}

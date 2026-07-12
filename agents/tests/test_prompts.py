@@ -55,10 +55,15 @@ STATIC_GOLDENS = {
         "judge, not a cheerleader: 85+ only for a genuinely strong showing; a session that merely "
         "avoided sustained objections is not automatically excellent. Also list 1-3 "
         "`performance_notes` — specific, constructive weaknesses you observed in the transcript "
-        "(empty array only if the performance was genuinely without fault).\n"
+        "(empty array only if the performance was genuinely without fault). Give a 0-100 sub-score "
+        "for each of those four dimensions in `performance_criteria` — keys `command_of_record`, "
+        "`responsiveness`, `argument_structure`, `procedural_discipline` — consistent with the "
+        "overall grade.\n"
         'Respond ONLY with JSON: {"rulings": ["sustained"|"overruled", ...], "established_facts": '
         '["<fact>", ...], "closing_ruling": "<what you say aloud>", "performance_score": <0-100>, '
-        '"performance_notes": ["<specific weakness>", ...]}. The rulings array must have '
+        '"performance_notes": ["<specific weakness>", ...], "performance_criteria": '
+        '{"command_of_record": <0-100>, "responsiveness": <0-100>, "argument_structure": <0-100>, '
+        '"procedural_discipline": <0-100>}}. The rulings array must have '
         "exactly one entry per [pending] objection, in the same order (empty array if none are "
         "pending)."
     ),

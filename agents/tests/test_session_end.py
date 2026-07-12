@@ -83,6 +83,18 @@ def test_payload_transcript_shape():
     assert isinstance(turn["spoken_at"], str)  # ISO timestamp
 
 
+def test_payload_passes_criteria_through():
+    criteria = [{"name": "Command of the record", "score": 80}]
+    payload = build_session_end_payload(SessionState(), "r", performance_criteria=criteria)
+    assert payload["criteria"] == criteria
+
+
+def test_payload_criteria_defaults_to_empty_list():
+    # Older worker / model failure: no breakdown → empty list, never missing key or None.
+    payload = build_session_end_payload(SessionState(), "r")
+    assert payload["criteria"] == []
+
+
 # --- Report transcript: order by spoken time + merge fragments (coalesce_transcript) -------------
 
 from datetime import datetime, timedelta, timezone  # noqa: E402

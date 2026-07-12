@@ -12,6 +12,14 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict
 
 
+class CriterionOut(BaseModel):
+    """One rubric dimension of the judge's performance breakdown, rendered as a bar on the
+    scorecard (name + 0-100 sub-score)."""
+
+    name: str
+    score: float
+
+
 class ScorecardOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -21,6 +29,7 @@ class ScorecardOut(BaseModel):
     strengths: str | None = None
     weaknesses: str | None = None
     judge_ruling: str | None = None
+    criteria: list[CriterionOut] = []
     created_at: datetime
 
 

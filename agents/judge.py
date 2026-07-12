@@ -35,6 +35,31 @@ logger = logging.getLogger("lexpar.agents.judge")
 _VALID_RULINGS = ("sustained", "overruled")
 _FALLBACK_CLOSING = "The court has considered the arguments. That concludes this session."
 
+# The four performance rubric dimensions (JSON key → the human label shown on the scorecard), in
+# the order the bench grades them. The judge emits a 0-100 sub-score per key in
+# `performance_criteria` (scorecard depth); the labels are the display names rendered as bars.
+_PERFORMANCE_CRITERIA: tuple[tuple[str, str], ...] = (
+    ("command_of_record", "Command of the record"),
+    ("responsiveness", "Responsiveness to rulings"),
+    ("argument_structure", "Argument structure"),
+    ("procedural_discipline", "Procedural discipline"),
+)
+
+
+def _parse_criteria(raw: object) -> list[dict]:
+    """Normalize the judge's per-dimension sub-scores into an ordered [{name, score}] list.
+    Fail-safe like the overall score: any missing/non-numeric entry is dropped (the scorecard just
+    shows fewer bars, never a fabricated one), and a non-dict payload yields [] — so an older worker
+    or a model that omits the field degrades to no breakdown, not an error."""
+    if not isinstance(raw, dict):
+        return []
+    parsed: list[dict] = []
+    for key, label in _PERFORMANCE_CRITERIA:
+        value = raw.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            parsed.append({"name": label, "score": max(0, min(100, int(value)))})
+    return parsed
+
 _SPEAKER_LABELS = {
     "attorney": "ATTORNEY",
     "opposing_counsel": "OPPOSING COUNSEL",
@@ -197,6 +222,7 @@ def _parse_assessment(content: str) -> dict:
         "closing_ruling": closing,
         "performance_score": score,
         "performance_notes": notes,
+        "performance_criteria": _parse_criteria(data.get("performance_criteria")),
     }
 
 
@@ -350,6 +376,7 @@ def assess_session(state: SessionState, *, expressive: bool = False) -> dict:
             "closing_ruling_spoken": _FALLBACK_CLOSING,
             "performance_score": None,
             "performance_notes": [],
+            "performance_criteria": [],
             "chunk_ids": [],
             "flagged_citations": [],
         }

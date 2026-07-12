@@ -46,6 +46,19 @@
     --radius-2xl: calc(var(--radius) * 1.8);
     --radius-3xl: calc(var(--radius) * 2.2);
     --radius-4xl: calc(var(--radius) * 2.6);
+    /* Gentle "opposing counsel composing" breathing pulse (halo + OC presence dot). Slow ease so it
+       reads as a soft breathing glow, not an aggressive blink. See SparringVisualizer. */
+    --animate-oc-pulse: oc-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes oc-pulse {
+    0%,
+    100% {
+        opacity: 0.55;
+    }
+    50% {
+        opacity: 1;
+    }
 }
 
 :root {
