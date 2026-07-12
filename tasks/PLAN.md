@@ -3029,6 +3029,17 @@ pre-submission if time allows — finalize scope before starting.)
          use v3 today via JUDGE_EXPRESSIVE_FINAL_RULING=true.
       Env recommendations recorded below. Agents 249 + ruff; frontend 77 + tsc/lint/build.
       WATCH: decide=6.1s classifier latency (provider variance); "no verified sentences" silences.
+- [x] 09:09 session follow-ups (24ea16c). Session showed real improvement (mixed, well-reasoned
+      rulings; decorum; recovery), but the case-number objection misfired+sustained a THIRD time.
+      Re-derived property: always the OPENING turn — empty record ⇒ everything "assumes facts".
+      Front-loaded the housekeeping carve-outs into para 1 of both the classifier and quick-ruling
+      prompts (mid-paragraph placement didn't survive gpt-oss attention); goldens together.
+      Disambiguated the "no verified sentences" log (12×/session was mostly objection/bench
+      cancellations mislabeled as verifier rejections; real fail-closed now distinct).
+      WATCH: decide=2.7-6.1s (provider variance, dominates objection latency now that
+      interrupt+say is capped ~2-3.8s); keyterm PHRASES (bigrams — "ultra vires" as a phrase, the
+      single-token boosts didn't stop "ultra virus"); confirm deployed SHA before judging prompt
+      compliance (7ce670d pushed 13min before the test session).
 - [ ] (Tier-2 backlog) Add a `sessionCount` (and maybe `bestScore`) field to the Case payload to
       remove the Dashboard per-card `getCaseSessions` N+1 (the CaseCard rehearsal summary).
 
