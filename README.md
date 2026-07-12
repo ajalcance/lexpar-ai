@@ -12,9 +12,8 @@ Built for the **AMD Developer Hackathon — Act II** (Track 3 · Unicorn).
 
 | | |
 |---|---|
-| 🎥 **Demo video** | On the lablab submission page — a full, live-recorded session |
 | 🌐 **Live app** | **https://165-245-129-142.sslip.io/login** — runs on an AMD Instinct MI300X |
-| 🔑 **Credentials** | Provided with the submission (self-service registration is disabled on the public deploy) |
+| 🔑 **Demo credentials** | `counsel@lexpar.ai` / `admin1234` — for judging only, rotated after the competition (self-service registration is disabled) |
 
 **60-second walkthrough (no legal knowledge needed):** log in → open the case → **Start session**.
 The session page shows a **read-aloud script on the left** — just read each line into your mic.
