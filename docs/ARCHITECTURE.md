@@ -1222,8 +1222,21 @@ refused here, not stored). Caddy adds an **edge** `request_body max_size` (60 MB
 bodies are dropped at the proxy before the app's multipart parser spools them. The frontend
 pre-checks size/type for UX; the server is the real control.
 
+**Active-content gate (the PDF-appropriate malware guard).** Uploaded PDFs are never served back
+to other users — they are only parsed server-side (pypdf) for ingestion — so instead of a generic
+AV engine, uploads are scanned for the PDF threat vectors themselves: embedded JavaScript
+(`/JavaScript`, `/JS`), auto-run actions (`/OpenAction`, `/AA`), launch actions (`/Launch`),
+embedded file payloads (`/EmbeddedFile`), rich media (`/RichMedia`), XFA scripting (`/XFA`), and
+encrypted PDFs (`/Encrypt` — uninspectable, and ingestion couldn't extract them anyway). Matching
+uses PDF-name boundaries (benign `/AAPL` metadata never trips `/AA`), and rejection returns a
+remediation message ("export a flattened copy"). Honest scope: tokens hidden inside compressed
+object streams evade a raw scan — a ClamAV sidecar remains the full-AV production follow-up below;
+this gate covers the overwhelmingly common cases at zero infra cost.
+
 ### Follow-ups (production hardening)
 - Server-side encryption at rest on the pleading bucket; explicit retention policy (§11).
+- Full AV scanning (ClamAV sidecar) on uploads — the active-content gate above covers the
+  PDF-specific vectors; signature-based AV adds coverage for payloads hidden in compressed streams.
 - OCR for scanned/image pleadings (ingest currently marks them `failed` with a clear message).
 - pgvector when case volume justifies ANN over brute-force cosine.
 - Rate-limit uploads; virus/scan the file; per-firm tenancy on real auth.

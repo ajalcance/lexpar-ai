@@ -3133,6 +3133,13 @@ pre-submission if time allows — finalize scope before starting.)
       All three routes (case pleading upload/replace, court rule upload/replace) route through it.
       Caddy `request_body max_size 60MB` drops egregious bodies at the edge. Frontend PleadingUpload
       pre-checks size/type for UX. Backend 105, frontend 81; ruff/tsc/lint/build clean.
+- [x] PDF active-content gate (the PDF-appropriate "virus scan"). Stored PDFs are never re-served
+      (parsed server-side only), so instead of a ClamAV sidecar the validator scans for the actual
+      PDF threat vectors: /JavaScript /JS /OpenAction /AA /Launch /EmbeddedFile /RichMedia /XFA
+      + /Encrypt (uninspectable), with PDF-name boundaries (no /AAPL→/AA false positives) and a
+      remediation message ("export a flattened copy"). Honest scope documented (compressed-stream
+      obfuscation evades a raw scan → ClamAV stays a production follow-up in ARCH). Backend 109
+      (+4: all vectors fire, boundary cases don't, clean passes, route 422s). No new deps/infra.
 - [ ] (Tier-2 backlog) Add a `sessionCount` (and maybe `bestScore`) field to the Case payload to
       remove the Dashboard per-card `getCaseSessions` N+1 (the CaseCard rehearsal summary).
 - [ ] (Backlog) Show the case profile on CaseDetail; prefill profile fields from pleading
