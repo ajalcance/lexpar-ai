@@ -89,6 +89,12 @@ export function DemoScript({ className }: { className?: string }) {
         </p>
       </div>
 
+      <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed">
+        The outcomes below are the <strong>expected</strong> behavior by design. Opposing Counsel and
+        the Judge are live AI agents that reason over their own session memory — they form their own
+        objections and rulings in real time, so what actually fires may differ from what’s noted.
+      </p>
+
       <ol className="flex flex-col gap-3">
         {SEGMENTS.map((segment) => (
           <li key={segment.n} className="flex flex-col gap-1 border-t pt-3 first:border-t-0 first:pt-0">

@@ -21,6 +21,11 @@ describe('DemoScript', () => {
     expect(screen.getAllByText('Should be sustained').length).toBeGreaterThan(0);
   });
 
+  it('makes clear the outcomes are expected, not scripted (live agents reason on their own)', () => {
+    render(<DemoScript />);
+    expect(screen.getByText(/reason over their own session memory/)).toBeInTheDocument();
+  });
+
   it('shows the real-jurisprudence disclaimer', () => {
     render(<DemoScript />);
     expect(screen.getByText(/G\.R\. No\. 218738/)).toBeInTheDocument();
