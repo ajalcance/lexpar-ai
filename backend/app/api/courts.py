@@ -90,10 +90,20 @@ def create_court(
 
 @router.get("", response_model=list[CourtOut])
 def list_courts(
-    _user: User = Depends(get_current_user),
+    include_archived: bool = False,
+    user: User = Depends(get_current_user),
     db: DbSession = Depends(get_db),
 ) -> list[CourtOut]:
-    """The active-court catalog for the case-creation dropdown — any authenticated user."""
+    """The active-court catalog for the case-creation dropdown — any authenticated user.
+    `include_archived=true` is the ADMIN catalog (the /admin courts list): every forum including
+    archived ones, so a retired court stays visible and purgeable instead of vanishing."""
+    if include_archived:
+        if user.role != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Administrator role required for the full catalog.",
+            )
+        return court_service.list_all_courts(db)
     return court_service.list_active_courts(db)
 
 
@@ -272,6 +282,12 @@ def purge_court(
     _admin: User = Depends(require_admin),
     db: DbSession = Depends(get_db),
 ) -> None:
-    """HARD tier for a whole forum — 409 while ANY case references it (purge/reassign first)."""
-    court = court_service.get_court(db, court_id)
+    """HARD tier for a whole forum — 409 while ANY case references it (purge/reassign first).
+    Fetches ARCHIVED-INCLUSIVE (plain db.get, not get_court, which filters archived rows) — an
+    archived court must remain purgeable, otherwise it is an invisible, undeletable orphan."""
+    from app.models.court import Court
+
+    court = db.get(Court, court_id)
+    if court is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Court not found.")
     court_service.purge_court(db, court)

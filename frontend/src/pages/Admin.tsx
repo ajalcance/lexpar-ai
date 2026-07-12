@@ -11,7 +11,8 @@
 
 import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Shield } from 'lucide-react';
+import { Plus, Shield } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -24,6 +25,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RuleDocumentRow } from '@/components/RuleDocumentRow';
 import * as api from '@/lib/api';
+import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth';
 
 export function Admin() {
@@ -33,6 +35,7 @@ export function Admin() {
   const [courtName, setCourtName] = useState('');
   const [jurisdiction, setJurisdiction] = useState('');
   const [selectedCourtId, setSelectedCourtId] = useState('');
+  const [showCreate, setShowCreate] = useState(false);
   const [ruleFile, setRuleFile] = useState<File | null>(null);
   const [ruleTitle, setRuleTitle] = useState('');
   const [sourceCitation, setSourceCitation] = useState('');
@@ -40,15 +43,22 @@ export function Admin() {
 
   const isAdmin = user?.role === 'admin';
 
+  // The ADMIN catalog: every forum including archived ones (they stay visible — and purgeable —
+  // instead of vanishing). Key is namespaced under ['courts'] so create/archive/purge can
+  // invalidate both this and the case-creation (active-only) list with one prefix.
   const { data: courts } = useQuery({
-    queryKey: ['courts'],
-    queryFn: api.getCourts,
+    queryKey: ['courts', 'admin'],
+    queryFn: () => api.getCourts({ includeArchived: true }),
     enabled: isAdmin,
   });
+  const selectedCourt = courts?.find((court) => court.id === selectedCourtId);
+  // The list is the landing view; the create form is a toggled affordance — auto-open only when
+  // the catalog is empty (nothing to list yet, creation is the only sensible next step).
+  const createOpen = showCreate || courts?.length === 0;
   const { data: ruleDocs } = useQuery({
     queryKey: ['court-rules', selectedCourtId],
     queryFn: () => api.getCourtRules(selectedCourtId),
-    enabled: isAdmin && !!selectedCourtId,
+    enabled: isAdmin && !!selectedCourtId && !selectedCourt?.archived,
     // poll while any document is still ingesting so statuses resolve without a manual refresh
     refetchInterval: (query) =>
       query.state.data?.some((d) => d.ingestionStatus === 'pending') ? 2000 : false,
@@ -63,6 +73,7 @@ export function Admin() {
     onSuccess: async (court) => {
       setCourtName('');
       setJurisdiction('');
+      setShowCreate(false);
       setSelectedCourtId(court.id);
       await queryClient.invalidateQueries({ queryKey: ['courts'] });
     },
@@ -109,74 +120,116 @@ export function Admin() {
         </p>
       </div>
 
+      {/* The catalog is the landing view (mirrors the Cases dashboard): every forum listed —
+          archived ones included, badged — with creation as a toggled affordance, not the lead. */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Create a court</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form
-            className="flex flex-col gap-4"
-            onSubmit={(event: FormEvent) => {
-              event.preventDefault();
-              createCourt.mutate();
-            }}
-          >
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="courtName">Court name</Label>
-              <Input
-                id="courtName"
-                value={courtName}
-                onChange={(event) => setCourtName(event.target.value)}
-                required
-              />
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <CardTitle className="text-lg">Courts</CardTitle>
+              <CardDescription>
+                Every forum in the catalog. Select one to manage its rule corpus.
+              </CardDescription>
             </div>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="jurisdiction">Jurisdiction description</Label>
-              <Input
-                id="jurisdiction"
-                value={jurisdiction}
-                onChange={(event) => setJurisdiction(event.target.value)}
-              />
-            </div>
-            {createCourt.isError && (
-              <p className="text-sm text-destructive">Could not create the court.</p>
-            )}
-            <Button type="submit" disabled={createCourt.isPending}>
-              Create court
+            <Button variant="outline" size="sm" onClick={() => setShowCreate((open) => !open)}>
+              <Plus className="size-4" />
+              New court
             </Button>
-          </form>
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          {courts?.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              No courts yet — create the first forum below.
+            </p>
+          )}
+          {courts && courts.length > 0 && (
+            <div className="flex flex-col gap-2">
+              {courts.map((court) => (
+                <button
+                  key={court.id}
+                  type="button"
+                  onClick={() => setSelectedCourtId(court.id)}
+                  className={cn(
+                    'flex items-center justify-between gap-3 rounded-md border px-4 py-3 text-left text-sm transition-colors hover:border-primary/40',
+                    selectedCourtId === court.id && 'border-primary bg-muted/40',
+                  )}
+                >
+                  <span className="flex items-center gap-2">
+                    <span className="font-medium">{court.name}</span>
+                    {court.archived && <Badge variant="outline">Archived</Badge>}
+                  </span>
+                  {court.jurisdictionDescription && (
+                    <span className="truncate text-xs text-muted-foreground">
+                      {court.jurisdictionDescription}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {createOpen && (
+            <form
+              className="flex flex-col gap-4 rounded-md border p-4"
+              onSubmit={(event: FormEvent) => {
+                event.preventDefault();
+                createCourt.mutate();
+              }}
+            >
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="courtName">Court name</Label>
+                <Input
+                  id="courtName"
+                  value={courtName}
+                  onChange={(event) => setCourtName(event.target.value)}
+                  required
+                />
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="jurisdiction">Jurisdiction description</Label>
+                <Input
+                  id="jurisdiction"
+                  value={jurisdiction}
+                  onChange={(event) => setJurisdiction(event.target.value)}
+                />
+              </div>
+              {createCourt.isError && (
+                <p className="text-sm text-destructive">Could not create the court.</p>
+              )}
+              <Button type="submit" disabled={createCourt.isPending}>
+                Create court
+              </Button>
+            </form>
+          )}
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Rule documents</CardTitle>
+          <CardTitle className="text-lg">
+            Rule documents{selectedCourt ? ` — ${selectedCourt.name}` : ''}
+          </CardTitle>
           <CardDescription>
             Upload OFFICIAL rule documents only (court issuances, statutes from government
             sources) — record where each came from. The AI cites only what is ingested here.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="adminCourt">Court</Label>
-            <select
-              id="adminCourt"
-              className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-              value={selectedCourtId}
-              onChange={(event) => setSelectedCourtId(event.target.value)}
-            >
-              <option value="" disabled>
-                Select a court…
-              </option>
-              {courts?.map((court) => (
-                <option key={court.id} value={court.id}>
-                  {court.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          {!selectedCourt && (
+            <p className="text-sm text-muted-foreground">
+              Select a court above to manage its rules.
+            </p>
+          )}
 
-          {selectedCourtId && (
+          {selectedCourt?.archived && (
+            <p className="text-sm text-muted-foreground">
+              This forum is archived — its rules are out of retrieval and uploads are closed. You
+              can purge it permanently below.
+            </p>
+          )}
+
+          {selectedCourt && !selectedCourt.archived && (
             <>
               <form
                 className="flex flex-col gap-4"
@@ -248,10 +301,11 @@ export function Admin() {
         </CardContent>
       </Card>
 
-      {selectedCourtId && (
+      {selectedCourt && (
         <CourtDangerZone
-          courtId={selectedCourtId}
-          courtName={courts?.find((c) => c.id === selectedCourtId)?.name ?? ''}
+          courtId={selectedCourt.id}
+          courtName={selectedCourt.name}
+          archived={selectedCourt.archived}
           onGone={() => {
             setSelectedCourtId('');
             void queryClient.invalidateQueries({ queryKey: ['courts'] });
@@ -268,10 +322,13 @@ export function Admin() {
 function CourtDangerZone({
   courtId,
   courtName,
+  archived,
   onGone,
 }: {
   courtId: string;
   courtName: string;
+  /** Already archived → only Purge is offered (re-archiving is meaningless and the route 404s). */
+  archived: boolean;
   onGone: () => void;
 }) {
   const [confirming, setConfirming] = useState<'archive' | 'purge' | null>(null);
@@ -303,14 +360,16 @@ function CourtDangerZone({
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={archive.isPending}
-            onClick={() => setConfirming('archive')}
-          >
-            Archive court
-          </Button>
+          {!archived && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={archive.isPending}
+              onClick={() => setConfirming('archive')}
+            >
+              Archive court
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="sm"

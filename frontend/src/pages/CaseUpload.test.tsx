@@ -78,6 +78,7 @@ describe('CaseUpload', () => {
         name: 'Test Commercial Court',
         jurisdictionDescription: null,
         isActive: true,
+        archived: false,
       },
     ]);
     const createCase = vi

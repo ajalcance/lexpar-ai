@@ -43,6 +43,13 @@ def list_active_courts(db: DbSession) -> list[Court]:
     return list(db.scalars(stmt))
 
 
+def list_all_courts(db: DbSession) -> list[Court]:
+    """The ADMIN catalog: every court including archived ones (active first, then by name) — an
+    archived forum must stay visible (and purgeable) instead of silently vanishing from the UI."""
+    stmt = select(Court).order_by(Court.deleted_at.isnot(None), Court.name)
+    return list(db.scalars(stmt))
+
+
 def get_court(db: DbSession, court_id: uuid.UUID) -> Court:
     court = db.scalar(
         select(Court).where(Court.id == court_id, Court.deleted_at.is_(None))

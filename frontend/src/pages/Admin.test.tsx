@@ -37,7 +37,7 @@ describe('Admin', () => {
     expect(screen.queryByText('Create a court')).not.toBeInTheDocument();
   });
 
-  it('lets an admin create a court through the API', async () => {
+  it('lets an admin create a court through the API (form auto-opens on an empty catalog)', async () => {
     useAuthStore.setState({ user: { ...attorney, role: 'admin' }, token: 't' });
     vi.spyOn(api, 'getCourts').mockResolvedValue([]);
     const createCourt = vi.spyOn(api, 'createCourt').mockResolvedValue({
@@ -45,6 +45,7 @@ describe('Admin', () => {
       name: 'Test Commercial Court',
       jurisdictionDescription: 'test forum',
       isActive: true,
+      archived: false,
     });
     const user = userEvent.setup();
     renderWithProviders(<Admin />);
@@ -59,6 +60,36 @@ describe('Admin', () => {
         jurisdictionDescription: 'test forum',
       });
     });
+  });
+
+  it('lands on the courts list — every forum visible, archived ones badged, create form closed', async () => {
+    useAuthStore.setState({ user: { ...attorney, role: 'admin' }, token: 't' });
+    const getCourts = vi.spyOn(api, 'getCourts').mockResolvedValue([
+      {
+        id: 'court-1',
+        name: 'Special Commercial Court',
+        jurisdictionDescription: 'Commercial disputes',
+        isActive: true,
+        archived: false,
+      },
+      {
+        id: 'court-2',
+        name: 'Retired Forum',
+        jurisdictionDescription: null,
+        isActive: false,
+        archived: true,
+      },
+    ]);
+    renderWithProviders(<Admin />);
+
+    // The catalog is the landing view — both forums listed, the archived one badged.
+    expect(await screen.findByText('Special Commercial Court')).toBeInTheDocument();
+    expect(screen.getByText('Retired Forum')).toBeInTheDocument();
+    expect(screen.getByText('Archived')).toBeInTheDocument();
+    // The admin catalog is requested (archived included), and the create form stays closed
+    // when courts exist (creation is a toggled affordance, not the landing view).
+    expect(getCourts).toHaveBeenCalledWith({ includeArchived: true });
+    expect(screen.queryByLabelText('Court name')).not.toBeInTheDocument();
   });
 
 });

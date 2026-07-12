@@ -118,6 +118,7 @@ interface CourtJson {
   name: string;
   jurisdiction_description: string | null;
   is_active: boolean;
+  archived: boolean;
 }
 interface CourtRuleDocumentJson {
   id: string;
@@ -193,6 +194,7 @@ const toCourt = (j: CourtJson): Court => ({
   name: j.name,
   jurisdictionDescription: j.jurisdiction_description,
   isActive: j.is_active,
+  archived: j.archived ?? false,
 });
 
 const toCourtRuleDocument = (j: CourtRuleDocumentJson): CourtRuleDocument => ({
@@ -282,8 +284,11 @@ export async function createCase(input: {
 }
 
 /** The active-court catalog (§13) — feeds the case-creation Court selector. */
-export async function getCourts(): Promise<Court[]> {
-  const data = await request<CourtJson[]>('/api/courts');
+export async function getCourts(options?: { includeArchived?: boolean }): Promise<Court[]> {
+  // include_archived=true is the ADMIN catalog (all forums incl. archived); default = the
+  // active-only list that feeds the case-creation dropdown.
+  const query = options?.includeArchived ? '?include_archived=true' : '';
+  const data = await request<CourtJson[]>(`/api/courts${query}`);
   return data.map(toCourt);
 }
 

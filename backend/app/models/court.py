@@ -31,3 +31,9 @@ class Court(Base):
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    @property
+    def archived(self) -> bool:
+        """Soft-archived (retired). Surfaced on the admin catalog (CourtOut.archived) so archived
+        forums stay visible — and purgeable — instead of silently vanishing from the UI."""
+        return self.deleted_at is not None

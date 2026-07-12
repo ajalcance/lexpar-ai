@@ -71,6 +71,8 @@ export interface Court {
   name: string;
   jurisdictionDescription: string | null;
   isActive: boolean;
+  /** Soft-archived (retired) — shown on the admin catalog; always false on the active list. */
+  archived: boolean;
 }
 
 /** Ingestion status of an admin-uploaded court rule document (§13). */

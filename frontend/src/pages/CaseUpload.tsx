@@ -47,7 +47,7 @@ export function CaseUpload() {
   // §13: the forum whose procedural rules ground this case. REQUIRED when the catalog has
   // courts; an unseeded instance (no courts yet) may still create cases, with a visible notice
   // that sessions won't have rules grounding until an admin adds the court.
-  const { data: courts } = useQuery({ queryKey: ['courts'], queryFn: api.getCourts });
+  const { data: courts } = useQuery({ queryKey: ['courts'], queryFn: () => api.getCourts() });
   const courtsAvailable = (courts?.length ?? 0) > 0;
 
   const createCase = useMutation({

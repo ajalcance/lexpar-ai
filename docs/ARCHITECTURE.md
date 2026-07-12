@@ -1423,6 +1423,12 @@ authenticate** on a deployment with no active admin is promoted automatically
 (`auth_service.ensure_admin_bootstrap`, one atomic conditional UPDATE — see LESSONS for the
 race-safety reasoning). So the entire setup is a **pure browser workflow**: log in → `/admin` →
 create the Court → upload the official rule PDFs → they ingest → new cases select that court.
+`/admin` lands on the **courts catalog** (mirrors the Cases dashboard): every forum listed —
+archived ones included, badged (`GET /api/courts?include_archived=true`, admin-only; the plain
+route stays the active-only case-creation list) — with creation as a toggled "New court"
+affordance (auto-open only on an empty catalog). Selecting a court drives the rule-documents and
+danger-zone sections; an archived forum shows purge-only (and the purge route fetches
+archived-inclusive — previously an archived court 404'd on purge: invisible AND undeletable).
 `scripts/seed_court.py` remains **only** as optional CI/headless automation (it grants no roles and
 fails loudly rather than ever synthesizing rule text) — never part of the normal operator path.
 

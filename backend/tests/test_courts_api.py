@@ -528,3 +528,36 @@ def test_relevance_floor_returns_fewer_and_zero_without_padding(db_session):
         db_session, court.id, "unrelated words", k=4, embedder=lambda q: [1.0, 0.0], min_score=0.0,
     )
     assert len(padded) == 2
+
+
+# --- admin catalog (include_archived) -------------------------------------------------------------
+
+def test_admin_catalog_includes_archived_courts(client, admin_headers, db_session):
+    from datetime import datetime, timezone
+
+    _court(db_session, name="Active Court")
+    _court(db_session, name="Archived Court", deleted_at=datetime.now(timezone.utc))
+    resp = client.get("/api/courts?include_archived=true", headers=admin_headers)
+    assert resp.status_code == 200
+    by_name = {c["name"]: c for c in resp.json()}
+    assert by_name["Active Court"]["archived"] is False
+    assert by_name["Archived Court"]["archived"] is True
+    # The regular catalog still hides it (case creation is unaffected).
+    names = [c["name"] for c in client.get("/api/courts", headers=admin_headers).json()]
+    assert "Archived Court" not in names
+
+
+def test_admin_catalog_flag_requires_admin(client, attorney_headers):
+    resp = client.get("/api/courts?include_archived=true", headers=attorney_headers)
+    assert resp.status_code == 403
+
+
+def test_archived_court_can_still_be_purged(client, admin_headers, db_session):
+    from datetime import datetime, timezone
+
+    court = _court(db_session, name="Retired Forum", deleted_at=datetime.now(timezone.utc))
+    resp = client.post(f"/api/courts/{court.id}/purge", headers=admin_headers)
+    # Previously 404: the purge route fetched via get_court, which filters archived rows —
+    # an archived court was an invisible, undeletable orphan.
+    assert resp.status_code == 204
+    assert client.get("/api/courts?include_archived=true", headers=admin_headers).json() == []

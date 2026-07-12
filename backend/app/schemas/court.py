@@ -27,6 +27,9 @@ class CourtOut(BaseModel):
     name: str
     jurisdiction_description: str | None = None
     is_active: bool
+    # Soft-archived (model property) — lets the admin catalog show retired forums instead of
+    # having them silently vanish; always False on the active-only listing.
+    archived: bool = False
     created_at: datetime
 
 

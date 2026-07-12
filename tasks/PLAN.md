@@ -3065,6 +3065,21 @@ pre-submission if time allows — finalize scope before starting.)
         optional), types/api mapping, tests updated (frontend 77, build/lint clean).
       Deploy note: full stack + `alembic upgrade head` (0007). Old cases (null profile) unchanged;
       the purged case should be re-created THROUGH the new form.
+- [x] Admin courts catalog (list-first /admin). Audit findings: (1) /admin led with the Create
+      form; courts existed only inside a dropdown — read as "redirected to creation", no list view;
+      (2) GET /api/courts is active-only, so archived courts vanished from the UI entirely;
+      (3) BUG: the purge route fetched via get_court (filters archived) — an archived court 404'd
+      on purge: invisible AND undeletable orphan. Fixes:
+      - Backend: `GET /api/courts?include_archived=true` (admin-only; plain route unchanged for
+        case creation), `Court.archived` property + CourtOut field, `list_all_courts`, purge route
+        fetches archived-inclusive. Tests: admin catalog incl. archived + flag 403 for attorneys +
+        archived-court purge succeeds (backend 102).
+      - Frontend: /admin lands on the Courts catalog card (rows, Archived badge, selected
+        highlight) mirroring the Cases dashboard; "New court" toggle (auto-open on empty catalog);
+        Rule documents driven by list selection (dropdown removed; archived → purge-only note);
+        Danger zone hides Archive for already-archived forums. `getCourts({includeArchived})`;
+        fixed a bare `queryFn: api.getCourts` reference that would have fed the query context into
+        the new options param. Tests updated + list-landing test (frontend 78).
 - [ ] (Tier-2 backlog) Add a `sessionCount` (and maybe `bestScore`) field to the Case payload to
       remove the Dashboard per-card `getCaseSessions` N+1 (the CaseCard rehearsal summary).
 - [ ] (Backlog) Show the case profile on CaseDetail; prefill profile fields from pleading
