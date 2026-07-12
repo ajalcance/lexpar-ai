@@ -103,6 +103,7 @@ class OpposingCounselAgent(Agent):
         judge_idle=None,
         floor=None,
         speak_judge_order=None,
+        publish_transcript=None,
     ):
         super().__init__(instructions="You are opposing counsel in a courtroom rehearsal session.")
         self._state = state
@@ -121,6 +122,9 @@ class OpposingCounselAgent(Agent):
         # injected judge-order speaker (async () -> None, holds the judge floor internally).
         self._floor = floor
         self._speak_judge_order = speak_judge_order
+        # Injected async (speaker, content, ts_ms) -> None — emits a committed speech turn on the
+        # data channel for the live written transcript. None in offline harnesses/tests.
+        self._publish_transcript = publish_transcript
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
         # Record ONE coherent attorney turn per completed utterance. Deepgram emits many `is_final`
@@ -138,6 +142,11 @@ class OpposingCounselAgent(Agent):
         self._turn_timing["attorney_started_at"] = None
         if text:
             self._state.add_turn("attorney", text, spoken_at=started)
+            if self._publish_transcript is not None:
+                # Render the attorney's committed statement in the live transcript, timestamped at
+                # speech START (like the saved record) so it orders before any objection to it.
+                ts = int((started or datetime.now(timezone.utc)).timestamp() * 1000)
+                await self._publish_transcript("attorney", text, ts)
             if self._floor is not None:
                 # Floor dynamics: the speech that cut OC off became a REAL committed turn — this
                 # is the corroboration that promotes a cut-off candidate to a retry (an echo/VAD
@@ -219,6 +228,8 @@ class OpposingCounselAgent(Agent):
             if spoken:
                 reply = " ".join(spoken)
                 self._state.add_turn("opposing_counsel", reply)
+                if self._publish_transcript is not None:
+                    await self._publish_transcript("opposing_counsel", reply)
                 # Invariant guard (observability only): OC's spoken reply is counter-argument and
                 # must NOT lodge an objection — the word "objection" may only come from the
                 # structured barge-in, which the judge rules. If OC slips, the transcript would show
@@ -396,6 +407,28 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             json.dumps(event).encode("utf-8"), reliable=True, topic="objection"
         )
 
+    async def publish_transcript(speaker: str, content: str, ts_ms: int | None = None) -> None:
+        # Live written transcript: emit each committed SPEECH turn (attorney statement, OC's
+        # counter-argument, the judge's order line) on the data channel so the browser can render
+        # the argument as text in real time — the piece the judge watching the screen was missing.
+        # Objection + inline-ruling turns are NOT sent here: they already ride their own
+        # objection/ruling events (sending both would double-render). Best-effort — a dropped
+        # transcript packet costs one visible line, never audio or the record.
+        if not content:
+            return
+        event = {
+            "type": "transcript",
+            "speaker": speaker,
+            "content": content,
+            "timestamp": ts_ms if ts_ms is not None else int(time.time() * 1000),
+        }
+        try:
+            await ctx.room.local_participant.publish_data(
+                json.dumps(event).encode("utf-8"), reliable=True, topic="transcript"
+            )
+        except Exception:
+            logger.debug("transcript publish failed (non-fatal)")
+
     # The Judge is a REAL second room participant (identity "judge", own connection + audio track,
     # judge_participant.py): speaker attribution is correct by construction — the frontend sees the
     # judge participant speaking, no synthetic label events. Judge audio also bypasses the OC
@@ -456,6 +489,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         judge_idle.clear()
         try:
             state.add_turn("judge", floor_dynamics.JUDGE_ORDER_LINE)
+            await publish_transcript("judge", floor_dynamics.JUDGE_ORDER_LINE)
             await _judge_say(floor_dynamics.JUDGE_ORDER_LINE)
         except Exception:
             logger.exception("judge order line could not be spoken")
@@ -694,7 +728,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     await session.start(
         agent=OpposingCounselAgent(
-            state, turn_flags, turn_timing, session_id, judge_idle, floor, speak_judge_order
+            state, turn_flags, turn_timing, session_id, judge_idle, floor, speak_judge_order,
+            publish_transcript,
         ),
         room=ctx.room
     )

@@ -13,7 +13,7 @@
  *   logged. Microphone audio is published to this session's room only.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Mic, MicOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -58,7 +58,7 @@ export function SparringRoom() {
     toggleMute,
     enableAudio,
     endSession,
-    objections,
+    transcript,
   } = useSparringRoom(sessionId);
   const { lines } = useSparringSession(sessionId, { enabled: mode === 'fallback' });
 
@@ -74,6 +74,12 @@ export function SparringRoom() {
     setHasSpoken((prev) => (ending ? latchHasSpoken(prev, judgeAudio) : false));
   }, [ending, judgeAudio]);
   const phase = rulingPhase(ending, hasSpoken); // 'live' | 'awaiting' | 'ruling'
+
+  // Auto-scroll the live transcript to the newest line as it streams in.
+  const transcriptEndRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [transcript.length]);
 
   const handleEnd = async () => {
     // In a live session, let the judge deliver the spoken ruling + write the scorecard first, then
@@ -178,13 +184,19 @@ export function SparringRoom() {
 
             {mode === 'live' && (
               <>
-                <p className="text-sm text-muted-foreground">
-                  You're connected — argue aloud and listen for objections. The written transcript
-                  view arrives with the next update.
-                </p>
-                {objections.map((line) => (
-                  <TranscriptLine key={line.id} line={line} />
-                ))}
+                {transcript.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    You're connected — argue aloud. Your statements, opposing counsel's
+                    counter-arguments, and the judge's rulings will appear here as they're spoken.
+                  </p>
+                ) : (
+                  <div className="flex max-h-[28rem] flex-col gap-4 overflow-y-auto pr-1">
+                    {transcript.map((line) => (
+                      <TranscriptLine key={line.id} line={line} />
+                    ))}
+                    <div ref={transcriptEndRef} />
+                  </div>
+                )}
               </>
             )}
 

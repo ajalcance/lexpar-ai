@@ -532,9 +532,18 @@ When an objection fires and Opposing Counsel's line is spoken, the Judge immedia
   ruling's `quick_ruling` generation is started **concurrently** with the canned line's playback
   (not serialized after it), so the "Sustained/Overruled" lands ≈ max(canned, ~1.3 s) after the
   objection rather than the sum — its `say` still enqueues after the canned line (queue order).
-- **Duplicate render guard:** objection/ruling events carry a stable `timestamp`; the frontend
-  dedups on `type:timestamp` using a set held in a **ref** (shared across effect re-runs), so a
-  redelivered packet or a double-registered listener can't double-render one objection or ruling.
+- **Live written transcript:** beyond the objection/ruling events, the worker publishes a
+  `{"type":"transcript", speaker, content, timestamp}` event on each **committed speech turn** —
+  the attorney's statement (`on_user_turn_completed`, timestamped at speech START), OC's
+  counter-argument (`llm_node` finally), and the judge's order line — via `main.publish_transcript`.
+  The barge-in objection and inline ruling are NOT re-sent (they already ride their own events, so
+  both would double-render). The frontend (`useSparringRoom`) accumulates all of these into ONE
+  transcript list **in arrival order** (no re-sorting, so lines never jump) and renders them through
+  the existing `TranscriptLine` in the sparring room — replacing the old placeholder, so the screen
+  shows the argument as text in real time, not just objection bubbles.
+- **Duplicate render guard:** objection/ruling/transcript events carry a stable `timestamp`; the
+  frontend dedups on `type:key` using a set held in a **ref** (shared across effect re-runs), so a
+  redelivered packet or a double-registered listener can't double-render one line.
 - **Speaker attribution (by construction):** the Judge is a **real second room participant** —
   the worker mints a publish-only token locally (identity `judge`, `judge_participant.py`) and
   joins over its own `rtc.Room` connection, speaking by pushing judge-TTS frames into a published

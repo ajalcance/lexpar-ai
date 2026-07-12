@@ -29,7 +29,9 @@ import {
   parseJudgeSpeaking,
   parseObjectionData,
   parseRulingData,
+  parseTranscriptData,
   rulingEventToLine,
+  transcriptEventToLine,
 } from '@/lib/objectionEvent';
 import type { Transcript } from '@/lib/types';
 
@@ -82,7 +84,10 @@ export function useSparringRoom(sessionId: string) {
   const [micBlocked, setMicBlocked] = useState(false);
   const [audioBlocked, setAudioBlocked] = useState(false);
   const [judgeSpeaking, setJudgeSpeaking] = useState(false);
-  const [objections, setObjections] = useState<Transcript[]>([]);
+  // The live written transcript — every committed line in ARRIVAL order (stable, no re-sorting so
+  // lines never jump): attorney statements, OC counter-arguments, objections (red), inline
+  // rulings, and the judge's order line. Objection/ruling events carry their own styling.
+  const [transcript, setTranscript] = useState<Transcript[]>([]);
   const roomRef = useRef<Room | null>(null);
   // Resolves the endSession() promise when the agent's `end_complete` arrives (ruling delivered +
   // scorecard written), so the page navigates only after the judge has spoken.
@@ -92,7 +97,7 @@ export function useSparringRoom(sessionId: string) {
   const seenRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    setObjections([]); // clear any prior session's objection events
+    setTranscript([]); // clear any prior session's transcript lines
     setJudgeSpeaking(false);
     setActiveTrack(null);
     setAudioLevels({ you: 0, opposing_counsel: 0, judge: 0 });
@@ -231,13 +236,21 @@ export function useSparringRoom(sessionId: string) {
             setJudgeSpeaking(speaking);
             return;
           }
+          // Live written transcript: a committed speech turn (attorney / OC / judge order).
+          const turn = parseTranscriptData(text);
+          if (turn) {
+            if (markSeen(`transcript:${turn.speaker}:${turn.timestamp}`)) {
+              setTranscript((prev) => [...prev, transcriptEventToLine(turn, sessionId)]);
+            }
+            return;
+          }
           // Gap 3: an objection event from the agent → render it via the existing TranscriptLine.
           const event = parseObjectionData(text);
           if (event) {
             // Dedup on the agent's stable timestamp: a redelivered packet or a double-registered
             // listener must not double-render one objection (the live double-hearsay bug).
             if (markSeen(`objection:${event.timestamp}`)) {
-              setObjections((prev) => [...prev, objectionEventToLine(event, sessionId)]);
+              setTranscript((prev) => [...prev, objectionEventToLine(event, sessionId)]);
             }
             return;
           }
@@ -245,7 +258,7 @@ export function useSparringRoom(sessionId: string) {
           const ruling = parseRulingData(text);
           if (ruling) {
             if (markSeen(`ruling:${ruling.timestamp}`)) {
-              setObjections((prev) => [...prev, rulingEventToLine(ruling, sessionId)]);
+              setTranscript((prev) => [...prev, rulingEventToLine(ruling, sessionId)]);
             }
             return;
           }
@@ -412,6 +425,6 @@ export function useSparringRoom(sessionId: string) {
     toggleMute,
     enableAudio,
     endSession,
-    objections,
+    transcript,
   };
 }

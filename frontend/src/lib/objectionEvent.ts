@@ -74,6 +74,50 @@ export function parseRulingData(text: string): RulingEvent | null {
   }
 }
 
+export interface TranscriptEvent {
+  speaker: 'attorney' | 'opposing_counsel' | 'judge';
+  content: string;
+  timestamp: number;
+}
+
+const TRANSCRIPT_SPEAKERS = new Set(['attorney', 'opposing_counsel', 'judge']);
+
+/** Parse a data-channel payload; null unless it's a well-formed transcript turn (a committed
+ *  attorney statement, OC counter-argument, or the judge's order line — the live written transcript
+ *  the agent publishes on top of the objection/ruling events). */
+export function parseTranscriptData(text: string): TranscriptEvent | null {
+  try {
+    const data = JSON.parse(text);
+    if (
+      data?.type !== 'transcript' ||
+      !TRANSCRIPT_SPEAKERS.has(data.speaker) ||
+      typeof data.content !== 'string' ||
+      !data.content
+    ) {
+      return null;
+    }
+    return {
+      speaker: data.speaker,
+      content: data.content,
+      timestamp: typeof data.timestamp === 'number' ? data.timestamp : Date.now(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Map a transcript event onto a Transcript line (ordinary speaker styling — no interruption). */
+export function transcriptEventToLine(event: TranscriptEvent, sessionId: string): Transcript {
+  return {
+    id: `transcript-${event.speaker}-${event.timestamp}-${crypto.randomUUID()}`,
+    sessionId,
+    speaker: event.speaker,
+    content: event.content,
+    wasInterruption: false,
+    spokenAt: new Date(event.timestamp).toISOString(),
+  };
+}
+
 /** Parse a "judge_speaking" boundary event → true/false, or null if it isn't one. The judge shares
  *  the Opposing-Counsel agent participant, so this is how the UI knows to label audio as the Judge. */
 export function parseJudgeSpeaking(text: string): boolean | null {

@@ -11,7 +11,9 @@ import {
   parseJudgeSpeaking,
   parseObjectionData,
   parseRulingData,
+  parseTranscriptData,
   rulingEventToLine,
+  transcriptEventToLine,
 } from '@/lib/objectionEvent';
 
 describe('parseObjectionData', () => {
@@ -99,5 +101,58 @@ describe('parseJudgeSpeaking', () => {
     const payload = '{"type": "judge_speaking", "speaking": true}';
     expect(parseObjectionData(payload)).toBeNull();
     expect(parseRulingData(payload)).toBeNull();
+  });
+});
+
+describe('parseTranscriptData', () => {
+  it('parses a well-formed transcript turn', () => {
+    const turn = parseTranscriptData(
+      JSON.stringify({
+        type: 'transcript',
+        speaker: 'attorney',
+        content: 'The mortgage is void ab initio.',
+        timestamp: 4200,
+      }),
+    );
+    expect(turn).toEqual({
+      speaker: 'attorney',
+      content: 'The mortgage is void ab initio.',
+      timestamp: 4200,
+    });
+  });
+
+  it('accepts all three speakers, rejects unknown speakers and empty content', () => {
+    for (const speaker of ['attorney', 'opposing_counsel', 'judge']) {
+      expect(
+        parseTranscriptData(JSON.stringify({ type: 'transcript', speaker, content: 'x' }))?.speaker,
+      ).toBe(speaker);
+    }
+    expect(
+      parseTranscriptData(JSON.stringify({ type: 'transcript', speaker: 'witness', content: 'x' })),
+    ).toBeNull();
+    expect(
+      parseTranscriptData(JSON.stringify({ type: 'transcript', speaker: 'attorney', content: '' })),
+    ).toBeNull();
+  });
+
+  it('is not mistaken for an objection, ruling, or judge_speaking event (and vice versa)', () => {
+    const payload = JSON.stringify({ type: 'transcript', speaker: 'judge', content: 'Order.' });
+    expect(parseObjectionData(payload)).toBeNull();
+    expect(parseRulingData(payload)).toBeNull();
+    expect(parseJudgeSpeaking(payload)).toBeNull();
+    // and a real objection/ruling is not read as a transcript turn
+    expect(parseTranscriptData('{"type": "objection", "objection_type": "leading"}')).toBeNull();
+    expect(parseTranscriptData('{"type": "ruling", "ruling": "sustained"}')).toBeNull();
+  });
+
+  it('maps a transcript event onto an ordinary (non-interruption) line', () => {
+    const line = transcriptEventToLine(
+      { speaker: 'opposing_counsel', content: 'The record does not support that.', timestamp: 900 },
+      'session-1',
+    );
+    expect(line.speaker).toBe('opposing_counsel');
+    expect(line.wasInterruption).toBe(false);
+    expect(line.content).toBe('The record does not support that.');
+    expect(line.sessionId).toBe('session-1');
   });
 });

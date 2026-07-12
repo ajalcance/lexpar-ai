@@ -2903,5 +2903,7 @@ pre-submission if time allows — finalize scope before starting.)
       stays as the fail-safe (cb0c5fb)
 - [ ] Proceeding-type extensibility: PROCEEDING_ELIGIBLE_GROUNDS duplicated backend/agents — shared
       schema before adding types
-- [ ] Frontend: register form (API-only today), live transcript view (placeholder text in sparring
-      room), resume-session UX polish
+- [x] Frontend live transcript view — agent publishes {type:transcript} per committed turn;
+      sparring room renders the full live exchange (attorney/OC/objections/rulings/judge order),
+      arrival-ordered, auto-scrolling (frontend commit below). Still pending: register form,
+      resume-session UX polish
