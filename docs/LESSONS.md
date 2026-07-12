@@ -680,3 +680,18 @@ same session: STT mishears of case terms ("TCT"→"VLT", "SARC"→"SIRC") made O
 facts — it argued faithfully from the misheard words. Case-aware `keyterm` boosting (stt_keyterms.py,
 nova-3-only, flag STT_KEYTERMS) attacks that at the source; check STT fidelity before concluding an
 agent is hallucinating.
+
+### [Agents/Judge] Correcting a ruling bias with a one-way presumption overshoots the other way
+**Wrong:** The judge originally sustained reflexively, so the quick-ruling prompt was given a
+presumption ("assumes facts / legal conclusion / argumentative are usually IMPROPER in argument —
+OVERRULE unless…") with only a narrow escape hatch. A later live session showed the pendulum had
+swung: the judge overruled nearly everything, even generalizing the presumption to grounds the
+prompt never listed ("In an oral argument, relevance objections are improper" — invented). A
+one-way instruction gives the model a default disposition, and it applies the default far beyond
+the listed cases.
+**Right:** Correct a bias with a TWO-WAY test, not a presumption: name what should be OVERRULED
+(objections to the form of genuine argument) AND what should be SUSTAINED (asserting a specific
+unestablished fact as though proven; misstating/mischaracterizing the record, pleading, or parties;
+straying from the matter before the court), and say explicitly "do not default to either
+disposition." General rule for judge-like prompts: every "usually X" needs its "but Y when…"
+counterpart, or the model turns the tendency into a rule.

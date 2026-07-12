@@ -2993,6 +2993,23 @@ pre-submission if time allows — finalize scope before starting.)
       verifier silencing OC drafts — should drop once OC's context is complete) and one 5s
       "speech not done in time after interruption" (force-interrupt of streaming TTS slow to
       cancel — objection latency spike; tune if it recurs).
+- [x] Objection latency + judge balance + keyterm depth (agents-only). From the 08:15 live session:
+      dispatch totals 7.8s/9.4s (was 4.0s) and the judge overruling everything.
+      1. Latency (interrupt+say half): the force-interrupt AWAITS the interrupted speech's wind-down,
+         which blocks on the in-flight generation closing — up to the SDK's 5.0s INTERRUPTION_TIMEOUT.
+         New `INTERRUPT_CANCEL_TIMEOUT_S` (default 1.5, ≤0 = SDK default) patches the module constant
+         in main.py — bounds the worst objection wind-down at 1.5s (llm_node's finally still records
+         what was spoken on hard cancel). The `decide` half (2.1→4.6s) is the tier-3 classifier LLM
+         call — provider variance, left as a watch item (no code lever worth taking yet).
+      2. Judge balance: the anti-reflexive-sustain presumption had overshot (all-overruled, even
+         inventing "relevance objections are improper"). judge_quick_ruling + judge_assessment now
+         carry a TWO-WAY merits test — overrule form-of-argument objections, SUSTAIN on (a) specific
+         unestablished facts asserted as proven, (b) misstating/mischaracterizing record/pleading/
+         parties, (c) straying from the MATTER; "do not default to either disposition." Prompt +
+         byte-goldens together. See the new LESSONS entry (one-way presumptions overshoot).
+      3. stt_keyterms: recurring lowercase case vocabulary (≥2 occurrences, function words excluded)
+         fills remaining cap slots after capitalized entities — "ultra vires" (heard "ultra bar"),
+         "mortgage", "foreclosure" now boosted. Agents 249 + ruff clean.
 - [ ] (Tier-2 backlog) Add a `sessionCount` (and maybe `bestScore`) field to the Case payload to
       remove the Dashboard per-card `getCaseSessions` N+1 (the CaseCard rehearsal summary).
 

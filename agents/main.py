@@ -60,6 +60,17 @@ from voice_interrupt import build_objection_event, handle_interim
 
 logger = logging.getLogger("lexpar.agents")
 
+# Cap the interrupted-speech wind-down (SDK INTERRUPTION_TIMEOUT, default 5.0s). An objection's
+# force-interrupt awaits the interrupted speech fully winding down before the canned "Objection!"
+# can start; OC's streaming reply can take seconds to close (the in-flight generation can't be
+# hurried), so the objection landed up to ~5s late (see config.INTERRUPT_CANCEL_TIMEOUT_S). The
+# constant is read at call time inside speech_handle._cancel, so patching the module attribute is
+# effective and scoped; <= 0 leaves the SDK default untouched (the env rollback).
+if config.INTERRUPT_CANCEL_TIMEOUT_S > 0:
+    from livekit.agents.voice import speech_handle as _speech_handle
+
+    _speech_handle.INTERRUPTION_TIMEOUT = config.INTERRUPT_CANCEL_TIMEOUT_S
+
 
 def _session_id_from_room(room) -> str:
     """The backend session id is encoded in the room name (livekit_token.py: 'session-<id>')."""

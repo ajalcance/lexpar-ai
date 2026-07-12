@@ -900,7 +900,8 @@ S3-compatible (MinIO locally, DigitalOcean Spaces in production).
 | `JUDGE_EXPRESSIVE_FINAL_RULING` / `JUDGE_V3_MODEL` | Track B (gated, default off): v3 + audio tags for the Judge's final ruling only (§6.5) |
 | `DERIVE_MATTER` | Frame "the matter before the court" at room join (`case_posture.py`, §6.5) — the shared OC/judge posture. Default **on**; `false` rolls back to per-turn reasoning from the case summary + exchange |
 | `RECOVER_DROPPED_TURNS` | Recover attorney turns the SDK discards during non-interruptible speech (`turn_recovery.py`, §6.5). Default **on**; `false` restores the lossy behavior |
-| `STT_KEYTERMS` | Boost this case's party names/terms as Deepgram nova-3 keyterms (`stt_keyterms.py`, §6.5). Default **on**; `false` runs STT unboosted |
+| `STT_KEYTERMS` | Boost this case's party names/terms as Deepgram nova-3 keyterms (`stt_keyterms.py`, §6.5) — capitalized entities first, then recurring lowercase case vocabulary ("ultra vires"). Default **on**; `false` runs STT unboosted |
+| `INTERRUPT_CANCEL_TIMEOUT_S` | Cap on the interrupted-speech wind-down before hard cancel (patches the SDK's 5.0s `INTERRUPTION_TIMEOUT`; main.py). An objection's force-interrupt awaits this wind-down before the canned line can start — measured up to ~5.3s of objection latency. Default **1.5**; `<= 0` leaves the SDK default |
 | `JWT_SECRET` | Token signing — **required, ≥ 32 chars**; the app refuses to start with a blank/missing/weak key (`openssl rand -hex 32`) |
 | _(auth mode)_ | Removed — auth is always real bcrypt password auth; there is no `AUTH_MODE` setting (a leftover value in `.env` is ignored) |
 | `CORS_ORIGINS` | Comma-separated browser origins allowed to call the API (e.g. the Vite dev server) |

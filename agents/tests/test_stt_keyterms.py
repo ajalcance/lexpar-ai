@@ -44,4 +44,30 @@ def test_cap_and_empty_inputs():
     many = " ".join(f"Entity{chr(ord('A') + i)}x" for i in range(26))
     assert len(extract_keyterms(many)) == MAX_KEYTERMS
     assert extract_keyterms("", "") == []
-    assert extract_keyterms("all lowercase words only here") == []
+    # Lowercase-only text with no recurrence yields nothing (every token appears once).
+    assert extract_keyterms("all lowercase words appearing once here") == []
+
+
+def test_recurring_lowercase_case_vocabulary_fills_remaining_slots():
+    # "ultra vires" is lowercase in pleadings — the capitalized pass missed it live ("ultra bar").
+    text = (
+        "SARC contends the mortgage is ultra vires. An ultra vires act binds no one; the "
+        "mortgage and the foreclosure fall with it. The foreclosure followed the mortgage."
+    )
+    terms = extract_keyterms(text)
+    assert "SARC" in terms  # capitalized entities still first
+    assert "ultra" in terms
+    assert "vires" in terms
+    assert "mortgage" in terms  # 3 occurrences — highest-frequency lowercase term
+    assert "foreclosure" in terms
+    # Function words never qualify no matter how often they recur.
+    assert "the" not in terms
+    assert "with" not in terms
+
+
+def test_capitalized_terms_keep_priority_over_lowercase_at_the_cap():
+    caps = " ".join(f"Entity{chr(ord('A') + i)}x" for i in range(MAX_KEYTERMS))
+    lower = "mortgage mortgage mortgage"
+    terms = extract_keyterms(caps, lower)
+    assert len(terms) == MAX_KEYTERMS
+    assert "mortgage" not in terms  # cap already filled by entities

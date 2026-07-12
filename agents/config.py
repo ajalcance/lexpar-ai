@@ -158,6 +158,15 @@ RECOVER_DROPPED_TURNS = _getbool("RECOVER_DROPPED_TURNS", True)
 # runs the STT unboosted exactly as before.
 STT_KEYTERMS = _getbool("STT_KEYTERMS", True)
 
+# Cap on how long an interrupted speech may take to wind down before it is hard-cancelled
+# (overrides the SDK's INTERRUPTION_TIMEOUT, default 5.0s). Live, an objection's force-interrupt
+# of OC's streaming reply waited up to that full wind-down before the canned "Objection!" could
+# start — measured interrupt+say up to 5.3s (the wind-down blocks on the in-flight generation
+# closing, which can't be hurried). 1.5s keeps normal wind-downs (milliseconds) unaffected and
+# bounds the worst case; the hard cancel is safe — llm_node's finally still records what was
+# actually spoken. Set <= 0 to leave the SDK default untouched.
+INTERRUPT_CANCEL_TIMEOUT_S = float(os.getenv("INTERRUPT_CANCEL_TIMEOUT_S", "1.5"))
+
 
 def _getfloat(name: str, default: float) -> float:
     """Parse a float env var; default when unset/invalid (a bad value must not kill the worker)."""

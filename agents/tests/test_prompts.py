@@ -38,7 +38,10 @@ STATIC_GOLDENS = {
         'argument "assumes facts not in the record," "calls for a legal conclusion," or is '
         '"argumentative" are usually IMPROPER and should be OVERRULED unless the statement '
         "genuinely misstates an established fact or strays entirely from the issues; in a WITNESS "
-        "EXAMINATION apply the ordinary evidentiary grounds normally. Objections already "
+        "EXAMINATION apply the ordinary evidentiary grounds normally. SUSTAIN when a statement "
+        "asserted a specific unestablished fact as though proven, misstated or mischaracterized "
+        "the record, the pleading, or the parties, or strayed from the matter before the court; "
+        "do not default to either disposition. Objections already "
         "marked [sustained] or [overruled] were ruled from the bench DURING the session — do NOT "
         "re-rule them; treat those rulings as final.\n"
         "2. List 2-5 key facts the attorney genuinely established on the record (supported by the "
@@ -76,14 +79,20 @@ STATIC_GOLDENS = {
         "\n"
         "In an ARGUMENT proceeding (oral argument, motion hearing) no witness is testifying — "
         "counsel may argue the law, draw inferences, characterize the record, and urge legal "
-        'conclusions. Objections that the argument "assumes facts not in the record," "calls for '
-        'a legal conclusion," or is "argumentative" are usually IMPROPER here: OVERRULE them '
-        "unless the statement genuinely misstates an established fact in the SESSION RECORD or "
-        "strays entirely from the issues. In a WITNESS EXAMINATION (direct or cross) apply the "
-        "ordinary evidentiary grounds normally.\n"
+        'conclusions. Objections aimed at the FORM of genuine argument ("assumes facts not in '
+        'the record," "calls for a legal conclusion," "argumentative") are usually IMPROPER '
+        "here: OVERRULE them. But the merits test cuts BOTH ways — SUSTAIN when the statement "
+        "(a) asserts a specific unestablished fact as though proven (an event, a document's "
+        "contents, a party's act, knowledge, or intent that the SESSION RECORD and case "
+        "materials do not support), (b) misstates or mischaracterizes the record, the pleading, "
+        "or the parties, or (c) strays from the MATTER BEFORE THE COURT — judge relevance "
+        "against that matter, never against your own guess at the issues. In a WITNESS "
+        "EXAMINATION (direct or cross) apply the ordinary evidentiary grounds normally.\n"
         "\n"
-        "Do not sustain merely because the objection names a ground; test whether that ground "
-        "actually fits this statement in this proceeding. State one crisp, judicial sentence "
+        "Do not default to either disposition: do not sustain merely because the objection names "
+        "a ground, and do not overrule merely because argument is broadly permitted — test "
+        "whether the ground actually fits this statement in this proceeding. "
+        "State one crisp, judicial sentence "
         "(spoken aloud) that gives your reasoning and MATCHES your ruling and the objection's "
         "ground — authoritative and specific, not a bare label. Do not restate the ruling word "
         '("Sustained"/"Overruled") inside the reason; it is spoken separately. If you cite a rule, '
