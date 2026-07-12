@@ -353,6 +353,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     case_title = ""
     court_id = ""
     proceeding_type = ""
+    profile: dict = {}
     try:
         context = await asyncio.to_thread(backend_client.get_session_context, session_id)
         case_facts = context.get("case_facts", "")
@@ -360,15 +361,32 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         case_title = context.get("case_title", "")
         court_id = context.get("court_id", "")
         proceeding_type = context.get("proceeding_type", "")
+        # Case profile (user-stated ground truth, backend migration 0007) — see SessionState.
+        profile = {
+            "case_number": context.get("case_number", ""),
+            "petitioner": context.get("petitioner", ""),
+            "respondent": context.get("respondent", ""),
+            "represented_party": context.get("represented_party", ""),
+            "relief_sought": context.get("relief_sought", ""),
+        }
     except Exception:
         logger.warning("could not load case context for %s; starting with empty facts", session_id)
 
     # Case-aware STT vocabulary (stt_keyterms.py, flag STT_KEYTERMS): this case's party names /
     # entities, boosted as Deepgram nova-3 keyterms (nova-3-only — the plugin raises on other
-    # models). Empty (no materials / flag off / other model) → the STT runs unboosted as before.
+    # models). The user-stated parties + case number lead the sources — they are exactly the terms
+    # STT mangled live. Empty (no materials / flag off / other model) → unboosted as before.
     keyterms: list[str] = []
     if config.STT_KEYTERMS and config.DEEPGRAM_MODEL.startswith("nova-3"):
-        keyterms = stt_keyterms.extract_keyterms(case_title, case_facts, case_summary)
+        keyterms = stt_keyterms.extract_keyterms(
+            profile.get("petitioner", ""),
+            profile.get("respondent", ""),
+            profile.get("case_number", ""),
+            profile.get("relief_sought", ""),
+            case_title,
+            case_facts,
+            case_summary,
+        )
 
     state = SessionState(
         case_facts=case_facts,
@@ -376,6 +394,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         session_id=session_id,
         court_id=court_id,
         proceeding_type=proceeding_type,
+        **profile,
     )
 
     # Frame the matter before the court from the case, the way a court knows the motion before

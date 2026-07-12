@@ -1,7 +1,8 @@
 /**
  * File: src/pages/CaseUpload.test.tsx
- * Purpose: Critical-flow test for case upload (DEVELOPER_GUIDELINES §6) — submitting the form
- *   calls api.createCase with the entered title and facts.
+ * Purpose: Critical-flow test for case creation (DEVELOPER_GUIDELINES §6) — submitting the form
+ *   calls api.createCase with the structured CASE PROFILE (caption, number, parties, the side the
+ *   attorney represents, relief sought) plus optional context.
  * Depends on: vitest, @testing-library/*, test/utils, pages/CaseUpload, lib/api
  */
 
@@ -19,30 +20,52 @@ describe('CaseUpload', () => {
 
   const created = {
     id: 'c1',
-    title: 'Doe v. Roe',
-    caseFacts: 'A contract dispute over delivery terms.',
+    title: 'Metrobank v. SARC',
+    caseNumber: 'G.R. No. 218738',
+    petitioner: 'Metropolitan Bank & Trust Company',
+    respondent: 'Salazar Realty Corporation',
+    representedParty: 'respondent' as const,
+    reliefSought: 'Nullification of the mortgage.',
+    caseFacts: '',
     courtId: null,
     createdAt: '2026-07-07T00:00:00Z',
   };
 
-  it('submits without a court when no courts are configured (with notice)', async () => {
+  /** Fill the required profile fields (parties, side, relief). */
+  async function fillProfile(user: ReturnType<typeof userEvent.setup>) {
+    await user.type(screen.getByLabelText('Case title'), 'Metrobank v. SARC');
+    await user.type(screen.getByLabelText('Case number (optional)'), 'G.R. No. 218738');
+    await user.type(
+      screen.getByLabelText('Petitioner / plaintiff'),
+      'Metropolitan Bank & Trust Company',
+    );
+    await user.type(
+      screen.getByLabelText('Respondent / defendant'),
+      'Salazar Realty Corporation',
+    );
+    await user.selectOptions(screen.getByLabelText('You represent'), 'respondent');
+    await user.type(screen.getByLabelText('Relief sought'), 'Nullification of the mortgage.');
+  }
+
+  it('submits the case profile without a court when no courts are configured (with notice)', async () => {
     vi.spyOn(api, 'getCourts').mockResolvedValue([]);
     const createCase = vi.spyOn(api, 'createCase').mockResolvedValue(created);
     const user = userEvent.setup();
     renderWithProviders(<CaseUpload />);
 
     expect(await screen.findByText(/No courts configured yet/)).toBeInTheDocument();
-    await user.type(screen.getByLabelText('Case title'), 'Doe v. Roe');
-    await user.type(
-      screen.getByLabelText('Case facts'),
-      'A contract dispute over delivery terms.',
-    );
+    await fillProfile(user);
     await user.click(screen.getByRole('button', { name: 'Create case' }));
 
     await waitFor(() => {
       expect(createCase).toHaveBeenCalledWith({
-        title: 'Doe v. Roe',
-        caseFacts: 'A contract dispute over delivery terms.',
+        title: 'Metrobank v. SARC',
+        caseNumber: 'G.R. No. 218738',
+        petitioner: 'Metropolitan Bank & Trust Company',
+        respondent: 'Salazar Realty Corporation',
+        representedParty: 'respondent',
+        reliefSought: 'Nullification of the mortgage.',
+        caseFacts: '',
         courtId: null,
       });
     });
@@ -63,17 +86,18 @@ describe('CaseUpload', () => {
     const user = userEvent.setup();
     renderWithProviders(<CaseUpload />);
 
-    await user.type(await screen.findByLabelText('Case title'), 'Doe v. Roe');
-    await user.type(screen.getByLabelText('Case facts'), 'Facts.');
+    await screen.findByLabelText('Case title');
+    await fillProfile(user);
     await user.selectOptions(await screen.findByLabelText('Court'), 'court-1');
     await user.click(screen.getByRole('button', { name: 'Create case' }));
 
     await waitFor(() => {
-      expect(createCase).toHaveBeenCalledWith({
-        title: 'Doe v. Roe',
-        caseFacts: 'Facts.',
-        courtId: 'court-1',
-      });
+      expect(createCase).toHaveBeenCalledWith(
+        expect.objectContaining({
+          representedParty: 'respondent',
+          courtId: 'court-1',
+        }),
+      );
     });
   });
 });

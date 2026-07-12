@@ -3048,8 +3048,27 @@ pre-submission if time allows — finalize scope before starting.)
       it into silence in llm_node (nothing spoken/recorded; floor dynamics = natural end; INFO log
       "OC declined the floor"). Persona bullet updated (PASS over commentary; press for the basis
       only after attempted substance). Agents 250 + ruff clean.
+- [x] Case profile (cross-stack, migration 0007) — the structural fix for the guessing failures.
+      Case creation now captures user-stated, authoritative identity: case_number, petitioner,
+      respondent, represented_party ('petitioner'|'respondent'), relief_sought; case_facts demoted
+      to optional "Additional context" (the pleading is the substance source).
+      - Backend: Case model + migration 0007_case_profile (all nullable), CaseCreate/CaseOut
+        (Literal-validated side), create service, SessionContextOut + context route. Tests: profile
+        round-trip + 422 on a bogus side (backend 99).
+      - Agents: SessionState profile fields + "CASE PROFILE (…authoritative)" block atop snapshot()
+        (the caption is ON THE RECORD from second zero — kills the empty-record-opening class);
+        matter derivation leads with the profile (mis-frame fix); OC persona: profile side
+        assignment is authoritative (inference = fallback); judge persona inputs; profile
+        parties/number/relief lead the STT keyterm sources. Tests: snapshot block, matter messages
+        (agents 252).
+      - Frontend: CaseUpload redesigned (number optional; parties/side/relief required; context
+        optional), types/api mapping, tests updated (frontend 77, build/lint clean).
+      Deploy note: full stack + `alembic upgrade head` (0007). Old cases (null profile) unchanged;
+      the purged case should be re-created THROUGH the new form.
 - [ ] (Tier-2 backlog) Add a `sessionCount` (and maybe `bestScore`) field to the Case payload to
       remove the Dashboard per-card `getCaseSessions` N+1 (the CaseCard rehearsal summary).
+- [ ] (Backlog) Show the case profile on CaseDetail; prefill profile fields from pleading
+      ingestion for user confirmation (extract → suggest, never silently apply).
 
 **Result:** All agent speech is now reliably heard (objections, judge, AND OC replies). Floor
 dynamics is now largely redundant (attorney can't cut OC off) — FLOOR_DYNAMICS can be set false.

@@ -130,6 +130,32 @@ def test_snapshot_includes_matter_when_present():
     assert "MATTER BEFORE THE COURT" not in SessionState(case_facts="x").snapshot()
 
 
+def test_snapshot_includes_case_profile_when_present():
+    from session_state import SessionState
+
+    state = SessionState(
+        case_facts="x",
+        case_number="G.R. No. 218738",
+        petitioner="Metropolitan Bank & Trust Company",
+        respondent="Salazar Realty Corporation",
+        represented_party="respondent",
+        relief_sought="Nullification of the mortgage and foreclosure; quieting of title.",
+    )
+    snap = state.snapshot()
+    assert "CASE PROFILE (stated by counsel at case creation — authoritative):" in snap
+    assert "- Case number: G.R. No. 218738" in snap
+    assert "- Petitioner: Metropolitan Bank & Trust Company" in snap
+    # The side line fixes BOTH sides by declaration.
+    assert (
+        "The attorney arguing this session represents the respondent "
+        "(Salazar Realty Corporation); opposing counsel represents the petitioner "
+        "(Metropolitan Bank & Trust Company)." in snap
+    )
+    assert "- Relief sought by the attorney: Nullification of the mortgage" in snap
+    # No profile → no block (pre-profile cases unchanged).
+    assert "CASE PROFILE" not in SessionState(case_facts="x").snapshot()
+
+
 def test_fresh_sessions_are_independent_no_ledger_bleed():
     # Session isolation: two rehearsals of the SAME case share the case facts but wholly separate
     # ledgers. Guards against a mutable-default-arg regression (all the ledgers use default_factory)

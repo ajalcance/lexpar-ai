@@ -32,11 +32,19 @@ _MATTER_MAX_TOKENS = 1024
 
 
 def build_matter_messages(state: SessionState) -> list[dict[str, str]]:
-    """Assemble the derivation messages: the framing instruction + the case materials. Pure."""
+    """Assemble the derivation messages: the framing instruction + the case materials. The CASE
+    PROFILE (user-stated parties, side represented, relief sought) leads — it is authoritative
+    ground truth, so a pleading whose emphasis differs can no longer mis-frame the matter (live, a
+    mis-frame produced a bogus relevance sustain against the case's core issue). Pure."""
     summary = state.case_summary.strip() or "(no pleading summary)"
     facts = state.case_facts.strip() or "(none provided)"
     proceeding = state.proceeding_type or "unspecified"
+    profile = "\n".join(state._profile_lines())
+    profile_block = (
+        f"CASE PROFILE (stated by counsel — authoritative):\n{profile}\n\n" if profile else ""
+    )
     context = (
+        f"{profile_block}"
         f"PROCEEDING TYPE: {proceeding}\n\n"
         f"CASE SUMMARY (from the pleading):\n{summary}\n\n"
         f"CASE FACTS:\n{facts}"

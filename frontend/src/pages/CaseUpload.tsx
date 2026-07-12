@@ -1,8 +1,11 @@
 /**
  * File: src/pages/CaseUpload.tsx
- * Purpose: Form for an attorney to create a new case from a title and case facts (with an
- *   optional document input, cosmetic until real uploads land). Submits through lib/api.ts
- *   and returns to the dashboard.
+ * Purpose: Form for an attorney to create a new case as a structured CASE PROFILE — caption,
+ *   docket number, the parties, WHICH SIDE the attorney represents (Opposing Counsel takes the
+ *   other by declaration, never inference), and the relief sought. The pleading attached next
+ *   (§12) carries the substance; the old free-text "case facts" is now optional context. The
+ *   profile is what grounds STT keyterms, the matter framing, and OC's stance (see
+ *   ARCHITECTURE §6.5). Submits through lib/api.ts.
  * Depends on: react-router-dom, @tanstack/react-query, lib/api.ts, components/ui/*
  * Related: backend/app/api/cases.py (POST /api/cases)
  * Security notes: case_facts is attorney work product — never log its contents. Here it only
@@ -32,6 +35,11 @@ export function CaseUpload() {
   const queryClient = useQueryClient();
 
   const [title, setTitle] = useState('');
+  const [caseNumber, setCaseNumber] = useState('');
+  const [petitioner, setPetitioner] = useState('');
+  const [respondent, setRespondent] = useState('');
+  const [representedParty, setRepresentedParty] = useState<'petitioner' | 'respondent' | ''>('');
+  const [reliefSought, setReliefSought] = useState('');
   const [caseFacts, setCaseFacts] = useState('');
   const [courtId, setCourtId] = useState('');
   const [createdCaseId, setCreatedCaseId] = useState<string | null>(null);
@@ -43,7 +51,17 @@ export function CaseUpload() {
   const courtsAvailable = (courts?.length ?? 0) > 0;
 
   const createCase = useMutation({
-    mutationFn: () => api.createCase({ title, caseFacts, courtId: courtId || null }),
+    mutationFn: () =>
+      api.createCase({
+        title,
+        caseNumber,
+        petitioner,
+        respondent,
+        representedParty,
+        reliefSought,
+        caseFacts,
+        courtId: courtId || null,
+      }),
     onSuccess: async (created) => {
       await queryClient.invalidateQueries({ queryKey: ['cases'] });
       // Reveal the pleading-upload step for the new case instead of leaving immediately, so the
@@ -87,7 +105,8 @@ export function CaseUpload() {
       <CardHeader>
         <CardTitle>New case</CardTitle>
         <CardDescription>
-          Give the case a title and the facts your opponent will argue against.
+          Identify the case and your side. The pleading you attach next carries the substance —
+          opposing counsel and the judge anchor to what you state here.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -103,14 +122,76 @@ export function CaseUpload() {
             />
           </div>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="caseFacts">Case facts</Label>
+            <Label htmlFor="caseNumber">Case number (optional)</Label>
+            <Input
+              id="caseNumber"
+              value={caseNumber}
+              onChange={(event) => setCaseNumber(event.target.value)}
+              placeholder="G.R. No. 218738 / Civil Case No. 2001-11-164"
+            />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="petitioner">Petitioner / plaintiff</Label>
+              <Input
+                id="petitioner"
+                value={petitioner}
+                onChange={(event) => setPetitioner(event.target.value)}
+                placeholder="Metropolitan Bank & Trust Company"
+                required
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="respondent">Respondent / defendant</Label>
+              <Input
+                id="respondent"
+                value={respondent}
+                onChange={(event) => setRespondent(event.target.value)}
+                placeholder="Salazar Realty Corporation"
+                required
+              />
+            </div>
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="representedParty">You represent</Label>
+            <select
+              id="representedParty"
+              className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              value={representedParty}
+              onChange={(event) =>
+                setRepresentedParty(event.target.value as 'petitioner' | 'respondent' | '')
+              }
+              required
+            >
+              <option value="" disabled>
+                Select your side…
+              </option>
+              <option value="petitioner">Petitioner / plaintiff</option>
+              <option value="respondent">Respondent / defendant</option>
+            </select>
+            <p className="text-xs text-muted-foreground">
+              Opposing counsel will argue for the other side.
+            </p>
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="reliefSought">Relief sought</Label>
+            <Textarea
+              id="reliefSought"
+              value={reliefSought}
+              onChange={(event) => setReliefSought(event.target.value)}
+              placeholder="Nullification of the mortgage and foreclosure; quieting of title."
+              rows={2}
+              required
+            />
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="caseFacts">Additional context (optional)</Label>
             <Textarea
               id="caseFacts"
               value={caseFacts}
               onChange={(event) => setCaseFacts(event.target.value)}
-              placeholder="Summarize the dispute, the parties, and the key facts…"
-              rows={6}
-              required
+              placeholder="Anything not in the pleading — posture, stipulations, points of emphasis…"
+              rows={4}
             />
           </div>
           <div className="flex flex-col gap-2">

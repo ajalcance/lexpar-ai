@@ -18,6 +18,11 @@ import type { Case, Session } from '@/lib/types';
 const CASE: Case = {
   id: 'c1',
   title: 'Doe v. Roe',
+  caseNumber: null,
+  petitioner: null,
+  respondent: null,
+  representedParty: null,
+  reliefSought: null,
   caseFacts: 'A contract dispute.',
   courtId: null,
   createdAt: '2026-07-07T00:00:00Z',

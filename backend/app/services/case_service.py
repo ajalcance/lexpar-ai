@@ -48,6 +48,11 @@ def create_case(db: DbSession, user: User, data: CaseCreate) -> Case:
     case = Case(
         user_id=user.id,
         title=data.title,
+        case_number=data.case_number,
+        petitioner=data.petitioner,
+        respondent=data.respondent,
+        represented_party=data.represented_party,
+        relief_sought=data.relief_sought,
         case_facts=data.case_facts,
         court_id=data.court_id,
     )

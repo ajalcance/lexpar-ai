@@ -144,3 +144,38 @@ def test_context_route_requires_agent_token(client, auth_headers):
     # No token, and a user JWT, are both rejected — this is an agent-only internal route.
     assert client.get(ctx_url).status_code == 401
     assert client.get(ctx_url, headers=auth_headers).status_code == 401
+
+
+def test_session_context_carries_the_case_profile(client, auth_headers):
+    # Case profile (migration 0007): user-stated ground truth must reach the agent at room join.
+    case = client.post(
+        "/api/cases",
+        headers=auth_headers,
+        json={
+            "title": "Metrobank v. SARC",
+            "case_facts": "F",
+            "case_number": "G.R. No. 218738",
+            "petitioner": "Metropolitan Bank & Trust Company",
+            "respondent": "Salazar Realty Corporation",
+            "represented_party": "respondent",
+            "relief_sought": "Nullification of the mortgage; quieting of title.",
+        },
+    ).json()
+    session = client.post(
+        "/api/sessions",
+        headers=auth_headers,
+        json={"case_id": case["id"], "proceeding_type": "oral_argument"},
+    ).json()
+    ctx = client.get(f"/api/sessions/{session['id']}/context", headers=AGENT).json()
+    assert ctx["case_number"] == "G.R. No. 218738"
+    assert ctx["petitioner"] == "Metropolitan Bank & Trust Company"
+    assert ctx["respondent"] == "Salazar Realty Corporation"
+    assert ctx["represented_party"] == "respondent"
+    assert ctx["relief_sought"] == "Nullification of the mortgage; quieting of title."
+    # And the shape is rejected when the side is not a real side.
+    bad = client.post(
+        "/api/cases",
+        headers=auth_headers,
+        json={"title": "T", "represented_party": "the good guys"},
+    )
+    assert bad.status_code == 422

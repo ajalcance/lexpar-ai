@@ -67,6 +67,16 @@ class SessionState:
     session_id: str = ""
     court_id: str = ""
     proceeding_type: str = ""
+    # Case profile — USER-STATED ground truth from case creation (backend migration 0007), on the
+    # record from second zero via snapshot(): the docket number and parties (so reciting them is
+    # never an "unestablished fact"), WHICH SIDE the attorney represents (OC takes the opposite
+    # side by declaration, never inference), and the relief sought (what the matter and the
+    # judge's assessment anchor to). All default "" — pre-profile cases behave as before.
+    case_number: str = ""
+    petitioner: str = ""
+    respondent: str = ""
+    represented_party: str = ""  # 'petitioner' | 'respondent' | ""
+    relief_sought: str = ""
     established_facts: list[str] = field(default_factory=list)
     objections: list[Objection] = field(default_factory=list)
     transcript: list[TranscriptTurn] = field(default_factory=list)
@@ -121,6 +131,11 @@ class SessionState:
     def snapshot(self) -> str:
         """A compact text view of the state, suitable as verifier/prompt context."""
         lines: list[str] = []
+        profile = self._profile_lines()
+        if profile:
+            lines += ["CASE PROFILE (stated by counsel at case creation — authoritative):"]
+            lines += profile
+            lines += [""]
         if self.matter:
             lines += ["MATTER BEFORE THE COURT:", self.matter, ""]
         if self.case_summary:
@@ -132,6 +147,31 @@ class SessionState:
             f"- [{o.ruling}] {o.grounds} (raised by {o.raised_by})" for o in self.objections
         ] or ["(none)"]
         return "\n".join(lines)
+
+    def _profile_lines(self) -> list[str]:
+        """The case-profile bullet lines for snapshot() — only the fields counsel actually stated.
+        The represented-side line names BOTH who the attorney speaks for and who opposing counsel
+        speaks for, so OC's side is fixed by declaration, never inferred from a thin opening."""
+        lines: list[str] = []
+        if self.case_number:
+            lines.append(f"- Case number: {self.case_number}")
+        if self.petitioner:
+            lines.append(f"- Petitioner: {self.petitioner}")
+        if self.respondent:
+            lines.append(f"- Respondent: {self.respondent}")
+        if self.represented_party in ("petitioner", "respondent"):
+            side = self.represented_party
+            other = "respondent" if side == "petitioner" else "petitioner"
+            names = {"petitioner": self.petitioner, "respondent": self.respondent}
+            attorney = f" ({names[side]})" if names[side] else ""
+            opposing = f" ({names[other]})" if names[other] else ""
+            lines.append(
+                f"- The attorney arguing this session represents the {side}{attorney}; "
+                f"opposing counsel represents the {other}{opposing}."
+            )
+        if self.relief_sought:
+            lines.append(f"- Relief sought by the attorney: {self.relief_sought}")
+        return lines
 
     def recent_exchange(self, max_turns: int = 10, max_chars: int = 2000) -> str:
         """The live back-and-forth: the last `max_turns` transcript turns, speaker-labelled,

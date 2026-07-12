@@ -640,6 +640,19 @@ When an objection fires and Opposing Counsel's line is spoken, the Judge immedia
   attorney has not yet staked a position, to **press for the basis** rather than invent one; the
   judge rules and assesses against the matter and the relief sought, and won't presume a matter that
   was never argued. `DERIVE_MATTER=false` restores per-turn reasoning from the summary + exchange.
+- **The case profile — user-stated ground truth (migration 0007).** The pleading carries the
+  substance, but the agents were GUESSING at exactly what broke live: party names (STT mishears),
+  the case number ("assumes facts" misfires on the caption), the matter frame, and which side the
+  attorney is on (OC inventing a stance). Case creation now captures a structured profile — case
+  number, petitioner, respondent, **which side the attorney represents**, and the **relief
+  sought** — flowing DB → `/context` → `SessionState` → a `CASE PROFILE (…authoritative)` block
+  atop every `snapshot()`. Effects: the caption is ON THE RECORD from second zero (the
+  empty-record opening can no longer make the case's own background an "unestablished fact"); OC's
+  side is fixed **by declaration** (persona: the profile assignment is authoritative; the
+  matter-inference path remains the fallback for pre-profile cases); the matter derivation leads
+  with the profile (a pleading's differing emphasis can no longer mis-frame it); and the
+  user-stated parties/number/relief lead the STT keyterm sources. All fields nullable/optional —
+  pre-profile cases behave exactly as before.
 - **OC may decline the floor (the PASS sentinel).** The loop generates an OC reply after every
   attorney turn, so OC used to manufacture commentary even for a housekeeping opening (reading the
   case caption) — real opposing counsel does not rise when the case is being called. The model
@@ -814,7 +827,12 @@ CREATE TABLE cases (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES users(id),
     title TEXT NOT NULL,
-    case_facts TEXT,
+    case_number TEXT,                -- case profile (migration 0007): user-stated, authoritative
+    petitioner TEXT,                 --   parties as machine-readable fields (STT keyterms, matter)
+    respondent TEXT,
+    represented_party TEXT,          --   'petitioner'|'respondent' — OC takes the OTHER side by declaration
+    relief_sought TEXT,              --   what the matter + judge's assessment anchor to
+    case_facts TEXT,                 -- optional additional context (pleading is the primary source)
     case_summary TEXT,               -- LLM-extracted pleading digest (§12), always in agent context
     court_id UUID REFERENCES courts(id),  -- §13 forum grounding (nullable at DB; required by new UI)
     storage_path TEXT,               -- object storage key for uploaded file

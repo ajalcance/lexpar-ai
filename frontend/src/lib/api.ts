@@ -104,6 +104,11 @@ interface UserJson {
 interface CaseJson {
   id: string;
   title: string;
+  case_number: string | null;
+  petitioner: string | null;
+  respondent: string | null;
+  represented_party: 'petitioner' | 'respondent' | null;
+  relief_sought: string | null;
   case_facts: string | null;
   court_id: string | null;
   created_at: string;
@@ -173,6 +178,11 @@ const toUser = (j: UserJson): User => ({
 const toCase = (j: CaseJson): Case => ({
   id: j.id,
   title: j.title,
+  caseNumber: j.case_number,
+  petitioner: j.petitioner,
+  respondent: j.respondent,
+  representedParty: j.represented_party,
+  reliefSought: j.relief_sought,
   caseFacts: j.case_facts ?? '',
   courtId: j.court_id,
   createdAt: j.created_at,
@@ -247,14 +257,24 @@ export async function getCase(id: string): Promise<Case> {
 
 export async function createCase(input: {
   title: string;
-  caseFacts: string;
+  caseNumber?: string;
+  petitioner?: string;
+  respondent?: string;
+  representedParty?: 'petitioner' | 'respondent' | '';
+  reliefSought?: string;
+  caseFacts?: string;
   courtId?: string | null;
 }): Promise<Case> {
   const data = await request<CaseJson>('/api/cases', {
     method: 'POST',
     body: {
       title: input.title,
-      case_facts: input.caseFacts,
+      ...(input.caseNumber ? { case_number: input.caseNumber } : {}),
+      ...(input.petitioner ? { petitioner: input.petitioner } : {}),
+      ...(input.respondent ? { respondent: input.respondent } : {}),
+      ...(input.representedParty ? { represented_party: input.representedParty } : {}),
+      ...(input.reliefSought ? { relief_sought: input.reliefSought } : {}),
+      ...(input.caseFacts ? { case_facts: input.caseFacts } : {}),
       ...(input.courtId ? { court_id: input.courtId } : {}),
     },
   });

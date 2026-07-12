@@ -27,6 +27,24 @@ def test_build_matter_messages_includes_case_materials_and_proceeding():
     assert "Rivera seeks reinstatement." in user
 
 
+def test_build_matter_messages_leads_with_the_case_profile():
+    state = SessionState(
+        case_summary="Complaint digest.",
+        petitioner="Metrobank",
+        respondent="SARC",
+        represented_party="respondent",
+        relief_sought="Nullify the mortgage.",
+    )
+    user = case_posture.build_matter_messages(state)[1]["content"]
+    assert user.startswith("CASE PROFILE (stated by counsel — authoritative):")
+    assert "represents the respondent (SARC)" in user
+    assert "Relief sought by the attorney: Nullify the mortgage." in user
+    # Without a profile the block is absent — messages read exactly as before.
+    bare = case_posture.build_matter_messages(SessionState(case_summary="X"))[1]["content"]
+    assert "CASE PROFILE" not in bare
+    assert bare.startswith("PROCEEDING TYPE:")
+
+
 def test_build_matter_messages_tolerates_missing_materials():
     user = case_posture.build_matter_messages(SessionState())[1]["content"]
     assert "(no pleading summary)" in user

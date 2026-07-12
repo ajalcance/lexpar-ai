@@ -45,9 +45,20 @@ export interface User {
 }
 
 /** A case an attorney is preparing to argue. Mirrors the `cases` table (API-visible fields). */
+/** Which side the attorney represents — Opposing Counsel takes the other by declaration. */
+export type RepresentedParty = 'petitioner' | 'respondent';
+
 export interface Case {
   id: string;
   title: string;
+  /** Case profile — user-stated identity: docket number, parties, side, and relief. Empty/null
+   *  on pre-profile cases. */
+  caseNumber: string | null;
+  petitioner: string | null;
+  respondent: string | null;
+  representedParty: RepresentedParty | null;
+  reliefSought: string | null;
+  /** Optional additional context — the pleading (§12) is the primary source of substance. */
   caseFacts: string;
   /** The forum whose procedural rules ground this case's sessions (§13). Null on pre-§13 cases. */
   courtId: string | null;

@@ -29,7 +29,19 @@ class Case(Base):
         ForeignKey("courts.id"), nullable=True, index=True
     )
     title: Mapped[str] = mapped_column(String, nullable=False)
-    # SENSITIVE: attorney work product — never log in plaintext.
+    # Case profile (migration 0007): structured, USER-STATED ground truth the pleading alone can't
+    # supply reliably — the docket number, machine-readable parties (STT keyterms + matter
+    # framing), WHICH SIDE the attorney represents (Opposing Counsel takes the opposite side by
+    # declaration, never inference), and the relief sought (what the matter and the judge's
+    # assessment anchor to). All nullable: pre-profile cases behave exactly as before.
+    case_number: Mapped[str | None] = mapped_column(String, nullable=True)
+    petitioner: Mapped[str | None] = mapped_column(String, nullable=True)
+    respondent: Mapped[str | None] = mapped_column(String, nullable=True)
+    # 'petitioner' | 'respondent' (validated at the schema)
+    represented_party: Mapped[str | None] = mapped_column(String, nullable=True)
+    relief_sought: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # SENSITIVE: attorney work product — never log in plaintext. Optional additional context now;
+    # the pleading (§12) is the primary source of case substance.
     case_facts: Mapped[str | None] = mapped_column(Text, nullable=True)
     # SENSITIVE: the LLM-extracted structured digest of the pleading (§12), always in agent context.
     case_summary: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -35,6 +35,13 @@ def get_session_context(db: DbSession, session_id: uuid.UUID) -> SessionContextO
         case_summary=(case.case_summary if case and case.case_summary else ""),
         court_id=(str(case.court_id) if case and case.court_id else ""),
         proceeding_type=session.proceeding_type or "",
+        case_number=(case.case_number if case and case.case_number else ""),
+        petitioner=(case.petitioner if case and case.petitioner else ""),
+        respondent=(case.respondent if case and case.respondent else ""),
+        represented_party=(
+            case.represented_party if case and case.represented_party else ""
+        ),
+        relief_sought=(case.relief_sought if case and case.relief_sought else ""),
     )
 
 

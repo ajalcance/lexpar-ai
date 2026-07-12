@@ -46,6 +46,14 @@ class SessionContextOut(BaseModel):
     case_summary: str = ""  # §12: the structured pleading digest, always in agent context
     court_id: str = ""  # §13: the case's forum ("" when none) — enables court-rules retrieval
     proceeding_type: str = ""  # §13: drives eligible objection grounds (classifier, Phase 4)
+    # Case profile (user-stated ground truth, migration 0007): the record from second zero —
+    # parties/number feed STT keyterms + the snapshot; represented_party fixes OC's side by
+    # declaration; relief_sought anchors the matter and the judge's assessment. "" when unset.
+    case_number: str = ""
+    petitioner: str = ""
+    respondent: str = ""
+    represented_party: str = ""  # 'petitioner' | 'respondent' | ""
+    relief_sought: str = ""
 
 
 class KnowledgeOut(BaseModel):
