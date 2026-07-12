@@ -15,7 +15,6 @@ Built for the **AMD Developer Hackathon — Act II** (Track 3 · Unicorn).
 | 🎥 **Demo video** | _<!-- paste the submission video URL here -->_ |
 | 🌐 **Live app** | **https://165-245-129-142.sslip.io/login** — runs on an AMD Instinct MI300X |
 | 🔑 **Credentials** | Provided with the submission (self-service registration is disabled on the public deploy) |
-| 🎧 **Best experience** | Use a headset mic — you *speak* your argument and *hear* the objections and ruling |
 
 **60-second walkthrough:** log in → open a case → **Start session** → argue your position aloud →
 Opposing Counsel objects mid-sentence ("Objection — assumes facts") → the Judge rules from the
