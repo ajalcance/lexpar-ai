@@ -34,6 +34,21 @@ logger = logging.getLogger("lexpar.agents.oc")
 _OC_REPLY_MAX_TOKENS = 140
 
 
+def _context_block(state: SessionState) -> str:
+    """The per-turn context: the durable record (snapshot) PLUS the live back-and-forth
+    (recent_exchange) — without the latter OC is rebuilt amnesiac each turn: it cannot see its own
+    prior replies (it repeated the same sentence across turns live), reference earlier statements,
+    or build a cumulative line of attack. Shared by the reply and continuation builders."""
+    context = f"SESSION RECORD (what is on the record so far):\n{state.snapshot()}"
+    recent = state.recent_exchange()
+    if recent:
+        context += (
+            "\n\nRECENT EXCHANGE (the live back-and-forth so far, oldest first — do not repeat "
+            "points you have already made; advance your position):\n" + recent
+        )
+    return context
+
+
 def build_messages(
     state: SessionState,
     attorney_turn: str,
@@ -46,7 +61,7 @@ def build_messages(
     `rules` (§13) stay two clearly-separated blocks — case-specific fact vs generally-applicable
     rule must be distinguishable to the model. `cutoff_note` (floor dynamics) carries the memory of
     an interrupted reply into the retry — empty leaves the messages byte-identical to before."""
-    context = f"SESSION RECORD (what is on the record so far):\n{state.snapshot()}"
+    context = _context_block(state)
     if excerpts:
         context += f"\n\n{excerpts}"
     if rules:
@@ -71,7 +86,7 @@ def build_continuation_messages(
     `spoken_prefix` was already spoken aloud, so ask the model to continue from that prefix without
     repeating the rejected claim. Pure — no API call.
     """
-    context = f"SESSION RECORD (what is on the record so far):\n{state.snapshot()}"
+    context = _context_block(state)
     if spoken_prefix:
         situation = prompts.render(
             "oc_continuation", spoken_prefix=spoken_prefix, failure_reason=failure_reason

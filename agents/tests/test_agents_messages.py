@@ -78,3 +78,26 @@ def test_case_knowledge_passages_block_and_empty_guard():
     # retrieval short-circuits (no network) for empty inputs
     assert case_knowledge.retrieve_passages("", "q") == []
     assert case_knowledge.retrieve_passages("sess", "   ") == []
+
+
+def test_opposing_counsel_messages_include_recent_exchange_when_present():
+    state = _state()
+    state.add_turn("attorney", "The mortgage is void ab initio.")
+    state.add_turn("opposing_counsel", "The record does not support that characterization.")
+    context = opposing_counsel.build_messages(state, "next turn")[1]["content"]
+    assert "RECENT EXCHANGE" in context
+    assert "OPPOSING COUNSEL: The record does not support that characterization." in context
+    # empty transcript → no block (offline harnesses unchanged)
+    assert "RECENT EXCHANGE" not in opposing_counsel.build_messages(_state(), "t")[1]["content"]
+
+
+def test_quick_ruling_messages_include_recent_exchange_and_proceeding():
+    from session_state import SessionState
+
+    state = SessionState(proceeding_type="oral_argument")
+    state.add_turn("attorney", "Demand on the board would have been futile.")
+    objection = state.record_objection(grounds="assumes_facts", raised_by="opposing_counsel")
+    user = judge._build_quick_ruling_messages(state, objection, "the fragment")[1]["content"]
+    assert "RECENT EXCHANGE" in user
+    assert "ATTORNEY: Demand on the board would have been futile." in user
+    assert "PROCEEDING TYPE: oral_argument" in user

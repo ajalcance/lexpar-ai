@@ -117,3 +117,43 @@ def test_snapshot_includes_case_summary_when_present():
     assert "PARTIES: A v. B. CLAIM: breach." in snap
     # absent when there is no pleading summary
     assert "CASE SUMMARY" not in SessionState(case_facts="x").snapshot()
+
+
+# --- recent_exchange (the conversation memory carried into per-turn prompts) -------------------
+
+
+def test_recent_exchange_labels_and_orders_turns_oldest_first():
+    state = SessionState()
+    state.add_turn("attorney", "The mortgage is void.")
+    state.add_turn("opposing_counsel", "The record does not support that.")
+    state.add_turn("judge", "Overruled.")
+    exchange = state.recent_exchange()
+    assert exchange == (
+        "ATTORNEY: The mortgage is void.\n"
+        "OPPOSING COUNSEL: The record does not support that.\n"
+        "JUDGE: Overruled."
+    )
+
+
+def test_recent_exchange_keeps_only_the_last_max_turns():
+    state = SessionState()
+    for i in range(15):
+        state.add_turn("attorney", f"turn {i}")
+    exchange = state.recent_exchange(max_turns=10)
+    assert "turn 4" not in exchange
+    assert exchange.startswith("ATTORNEY: turn 5")
+    assert exchange.endswith("ATTORNEY: turn 14")
+
+
+def test_recent_exchange_drops_oldest_lines_to_fit_char_cap():
+    state = SessionState()
+    state.add_turn("attorney", "a" * 900)
+    state.add_turn("opposing_counsel", "b" * 900)
+    state.add_turn("judge", "c" * 900)
+    exchange = state.recent_exchange(max_chars=2000)
+    assert "a" * 900 not in exchange  # oldest dropped
+    assert "b" * 900 in exchange and "c" * 900 in exchange
+
+
+def test_recent_exchange_empty_transcript_is_empty_string():
+    assert SessionState().recent_exchange() == ""

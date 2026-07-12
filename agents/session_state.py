@@ -123,3 +123,20 @@ class SessionState:
             f"- [{o.ruling}] {o.grounds} (raised by {o.raised_by})" for o in self.objections
         ] or ["(none)"]
         return "\n".join(lines)
+
+    def recent_exchange(self, max_turns: int = 10, max_chars: int = 2000) -> str:
+        """The live back-and-forth: the last `max_turns` transcript turns, speaker-labelled,
+        oldest first, capped at `max_chars` (oldest lines dropped first). This is the
+        CONVERSATION memory the per-turn prompts carry — snapshot() deliberately holds only the
+        durable record (facts + ledger), so without this block Opposing Counsel and the inline
+        judge are rebuilt amnesiac every turn (a live pass showed OC repeating the same sentence
+        across turns because it could not see its own prior replies)."""
+        labels = {"attorney": "ATTORNEY", "opposing_counsel": "OPPOSING COUNSEL", "judge": "JUDGE"}
+        lines = [
+            f"{labels.get(t.speaker, t.speaker.upper())}: {t.content}"
+            for t in self.transcript[-max_turns:]
+        ]
+        text = "\n".join(lines)
+        while len(text) > max_chars and "\n" in text:
+            text = text.split("\n", 1)[1]  # drop the oldest line; a single oversize line stays
+        return text

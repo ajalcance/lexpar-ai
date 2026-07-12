@@ -173,8 +173,13 @@ def _build_quick_ruling_messages(
     rules: str = "",
 ) -> list[dict[str, str]]:
     """Assemble the inline-ruling messages (minimal — this sits in the live path). Pure."""
+    # The live back-and-forth: the judge rules on a fragment IN CONTEXT of the exchange that led
+    # to it (what OC argued, what the attorney was building toward), not on a sentence in a vacuum.
+    recent = state.recent_exchange()
+    exchange = f"RECENT EXCHANGE (oldest first):\n{recent}\n\n" if recent else ""
     user = (
         f"{_grounded_context(state, excerpts, rules)}\n\n"
+        f"{exchange}"
         # The judge MUST know the proceeding to apply the right lens — "assumes facts" / "calls
         # for a legal conclusion" are proper objections at a witness examination but usually
         # improper against oral argument, where counsel argues the law and characterizes the
