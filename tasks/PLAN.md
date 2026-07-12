@@ -3110,6 +3110,12 @@ pre-submission if time allows — finalize scope before starting.)
          content never logged.
       Greps should now include: "stopped early|verification failure" (streaming_verify's own logs
       were never in our grep patterns).
+- [x] Reviewer read-aloud script (hackathon judging aid). SparringRoom is now a 2-column layout on
+      desktop (left 1/3 = `DemoScript`, right 2/3 = the session), flag-gated by VITE_SHOW_DEMO_SCRIPT
+      (on by default; false hides it post-judging). The script is the SARC/Metrobank case with the 6
+      segments + alternating overrule/sustain cues + a real-Philippine-jurisprudence disclaimer
+      (G.R. 218738, publicly available). Lets a non-lawyer judge just log in and read. README judges
+      section points at it. Frontend 80 tests + tsc/lint/build clean. Stacks on mobile.
 - [ ] (Tier-2 backlog) Add a `sessionCount` (and maybe `bestScore`) field to the Case payload to
       remove the Dashboard per-card `getCaseSessions` N+1 (the CaseCard rehearsal summary).
 - [ ] (Backlog) Show the case profile on CaseDetail; prefill profile fields from pleading

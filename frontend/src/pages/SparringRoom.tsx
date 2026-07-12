@@ -19,12 +19,18 @@ import { Loader2, Mic, MicOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Breadcrumbs } from '@/components/Breadcrumbs';
+import { DemoScript } from '@/components/DemoScript';
 import { SessionFinale } from '@/components/SessionFinale';
 import { SparringVisualizer } from '@/components/SparringVisualizer';
 import { TranscriptLine } from '@/components/TranscriptLine';
 import { useSparringRoom, type ConnStatus } from '@/hooks/useSparringRoom';
 import { useSparringSession } from '@/hooks/useSparringSession';
 import { latchHasSpoken, rulingPhase } from '@/lib/rulingPhase';
+import { cn } from '@/lib/utils';
+
+// Reviewer read-aloud script beside the live session (hackathon judging aid). On by default;
+// set VITE_SHOW_DEMO_SCRIPT=false at build time to hide it after judging — no code change.
+const SHOW_DEMO_SCRIPT = import.meta.env.VITE_SHOW_DEMO_SCRIPT !== 'false';
 
 const CONNECTION_LABEL: Record<ConnStatus, string> = {
   connecting: 'Connecting…',
@@ -178,6 +184,10 @@ export function SparringRoom() {
         </div>
       )}
 
+      <div className={cn('grid gap-6', SHOW_DEMO_SCRIPT && 'lg:grid-cols-3')}>
+        {/* Reviewer script (hackathon judging aid) — left 1/3 on desktop, stacks on mobile. */}
+        {SHOW_DEMO_SCRIPT && <DemoScript className="lg:col-span-1" />}
+        <div className={cn('flex flex-col gap-6', SHOW_DEMO_SCRIPT && 'lg:col-span-2')}>
       <div className="flex flex-col gap-4 rounded-lg border bg-card/40 p-6">
         {ending ? (
           // The verdict moment: the room is still connected while the judge composes then speaks the
@@ -260,6 +270,8 @@ export function SparringRoom() {
           </Button>
         </div>
       )}
+        </div>
+      </div>
     </div>
   );
 }

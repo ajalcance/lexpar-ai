@@ -16,10 +16,11 @@ Built for the **AMD Developer Hackathon — Act II** (Track 3 · Unicorn).
 | 🌐 **Live app** | **https://165-245-129-142.sslip.io/login** — runs on an AMD Instinct MI300X |
 | 🔑 **Credentials** | Provided with the submission (self-service registration is disabled on the public deploy) |
 
-**60-second walkthrough:** log in → open a case → **Start session** → argue your position aloud →
+**60-second walkthrough (no legal knowledge needed):** log in → open the case → **Start session**.
+The session page shows a **read-aloud script on the left** — just read each line into your mic.
 Opposing Counsel objects mid-sentence ("Objection — assumes facts") → the Judge rules from the
-bench → **End session** → get a spoken closing ruling + a 0–100 scorecard with a per-criterion
-performance breakdown.
+bench (the script's baits alternate overruled/sustained so you see both) → **End session** → get a
+spoken closing ruling + a 0–100 scorecard with a per-criterion performance breakdown.
 
 **Where to look in the code:**
 - The AMD MI300X self-host runbook + LLM routing → [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §7, §10.5
