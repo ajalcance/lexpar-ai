@@ -133,7 +133,11 @@ def check_consistency(reply: str, state: SessionState) -> list[str]:
         endpoint,
         messages,
         temperature=0.0,
-        max_tokens=512,
+        # gpt-oss reasons before emitting (docs/LESSONS.md): the SESSION RECORD this checks
+        # against grew with the CASE PROFILE + MATTER blocks, and a live session showed repeated
+        # fail-closed "no verified sentences" silences — a truncated/empty verifier response
+        # parses as a contradiction and silences a fine reply. 512 -> 1024; ceiling, not floor.
+        max_tokens=1024,
         response_format={"type": "json_object"},
     )
     try:

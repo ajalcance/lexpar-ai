@@ -3080,6 +3080,15 @@ pre-submission if time allows — finalize scope before starting.)
         Danger zone hides Archive for already-archived forums. `getCourts({includeArchived})`;
         fixed a bare `queryFn: api.getCourts` reference that would have fed the query context into
         the new options param. Tests updated + list-landing test (frontend 78).
+- [x] 12:50 session regression: terse judge rulings + FALLBACK closing + verifier silences — the
+      gpt-oss budget class, third confirmation (see LESSONS). The CASE PROFILE + MATTER blocks grew
+      the SHARED snapshot(), degrading three consumers at once: quick_ruling 1024→2048, assessment
+      2048→3072 (+ its silent except now logs — a whole session fell to the fallback closing with
+      zero trace), consistency verifier 512→1024. Agents 252 + ruff.
+      OPEN MYSTERY (verify on droplet before next test): the 12:50 log shows `timeout: 5.0` on
+      speech cancels — the INTERRUPT_CANCEL_TIMEOUT_S=1.5 patch (verified working at 09:10) isn't
+      active in the RUNNING agents container despite being at HEAD; suspect a stale agents image.
+      Container check + clean rebuild in the deploy notes.
 - [ ] (Tier-2 backlog) Add a `sessionCount` (and maybe `bestScore`) field to the Case payload to
       remove the Dashboard per-card `getCaseSessions` N+1 (the CaseCard rehearsal summary).
 - [ ] (Backlog) Show the case profile on CaseDetail; prefill profile fields from pleading

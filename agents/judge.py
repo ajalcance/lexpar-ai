@@ -308,8 +308,11 @@ def quick_ruling(state: SessionState, objection: Objection, fragment: str) -> Qu
         # gpt-oss reasons before emitting; 512 was intermittently EMPTY for this prompt (the
         # session record makes it longer than the classifier's), so give it the same headroom
         # rule as assess_session: the empty-content floor scales with prompt/task complexity
-        # (docs/LESSONS.md). A larger cap costs nothing when unused.
-        max_tokens=1024,
+        # (docs/LESSONS.md). A larger cap costs nothing when unused. Raised 1024 → 2048 after the
+        # CASE PROFILE + MATTER blocks and the two-way merits test grew this prompt again and the
+        # spoken reasons went terse/truncated live ("Sustained. Assumes facts.") — third
+        # confirmation that the floor moves with the PROMPT.
+        max_tokens=2048,
         response_format={"type": "json_object"},
     )
     ruling, reason = _parse_quick_ruling(content)
@@ -362,13 +365,20 @@ def assess_session(state: SessionState, *, expressive: bool = False) -> dict:
             # gpt-oss reasons before emitting; the assessment (rule every objection + extract facts
             # + closing ruling) needs a bigger budget than the classifier's 512, else the hidden
             # reasoning eats it all and content is empty (docs/LESSONS.md empty-content bug).
-            # Raised 1536 → 2048 with the performance-rubric item (#4) — the floor scales with
-            # prompt complexity (LESSONS); a ceiling, so simpler sessions still stop early.
-            max_tokens=2048,
+            # Raised 1536 → 2048 with the performance-rubric item (#4), then 2048 → 3072 after the
+            # CASE PROFILE + MATTER blocks and the per-criterion rubric grew the prompt again and a
+            # live session fell to the FALLBACK closing (this call failing) — the floor scales
+            # with prompt complexity (LESSONS); a ceiling, so simpler sessions still stop early.
+            max_tokens=3072,
             response_format={"type": "json_object"},
         )
         result = _parse_assessment(content)
     except Exception:
+        # Fail-safe is right, but SILENT fail-safe hid a live regression (a whole session ended on
+        # the fallback closing with zero log trace). Content is never logged — the exception is.
+        logger.exception(
+            "assessment failed — falling back to neutral closing [session=%s]", state.session_id
+        )
         return {
             "rulings": [],
             "established_facts": [],

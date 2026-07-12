@@ -83,6 +83,13 @@ classifier stayed at 512 for a year — until a *prompt* change (proceeding-awar
 comparative-grounds judgment) pushed its reasoning past 512 on the hard cases (verified live:
 `finish=length`/empty at 512, clean JSON at 1024). The floor moved with the PROMPT, not just the
 task — a more demanding prompt on the same call is a "heavier reasoning task." Raised 512 → 1024.
+**Third confirmation — and the sharpest form of the rule:** the CASE PROFILE + MATTER blocks grew
+the SHARED context (`SessionState.snapshot()`), which every model call consumes — and three
+consumers degraded in ONE live session: quick-ruling reasons went terse ("Sustained. Assumes
+facts."), the end-of-session assessment failed outright (fallback closing — silently, until the
+except gained logging), and the consistency verifier fail-closed-silenced fine OC replies. When
+you grow the shared context, re-check EVERY consumer's max_tokens, not just the prompt you edited
+(quick_ruling 1024→2048, assessment 2048→3072, verifier 512→1024).
 
 ### [Agents/LLM] Don't assume a "fast small model" exists — benchmark the actual account catalog
 **Wrong:** Planned to cut objection barge-in latency by swapping `OBJECTION_LLM_MODEL` to "a fast
