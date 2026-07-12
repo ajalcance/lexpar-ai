@@ -642,3 +642,20 @@ speaker non-interruptible, audit every explicit `interrupt()` that could target 
 rather than no-ops, so a caller that used to succeed now crashes its whole handler. And keep test
 doubles' signatures in lockstep with the real API (the FakeSession.interrupt had to grow `force`),
 or the unit tests pass while the real call path throws.
+
+### [Agents/OC] Opposing Counsel invented a side (and a motion) on a thin opening
+**Wrong:** OC's persona said "counter-argue with the strongest opposing position available given the
+case facts," re-deriving a stance every turn with no notion of *which side the attorney was on* or
+*what relief they sought*. On a vacuous opening (the attorney recited only the case number, then "As
+I was saying"), OC filled the vacuum by inventing a dispositive posture — "the petition lacks merit
+and should be dismissed" — which is a guess that can land on the wrong side entirely, and doesn't
+read like real court. Nothing in the setup captured the attorney's position, so OC (and the judge)
+had no stable frame to reason against.
+**Right:** A real court knows the **matter before it** before argument. Derive it once at room join
+(`case_posture.derive_matter`, flag `DERIVE_MATTER`) into `SessionState.matter`, surface it in
+`snapshot()` so OC and the judge share one case-grounded frame, and define OC's stance **relative to
+the attorney's own position** on that matter (correct by construction) — and when no position has
+been staked yet, press for the basis instead of inventing a motion. General rule: an adversary agent
+should oppose *what the user actually argues*, anchored to a case-derived frame, not a re-guessed
+stance; when the input is empty, model the real-world behavior (probe/press), never fabricate a
+posture to have something to say.

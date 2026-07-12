@@ -40,6 +40,7 @@ PROMPT_NAMES: tuple[str, ...] = (
     "judge_quick_ruling",            # inline sustained/overruled system prompt
     "objection_classifier_system",   # tier-3 classifier system prompt ($eligible)
     "consistency_verifier",          # pre-TTS consistency verifier system prompt
+    "derive_matter",                 # session-start "matter before the court" framing
 )
 
 _cache: dict[str, str] = {}

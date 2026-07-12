@@ -119,6 +119,17 @@ def test_snapshot_includes_case_summary_when_present():
     assert "CASE SUMMARY" not in SessionState(case_facts="x").snapshot()
 
 
+def test_snapshot_includes_matter_when_present():
+    from session_state import SessionState
+
+    state = SessionState(case_facts="x", matter="The court decides defendant's motion to dismiss.")
+    snap = state.snapshot()
+    assert "MATTER BEFORE THE COURT:" in snap
+    assert "The court decides defendant's motion to dismiss." in snap
+    # absent (and the shared frame is simply omitted) when no matter was derived
+    assert "MATTER BEFORE THE COURT" not in SessionState(case_facts="x").snapshot()
+
+
 # --- recent_exchange (the conversation memory carried into per-turn prompts) -------------------
 
 

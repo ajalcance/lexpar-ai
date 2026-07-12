@@ -2957,6 +2957,18 @@ pre-submission if time allows — finalize scope before starting.)
         band (omitted when empty). Overall score kept holistic (independent of the sub-scores).
       NOTE: droplet needs `alembic upgrade head` (0006) before an agent posts a scorecard with
       criteria — additive/backfilled, so old scorecards keep working.
+- [x] Real-court posture awareness: "the matter before the court" (agents-only, flag-gated). OC was
+      inventing a side/motion on a thin attorney opening because nothing captured the matter or which
+      side the attorney was on. Fix (case + argument + procedure + transcript-aware, no scripting):
+      - `case_posture.derive_matter` frames the matter once at room join from the pleading summary +
+        facts + proceeding type (FAST model, best-effort, fail-safe to ""); stored on
+        `SessionState.matter`, surfaced atop `snapshot()` so OC AND the judge share one frame.
+        New prompt `derive_matter.md` (registered); flag `DERIVE_MATTER` (default on, env rollback).
+      - OC persona: oppose the attorney's OWN position on the matter (correct by construction); when
+        no position is staked yet, press for the basis instead of inventing a dispositive posture.
+      - Judge persona: rule/assess relative to the matter + relief sought; don't presume an unargued
+        matter. Personas aren't byte-goldened, so no golden churn.
+      Agents 236 + ruff clean (backend/frontend untouched). Docs: ARCH §6.5 + env table, LESSONS.
 - [ ] (Tier-2 backlog) Add a `sessionCount` (and maybe `bestScore`) field to the Case payload to
       remove the Dashboard per-card `getCaseSessions` N+1 (the CaseCard rehearsal summary).
 

@@ -621,6 +621,20 @@ When an objection fires and Opposing Counsel's line is spoken, the Judge immedia
   objection **supersedes** the courtesy dance (object → rule → continue). All decisions log
   distinct lines (`cut-off candidate` / `floor request` / `judge order intervention`) for live
   auditing; `FLOOR_DYNAMICS=false` restores byte-identical behavior.
+- **The matter before the court (`SessionState.matter`, flag-gated `DERIVE_MATTER`, default on —
+  `case_posture.py`):** a real oral argument has a *known* matter — the motion/petition/question and
+  the competing positions — before anyone speaks. The agents used to lack it: OC was told to
+  "counter-argue with the strongest opposing position given the case facts" and re-derived a stance
+  every turn, so on a thin opening (a recited case number, a pleasantry) it **invented a dispositive
+  side** ("the petition should be dismissed") — possibly the wrong one, since nothing said which side
+  the attorney was on. Fix: once at room join, `case_posture.derive_matter` frames the matter from
+  the pleading summary + case facts + proceeding type (one FAST-model call, best-effort, fail-safe to
+  empty) into `SessionState.matter`, surfaced at the top of `snapshot()` so **both** OC and the judge
+  share one case-grounded frame. OC is now told to oppose *the attorney's* position on that matter —
+  correct by construction, defined relative to what the attorney actually argues — and, when the
+  attorney has not yet staked a position, to **press for the basis** rather than invent one; the
+  judge rules and assesses against the matter and the relief sought, and won't presume a matter that
+  was never argued. `DERIVE_MATTER=false` restores per-turn reasoning from the summary + exchange.
 - **Conversation memory (`SessionState.recent_exchange`):** `snapshot()` deliberately holds only
   the durable record (facts + ledger), so per-turn prompts were rebuilt **amnesiac** — OC could
   not see its own prior replies (it repeated the same sentence across five turns live) and the
@@ -868,6 +882,7 @@ S3-compatible (MinIO locally, DigitalOcean Spaces in production).
 | `INTERRUPTION_MIN_DURATION` | Seconds of attorney speech required to interrupt the agent mid-utterance (§6). Default `1.0` — above the SDK's 0.5 so a brief noise/echo can't cut Opposing Counsel off before it speaks (the VAD false-interruption bug); raise to 1.5-2.0 in a noisy room, lower if interruptions feel unresponsive |
 | `{OC,JUDGE}_VOICE_{STABILITY,SIMILARITY_BOOST,STYLE,USE_SPEAKER_BOOST}` | ElevenLabs `voice_settings` expressiveness (§6.5). `style`=0 reverts to flat delivery; tune by ear |
 | `JUDGE_EXPRESSIVE_FINAL_RULING` / `JUDGE_V3_MODEL` | Track B (gated, default off): v3 + audio tags for the Judge's final ruling only (§6.5) |
+| `DERIVE_MATTER` | Frame "the matter before the court" at room join (`case_posture.py`, §6.5) — the shared OC/judge posture. Default **on**; `false` rolls back to per-turn reasoning from the case summary + exchange |
 | `JWT_SECRET` | Token signing — **required, ≥ 32 chars**; the app refuses to start with a blank/missing/weak key (`openssl rand -hex 32`) |
 | _(auth mode)_ | Removed — auth is always real bcrypt password auth; there is no `AUTH_MODE` setting (a leftover value in `.env` is ignored) |
 | `CORS_ORIGINS` | Comma-separated browser origins allowed to call the API (e.g. the Vite dev server) |

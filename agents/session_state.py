@@ -53,6 +53,13 @@ class SessionState:
     # prompt via snapshot() — this is what lets Opposing Counsel object and the Judge rule with the
     # real case, not a few sentences. Retrieved pleading passages are added per-reply on top.
     case_summary: str = ""
+    # The matter before the court: a neutral one/two-line framing of what THIS session decides and
+    # the competing positions on it, derived once at room join from the case (case_posture.py), the
+    # way a court knows the motion before argument. Shared by BOTH agents via snapshot() so OC
+    # opposes the attorney's position on a stable, case-grounded frame (never an invented side) and
+    # the judge rules against the real matter. Empty when derivation is off/failed or no case exists
+    # — everything then degrades to reasoning from the case summary + exchange as before.
+    matter: str = ""
     # §13 plumbing (loaded from the session-context route at room join; NOT snapshot() content):
     # session_id lets any consumer holding the state retrieve pleading/court-rule passages without
     # signature churn; court_id/proceeding_type gate whether/which retrieval and objection grounds
@@ -114,6 +121,8 @@ class SessionState:
     def snapshot(self) -> str:
         """A compact text view of the state, suitable as verifier/prompt context."""
         lines: list[str] = []
+        if self.matter:
+            lines += ["MATTER BEFORE THE COURT:", self.matter, ""]
         if self.case_summary:
             lines += ["CASE SUMMARY (from the pleading):", self.case_summary, ""]
         lines += ["CASE FACTS:", self.case_facts or "(none)", "", "ESTABLISHED FACTS:"]

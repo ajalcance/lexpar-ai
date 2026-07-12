@@ -312,6 +312,18 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         court_id=court_id,
         proceeding_type=proceeding_type,
     )
+
+    # Frame the matter before the court from the case, the way a court knows the motion before
+    # argument — the shared posture OC and the judge reason against (snapshot()), so OC opposes the
+    # attorney's actual position instead of inventing a side on a thin opening. Best-effort + gated:
+    # a failure or DERIVE_MATTER=false just leaves it empty (reason from the summary + exchange).
+    if config.DERIVE_MATTER:
+        try:
+            import case_posture
+
+            state.matter = await asyncio.to_thread(case_posture.derive_matter, state)
+        except Exception:
+            logger.warning("matter derivation failed for %s; proceeding without it", session_id)
     classifier = ObjectionClassifier(state)
     # Shared with OpposingCounselAgent.llm_node: set when an objection fires on a turn so the
     # end-of-turn full reply is skipped (object → rule → continue, no redundant re-argument).

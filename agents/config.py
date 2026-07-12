@@ -139,6 +139,13 @@ ELEVENLABS_AUTO_MODE = _getbool("ELEVENLABS_AUTO_MODE", True)
 # line turns it back off (same rollback pattern as ELEVENLABS_STREAMING).
 FLOOR_DYNAMICS = _getbool("FLOOR_DYNAMICS", False)
 
+# Derive "the matter before the court" once at room join (case_posture.derive_matter) — the shared
+# frame OC and the Judge reason against so OC opposes the attorney's position on a stable, case-
+# grounded matter instead of inventing a side on a thin opening. Default ON; one FAST-model call at
+# session start, best-effort (a failure just leaves the matter empty). Set DERIVE_MATTER=false to
+# roll back to reasoning from the case summary + exchange alone.
+DERIVE_MATTER = _getbool("DERIVE_MATTER", True)
+
 
 def _getfloat(name: str, default: float) -> float:
     """Parse a float env var; default when unset/invalid (a bad value must not kill the worker)."""
