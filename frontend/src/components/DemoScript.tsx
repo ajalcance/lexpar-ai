@@ -90,9 +90,12 @@ export function DemoScript({ className }: { className?: string }) {
       </div>
 
       <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed">
-        The outcomes below are the <strong>expected</strong> behavior by design. Opposing Counsel and
-        the Judge are live AI agents that reason over their own session memory — they form their own
-        objections and rulings in real time, so what actually fires may differ from what’s noted.
+        The outcomes below are the <strong>expected</strong> design behavior —{' '}
+        <strong>not a hard-coded script the app plays back.</strong> Opposing Counsel and the Judge
+        are each driven by their own live LLM, reasoning over their own session memory, and decide
+        their own objections and rulings in real time. So the actual objection or ruling on any line{' '}
+        <strong>may differ</strong> from what’s noted — that variation is the reasoning models at
+        work, not a bug.
       </p>
 
       <ol className="flex flex-col gap-3">
