@@ -130,6 +130,27 @@ def test_snapshot_includes_matter_when_present():
     assert "MATTER BEFORE THE COURT" not in SessionState(case_facts="x").snapshot()
 
 
+def test_fresh_sessions_are_independent_no_ledger_bleed():
+    # Session isolation: two rehearsals of the SAME case share the case facts but wholly separate
+    # ledgers. Guards against a mutable-default-arg regression (all the ledgers use default_factory)
+    # that would silently share state across every session in the worker.
+    from session_state import SessionState
+
+    first = SessionState(case_facts="Same case.")
+    second = SessionState(case_facts="Same case.")
+    first.add_established_fact("Fact only in session one.")
+    objection = first.record_objection("hearsay", "opposing_counsel")
+    first.rule_on_objection(objection, "sustained")
+    first.add_turn("attorney", "Argument only in session one.")
+
+    # The second session is untouched — no fact, objection, or transcript crossed over.
+    assert second.established_facts == []
+    assert second.objections == []
+    assert second.transcript == []
+    assert "Fact only in session one." not in second.snapshot()
+    assert "Argument only in session one." not in second.recent_exchange()
+
+
 # --- recent_exchange (the conversation memory carried into per-turn prompts) -------------------
 
 

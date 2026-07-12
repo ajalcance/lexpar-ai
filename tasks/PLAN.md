@@ -2969,6 +2969,14 @@ pre-submission if time allows — finalize scope before starting.)
       - Judge persona: rule/assess relative to the matter + relief sought; don't presume an unargued
         matter. Personas aren't byte-goldened, so no golden churn.
       Agents 236 + ruff clean (backend/frontend untouched). Docs: ARCH §6.5 + env table, LESSONS.
+- [x] Session-isolation regression guard (tests only, no prod change). Locks the invariant that
+      each rehearsal of a case is independent — no transcript/score/objection/fact bleed forward.
+      Verified the design is already isolated (fresh per-session `SessionState`; join context is
+      case-only; transcripts never embedded into `case_chunks`; scorecards per-session, unique).
+      Tests: `backend/tests/test_session_isolation.py` (context carries no prior-session content;
+      writing a transcript adds 0 retrieval chunks; scorecards not aggregated) + an agent-side
+      in-memory guard in `test_session_state.py` (no ledger bleed across two SessionStates — catches
+      a mutable-default regression). Backend 98, agents 237.
 - [ ] (Tier-2 backlog) Add a `sessionCount` (and maybe `bestScore`) field to the Case payload to
       remove the Dashboard per-card `getCaseSessions` N+1 (the CaseCard rehearsal summary).
 
