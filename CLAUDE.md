@@ -1,5 +1,8 @@
 # LexPar AI — CLAUDE.md
 
+> **Reviewers/judges:** this file is internal build guidance for AI coding assistants — start at
+> **[README.md](README.md)** (demo, the AMD MI300X story, architecture, how to run it).
+
 LexPar AI is a voice-immersive courtroom rehearsal platform: an attorney argues aloud against
 an AI Opposing Counsel (which can interrupt with objections) and an AI Judge that delivers a
 spoken ruling and written scorecard. Built for the AMD Developer Hackathon, architected to
