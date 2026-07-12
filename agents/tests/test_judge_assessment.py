@@ -203,3 +203,20 @@ def test_quick_ruling_raises_so_caller_fails_safe(monkeypatch):
     with pytest.raises(RuntimeError):
         judge_mod.quick_ruling(state, _pending_objection(state), "fragment")
     assert _pending_objection(state).ruling == "pending"  # ledger untouched on failure
+
+
+def test_render_transcript_caps_long_sessions_dropping_oldest_first():
+    state = SessionState()
+    for i in range(40):
+        state.add_turn("attorney", f"turn {i}: " + "x" * 800)
+    rendered = judge_mod._render_transcript(state)
+    assert len(rendered) <= judge_mod._TRANSCRIPT_MAX_CHARS + 100  # marker line allowance
+    assert "turn 0:" not in rendered  # oldest dropped
+    assert "turn 39:" in rendered  # newest kept (pending objections live here)
+    assert rendered.startswith("(earlier turns omitted")
+
+
+def test_render_transcript_short_sessions_unchanged_no_marker():
+    state = SessionState()
+    state.add_turn("attorney", "brief")
+    assert judge_mod._render_transcript(state) == "ATTORNEY: brief"

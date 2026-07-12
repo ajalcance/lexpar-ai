@@ -108,13 +108,30 @@ def generate_ruling(state: SessionState, attorney_turn: str) -> str:
     return ruling
 
 
+# Char cap for the assessment transcript (~4k tokens). Uncapped, a long session's FULL TRANSCRIPT
+# could blow the judge's context exactly when it matters most (the closing ruling + scorecard).
+# The most recent turns are kept — they carry the pending objections being ruled — and the durable
+# record (facts + ledger) is always fully present via _grounded_context regardless of this cap.
+_TRANSCRIPT_MAX_CHARS = 16000
+
+
 def _render_transcript(state: SessionState) -> str:
-    """A readable transcript of the session for the end-of-session assessment. Pure."""
+    """A readable transcript for the end-of-session assessment, capped at _TRANSCRIPT_MAX_CHARS
+    (oldest lines dropped first, with an explicit omission marker so the model knows). Pure."""
     lines = [
         f"{_SPEAKER_LABELS.get(turn.speaker, turn.speaker.upper())}: {turn.content}"
         for turn in state.transcript
     ]
-    return "\n".join(lines) or "(no transcript)"
+    text = "\n".join(lines)
+    if not text:
+        return "(no transcript)"
+    dropped = False
+    while len(text) > _TRANSCRIPT_MAX_CHARS and "\n" in text:
+        text = text.split("\n", 1)[1]
+        dropped = True
+    if dropped:
+        text = "(earlier turns omitted — the session record above is complete)\n" + text
+    return text
 
 
 def _build_assessment_messages(
