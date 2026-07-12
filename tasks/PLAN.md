@@ -3040,6 +3040,14 @@ pre-submission if time allows — finalize scope before starting.)
       interrupt+say is capped ~2-3.8s); keyterm PHRASES (bigrams — "ultra vires" as a phrase, the
       single-token boosts didn't stop "ultra virus"); confirm deployed SHA before judging prompt
       compliance (7ce670d pushed 13min before the test session).
+- [x] OC may decline the floor (PASS sentinel). Retest on 8829aba: all instrumented failures clean
+      (zero objections on the caption — carve-outs verified live; zero drops/errors/verifier
+      silences), but OC still replied to the housekeeping opening — the loop generates a reply
+      every turn with no way to hold back. Fix: oc_reply_style (+golden) instructs a bare PASS when
+      a turn calls for no response; `opposing_counsel.is_pass` (full-sentence match, tested) turns
+      it into silence in llm_node (nothing spoken/recorded; floor dynamics = natural end; INFO log
+      "OC declined the floor"). Persona bullet updated (PASS over commentary; press for the basis
+      only after attempted substance). Agents 250 + ruff clean.
 - [ ] (Tier-2 backlog) Add a `sessionCount` (and maybe `bestScore`) field to the Case payload to
       remove the Dashboard per-card `getCaseSessions` N+1 (the CaseCard rehearsal summary).
 

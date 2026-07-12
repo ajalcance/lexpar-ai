@@ -101,3 +101,17 @@ def test_quick_ruling_messages_include_recent_exchange_and_proceeding():
     assert "RECENT EXCHANGE" in user
     assert "ATTORNEY: Demand on the board would have been futile." in user
     assert "PROCEEDING TYPE: oral_argument" in user
+
+
+def test_is_pass_recognizes_only_the_bare_sentinel():
+    from opposing_counsel import is_pass
+
+    # The sentinel, tolerant of punctuation/quotes/case the model may add.
+    assert is_pass("PASS")
+    assert is_pass("Pass.")
+    assert is_pass('"PASS"')
+    assert is_pass("  pass  ")
+    # Real sentences are never swallowed — full-sentence match only.
+    assert not is_pass("Passing over that point, the record is clear.")
+    assert not is_pass("The court should not give this a pass.")
+    assert not is_pass("")

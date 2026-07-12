@@ -261,6 +261,7 @@ class OpposingCounselAgent(Agent):
             return opposing_counsel.stream_reply(state, turn, session_id, cutoff_note)
 
         completed = False
+        held = False
         try:
             async for sentence in astream_verified_reply(
                 self._state, attorney_turn, generate=_generate
@@ -274,6 +275,12 @@ class OpposingCounselAgent(Agent):
                 # outright (the `finally` still records what was actually voiced).
                 if self._judge_idle is not None:
                     await self._judge_idle.wait()
+                # OC may decline the floor: a first-sentence PASS sentinel means the turn calls
+                # for no response (housekeeping, a pleasantry, a fragment) — real opposing counsel
+                # does not rise when the case is being called. Nothing spoken, nothing recorded.
+                if not spoken and opposing_counsel.is_pass(sentence):
+                    held = True
+                    break
                 spoken.append(sentence)
                 yield sentence + " "  # trailing space so TTS never jams two sentences together
             completed = True
@@ -302,6 +309,9 @@ class OpposingCounselAgent(Agent):
                         "OC reply lodged an objection in counter-argument (unruled) — tighten "
                         "oc_reply_style/opposing_counsel prompt if this recurs"
                     )
+            elif held:
+                # Deliberate non-response: the turn called for none (housekeeping/pleasantry).
+                logger.info("OC declined the floor this turn (PASS)")
             elif completed:
                 # The reply ran to completion and the verifier rejected every sentence — the real
                 # fail-closed case worth a warning (a live flood of the old combined log turned out
@@ -316,7 +326,8 @@ class OpposingCounselAgent(Agent):
                 # generator was closed early (VAD / session.interrupt()) is a cut-off CANDIDATE,
                 # carrying the partial already voiced + the turn it answered (the retry's memory).
                 # Promotion waits for the interrupting speech to become a real attorney turn.
-                if completed:
+                # A PASS (held) is a deliberate ending, never a cut-off.
+                if completed or held:
                     self._floor.reply_completed()
                 else:
                     logger.info("floor dynamics: cut-off candidate recorded")

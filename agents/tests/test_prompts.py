@@ -21,7 +21,10 @@ STATIC_GOLDENS = {
         "analysis, headings, quotation marks, or preamble. Argue the merits as direct "
         "counter-argument — do NOT lodge an objection or use the words "
         '"objection" or "I object"; state the point as argument instead (e.g. "The record does '
-        'not support that…").'
+        'not support that…"). If the statement calls for no response from opposing counsel — '
+        "routine housekeeping such as identifying the case or parties, a pleasantry, or an "
+        "incomplete fragment with nothing yet to oppose — reply with exactly PASS (that single "
+        "word, nothing else): you keep your seat and the argument proceeds."
     ),
     "judge_ruling_instruction": (
         "If you cite a rule, name only a section heading that appears in RELEVANT PROCEDURAL "

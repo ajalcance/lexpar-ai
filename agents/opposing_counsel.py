@@ -34,6 +34,15 @@ logger = logging.getLogger("lexpar.agents.oc")
 _OC_REPLY_MAX_TOKENS = 140
 
 
+def is_pass(sentence: str) -> bool:
+    """True when a reply sentence is the PASS sentinel — OC declining the floor because the turn
+    calls for no response (housekeeping, a pleasantry, an incomplete fragment). The model decides
+    WHEN (oc_reply_style prompt); this only recognizes the sentinel, tolerant of trailing
+    punctuation/quotes. Full-sentence match only — a real sentence starting with "Passing…" is
+    never swallowed."""
+    return "".join(ch for ch in sentence if ch.isalpha()).casefold() == "pass"
+
+
 def _context_block(state: SessionState) -> str:
     """The per-turn context: the durable record (snapshot) PLUS the live back-and-forth
     (recent_exchange) — without the latter OC is rebuilt amnesiac each turn: it cannot see its own

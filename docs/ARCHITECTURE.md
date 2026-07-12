@@ -640,6 +640,14 @@ When an objection fires and Opposing Counsel's line is spoken, the Judge immedia
   attorney has not yet staked a position, to **press for the basis** rather than invent one; the
   judge rules and assesses against the matter and the relief sought, and won't presume a matter that
   was never argued. `DERIVE_MATTER=false` restores per-turn reasoning from the summary + exchange.
+- **OC may decline the floor (the PASS sentinel).** The loop generates an OC reply after every
+  attorney turn, so OC used to manufacture commentary even for a housekeeping opening (reading the
+  case caption) — real opposing counsel does not rise when the case is being called. The model
+  decides: when a turn calls for no response (housekeeping, a pleasantry, an incomplete fragment),
+  it replies with the bare sentinel `PASS` (oc_reply_style, byte-goldened) and
+  `opposing_counsel.is_pass` (full-sentence match — "Passing over that…" is never swallowed) turns
+  it into silence in `llm_node`: nothing spoken, nothing recorded, floor dynamics treats it as a
+  natural ending, logged at INFO ("OC declined the floor").
 - **The bench owns the floor — outright.** The `judge_idle` gate keeps OC from *starting* a reply
   over a ruling, but audio already buffered keeps playing — a stress test (attorney talking over
   everyone) showed a late inline ruling overlapping OC's in-flight reply for seconds. Both the
