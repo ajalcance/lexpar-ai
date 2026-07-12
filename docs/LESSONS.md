@@ -581,3 +581,21 @@ Finalization was already idempotent, so the grace task is safe alongside the oth
 General rule: a room/connection event handler that takes irreversible action must always ask WHO
 triggered it and WHETHER the condition still holds when the action runs — events describe a moment,
 not a state.
+
+### [Agents/STT] Plugin defaults are tuned for command-and-control, not courtroom argument
+**Wrong:** Shipped `deepgram.STT(...)` without touching endpointing. The plugin's default is
+**25 ms** of silence → FINAL — sized for short voice commands, not sustained legal argument. Every
+mid-sentence breath finalized the turn: one spoken argument shredded into 3-4 transcript turns, OC
+generated a reply to EACH fragment (the live "chattiness"), and the resulting rapid-fire turn
+boundaries were the pressure behind a whole family of downstream timing collisions (objection vs
+reply races, judge/OC overlap) that each got patched individually before the root cause was
+addressed. The trap: every downstream symptom looked like a concurrency bug, so the fixes went into
+locks/floors/settles — all real and still needed — while the *generator* of the tight timing (turn
+commits every breath) sat in an unexamined plugin default.
+**Right:** Size the turn-taking knobs to the domain and make them env-tunable without a rebuild
+(`DEEPGRAM_ENDPOINTING_MS=300`, `MIN_ENDPOINTING_DELAY=0.8`, `MAX_ENDPOINTING_DELAY=6.0` — same
+pattern as INTERRUPTION_MIN_DURATION, tuned by ear on the box). Know the coupled trade-off: finals
+gate the argument-proceeding objection fallback, so endpointing raised too far delays objections.
+General rule: when several timing races appear in the same subsystem, ask what is GENERATING the
+tight timing before (or at least while) fixing each race — and audit every latency-relevant plugin
+default against your domain's speech rhythm, not the plugin's demo use case.

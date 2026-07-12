@@ -2884,23 +2884,23 @@ request; twice → judge order; normal exchange → no new behavior).
 **Result:** All three audit Tier-1 items closed; agents 217 tests + backend 92 tests pass. Droplet
 needs: rebuild agents + backend, add ALLOW_REGISTRATION=false to .env.prod.
 
-### Enterprise audit Tier 2 — pre-commercialization backlog — status: pending
+### Enterprise audit Tier 2 — pre-commercialization backlog — status: Batch 1+2 done, rest pending
 (From the 2026-07-12 audit. Fix before commercial launch; several are candidates to do
 pre-submission if time allows — finalize scope before starting.)
 - [ ] Established-facts ledger never grows mid-session (only at finalization) — incremental fact
       extraction so verification/rulings see a live record
-- [ ] Unbounded assessment prompt: `_render_transcript` renders every turn — cap/summarize for
-      long sessions
-- [ ] Turn fragmentation: STT endpointing splits one spoken argument into 3-4 turns (root cause of
-      OC chattiness) — tune Deepgram endpointing / turn-detector settings
+- [x] Unbounded assessment prompt — capped at 16k chars, newest kept, omission marker (6e5dc84)
+- [x] Turn fragmentation — endpointing 25ms→300ms + min/max endpointing delays, env-tunable
+      (5e506f7); needs live by-ear tuning on the droplet
 - [ ] RAG hardening: per-session retrieval caching (latency + Fireworks cost), multi-pleading
       case_summary (last-writer-wins today), retrieval relevance telemetry
-- [ ] Abuse/ops: rate limiting (none anywhere), per-user quotas, per-session cost metering
-- [ ] Data protection: encryption at rest (Postgres/MinIO hold work product), retention/deletion
-      policy, Postgres volume backups (none today), audit logging
+- [x] Auth rate limiting — 10/min sliding window, XFF-keyed behind Caddy (33f53fe). Still
+      pending: per-user quotas, per-session cost metering, Redis limiter if backend scales
+- [x] Backups — infra/backup.sh (pg_dump + MinIO tar, retention 14, restore documented)
+      (bff9268). Still pending: encryption at rest, retention/deletion policy, audit logging
 - [ ] Observability: metrics + alerting (logs-only today), session-health dashboard
-- [ ] Scorecard depth: score driven only by sustained objections (most sessions now score 100) —
-      richer rubric (argument structure, responsiveness to rulings, use of the record)
+- [x] Scorecard depth — judge grades 0-100 on a four-part rubric + performance notes; heuristic
+      stays as the fail-safe (cb0c5fb)
 - [ ] Proceeding-type extensibility: PROCEEDING_ELIGIBLE_GROUNDS duplicated backend/agents — shared
       schema before adding types
 - [ ] Frontend: register form (API-only today), live transcript view (placeholder text in sparring

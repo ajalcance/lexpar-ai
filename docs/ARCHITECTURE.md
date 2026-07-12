@@ -186,7 +186,10 @@ An actual login form hitting a real endpoint, backed by real bcrypt password aut
   attorney's email — auth is email-based). Accounts are created via `POST /api/auth/register`.
 - Backend (see §5) verifies the password against the bcrypt hash in `users.password_hash` and
   returns a signed JWT. The legacy `admin`/`admin` stub was removed at the production cutover — there
-  is no demo bypass and no `AUTH_MODE` setting.
+  is no demo bypass and no `AUTH_MODE` setting. Both unauthenticated auth routes are **rate-limited**
+  (`app/rate_limit.py`: 10/min sliding window per client, keyed on the first `X-Forwarded-For` entry
+  because behind Caddy every socket peer is the proxy; in-memory by design — one backend container),
+  and register is additionally gated by `ALLOW_REGISTRATION` (routes table, §13).
 - Frontend stores the token in memory (Zustand `auth` store) and attaches it as a Bearer token on
   subsequent requests. Not localStorage — keeps it out of persistent browser storage.
 
@@ -584,6 +587,13 @@ When an objection fires and Opposing Counsel's line is spoken, the Judge immedia
   max_chars=2000)` renders the last turns speaker-labelled, oldest first, char-capped; it rides in
   OC's reply + continuation contexts (with an explicit do-not-repeat instruction) and the judge's
   quick-ruling context. Empty transcript → no block, so offline harnesses are byte-identical.
+- **Turn pacing (the fragmentation fix):** Deepgram's plugin default endpointing is **25 ms** — a
+  mid-sentence breath finalized the turn, shredding one spoken argument into 3-4 turns that OC
+  answered individually. Three env-tunable knobs (no rebuild): `DEEPGRAM_ENDPOINTING_MS` (300),
+  `MIN_ENDPOINTING_DELAY` (0.8 s), `MAX_ENDPOINTING_DELAY` (6 s) — a brief pause continues the
+  SAME turn; the semantic turn detector may extend within [min, max]. Tuning guidance in
+  `.env.prod.example`. Trade-off: finals gate the argument-proceeding objection fallback, so
+  raising endpointing too far delays those objections.
 - **Disconnect handling (identity-checked + grace):** `participant_disconnected` finalizes the
   session ONLY for the attorney, and only after a 15 s grace window in which a browser refresh /
   transient drop can rejoin ("Resume session" stays alive). The judge participant's own
@@ -593,13 +603,21 @@ When an objection fires and Opposing Counsel's line is spoken, the Judge immedia
 ### End-of-session judge assessment (spoken ruling + scorecard)
 
 At session end the Judge makes **one** structured call (`judge.assess_session`) that: rules each
-objection **still pending** `sustained`/`overruled` (→ scorecard **score** and **weaknesses**),
-extracts the 2–5 facts the attorney genuinely established (→ scorecard **strengths**), and returns
-the closing ruling — which **acknowledges the objections already ruled from the bench during the
-session** rather than re-ruling them (inline rulings are final). This is what makes the scorecard
-reflect what actually happened instead of a hollow default (score always 100). It **fails safe**:
-on an unparseable/empty model response, objections stay pending (not sustained → the attorney is
-never penalized on a model glitch), no facts are invented, and a neutral closing ruling is used.
+objection **still pending** `sustained`/`overruled`, extracts the 2–5 facts the attorney genuinely
+established (→ scorecard **strengths**), **grades the performance 0–100 on a four-part rubric**
+(command of the record, responsiveness to rulings, argument structure, procedural discipline) with
+1–3 specific `performance_notes` (→ scorecard **score** and **weaknesses**), and returns the
+closing ruling — which **acknowledges the objections already ruled from the bench during the
+session** rather than re-ruling them (inline rulings are final). The rubric exists because the old
+score (100 − 8 per sustained objection) went hollow once the bench started ruling on the merits:
+most sessions scored 100 with an empty Weaknesses box. It **fails safe** twice over: on an
+unparseable/empty model response, objections stay pending (not sustained → the attorney is never
+penalized on a model glitch), no facts are invented, a neutral closing ruling is used — and a
+missing/garbage `performance_score` parses to None, in which case `scorecard_builder`'s original
+deterministic heuristic stands, so the scorecard can never come back empty or fabricated. The
+transcript block the assessment reads is **capped** (`judge._TRANSCRIPT_MAX_CHARS`, newest turns
+kept, explicit omission marker) so a long session cannot blow the prompt at its most important
+moment; the durable record (facts + ledger) is always fully present regardless.
 
 **End-of-session handshake (so the judge is *heard*, and the scorecard is ready when the page
 loads).** When the attorney clicks "End session", the browser publishes an `end_session` data
@@ -850,7 +868,10 @@ the backend — see `frontend/.env.example`. Vite only exposes vars prefixed `VI
   `compose up -d --build`), from a stable tag — the droplet does not track `main`. All of this is
   **additive**: local dev (`infra/docker-compose.yml` + host processes) is unchanged. Images build
   on the droplet; CI still pushes nothing to a registry (a build-and-push pipeline remains future
-  work).
+  work). **Backups:** `./infra/backup.sh` dumps Postgres (pg_dump, safe while running) and tars the
+  MinIO volume (uploaded PDFs) to `/root/backups`, keeping the newest 14 of each; run it manually
+  before any demo and via the cron line documented in the script header. Dumps hold attorney work
+  product — on-box root-only; encrypt before ever shipping off-box.
 - **CI (`.github/workflows/ci.yml`):** lint + type-check + test on every push, plus a
   `docker build` of the **backend** image as a smoke test (built and locally tagged `:ci`, never
   pushed to a registry — frontend/agents images are deferred). A full build-and-push-to-registry
