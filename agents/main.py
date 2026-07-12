@@ -49,7 +49,7 @@ import llm_router
 import opposing_counsel
 import prompts
 import scorecard_builder
-from judge_participant import JudgeParticipant
+from judge_participant import JUDGE_IDENTITY, JudgeParticipant
 from judge_voice import JudgeVoice
 from objection_classifier import ObjectionClassifier
 from session_state import SessionState
@@ -79,6 +79,11 @@ def _last_user_text(chat_ctx) -> str:
 # instead of OC talking over the ruling on the judge's own track. OC replies are not latency-
 # critical (the objection + ruling are), so a sub-second settle is invisible.
 _OC_REPLY_SETTLE_S = 0.4
+
+# Grace window after the attorney's participant disconnects before the session is finalized. A
+# browser refresh or a transient network drop reconnects well inside this; without it, one blip
+# force-completed the session (status != in_progress), killing the frontend's "Resume session".
+ATTORNEY_DISCONNECT_GRACE_S = 15.0
 
 
 class OpposingCounselAgent(Agent):
@@ -646,11 +651,28 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         if message.get("type") == "end_session":
             asyncio.create_task(_finalize_session(speak=True))
 
+    async def _finalize_after_grace() -> None:
+        # Wait out the grace window, then finalize ONLY if no attorney came back — a refresh
+        # rejoins within seconds and the session must keep running for "Resume session" to work.
+        await asyncio.sleep(ATTORNEY_DISCONNECT_GRACE_S)
+        attorney_present = any(
+            p.identity != JUDGE_IDENTITY for p in ctx.room.remote_participants.values()
+        )
+        if attorney_present:
+            logger.info("attorney rejoined within the grace period — session continues")
+            return
+        await _finalize_session(speak=False)
+
     @ctx.room.on("participant_disconnected")
     def _on_participant_left(participant) -> None:
-        # Backstop: the attorney closed the tab without clicking End — finalize now (no one to hear
-        # the ruling) instead of waiting for the room's empty-timeout, so the scorecard still lands.
-        asyncio.create_task(_finalize_session(speak=False))
+        # Backstop: the attorney left without clicking End — finalize (no one to hear the ruling)
+        # so the scorecard still lands. IDENTITY-CHECKED: the judge participant is our own second
+        # connection (§6.5); a transient blip on it must never end the session. The attorney gets
+        # a grace window to rejoin before finalization (idempotent either way).
+        if getattr(participant, "identity", "") == JUDGE_IDENTITY:
+            logger.warning("judge participant disconnected — session continues")
+            return
+        asyncio.create_task(_finalize_after_grace())
 
     async def _on_shutdown() -> None:
         await _finalize_session(speak=False)  # last-resort backstop
