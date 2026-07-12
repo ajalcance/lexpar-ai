@@ -20,7 +20,6 @@ from fastapi import (
 )
 from sqlalchemy.orm import Session as DbSession
 
-from app.config import get_settings
 from app.db import SessionLocal, get_db
 from app.models.user import User
 from app.schemas.case import CaseCreate, CaseDocumentOut, CaseOut
@@ -35,6 +34,7 @@ from app.services import (
     case_service,
     session_service,
     storage_service,
+    upload_service,
 )
 
 router = APIRouter(prefix="/api/cases", tags=["cases"])
@@ -114,16 +114,7 @@ async def upload_pleading(
     'pending' status the client polls."""
     case_service.get_case(db, current_user, case_id)  # 404/ownership check
 
-    if file.content_type not in ("application/pdf", "application/octet-stream"):
-        raise HTTPException(status_code=415, detail="Only PDF pleadings are supported.")
-    data = await file.read()
-    max_bytes = get_settings().max_upload_mb * 1024 * 1024
-    if not data:
-        raise HTTPException(status_code=422, detail="The uploaded file is empty.")
-    if len(data) > max_bytes:
-        raise HTTPException(
-            status_code=413, detail=f"File exceeds the {get_settings().max_upload_mb} MB limit."
-        )
+    data = await upload_service.read_pdf_upload(file)
 
     key = storage_service.object_key(str(case_id), file.filename or "pleading.pdf")
     storage_service.put_object(key, data, content_type="application/pdf")
@@ -188,16 +179,7 @@ async def replace_pleading(
     if old.deleted_at is not None:
         raise HTTPException(status_code=409, detail="This pleading is archived — upload anew.")
 
-    if file.content_type not in ("application/pdf", "application/octet-stream"):
-        raise HTTPException(status_code=415, detail="Only PDF pleadings are supported.")
-    data = await file.read()
-    max_bytes = get_settings().max_upload_mb * 1024 * 1024
-    if not data:
-        raise HTTPException(status_code=422, detail="The uploaded file is empty.")
-    if len(data) > max_bytes:
-        raise HTTPException(
-            status_code=413, detail=f"File exceeds the {get_settings().max_upload_mb} MB limit."
-        )
+    data = await upload_service.read_pdf_upload(file)
 
     key = storage_service.object_key(str(case_id), file.filename or "pleading.pdf")
     storage_service.put_object(key, data, content_type="application/pdf")

@@ -10,6 +10,13 @@
 
 	# REST API → FastAPI backend (same-origin, so the browser needs no CORS exception).
 	handle /api/* {
+		# Edge upload cap: reject an oversized request body here, before it ever reaches the app's
+		# multipart parser (which would spool it to disk). Set a touch above the app's
+		# MAX_UPLOAD_MB (default 50) so the app returns its friendly 413 near the limit and Caddy
+		# stops only the egregious ones. The app also streams-and-caps as defense in depth.
+		request_body {
+			max_size 60MB
+		}
 		reverse_proxy backend:8000
 	}
 	handle /health {

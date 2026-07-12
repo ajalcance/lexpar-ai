@@ -3126,6 +3126,13 @@ pre-submission if time allows — finalize scope before starting.)
 - [ ] **REMINDER — after the AMD hackathon judging closes:** re-enable destructive actions. Remove
       `DESTRUCTIVE_ACTIONS_ENABLED=false` from `.env.prod` (or set true) and rebuild+recreate
       backend + frontend. Then the normal archive/purge/danger-zone flow is restored for real use.
+- [x] Harden PDF upload guardrails (best practice). Existing checks (PDF type, 50MB, empty) read
+      the WHOLE file into memory before checking size — a memory-exhaustion vector. New shared
+      `services/upload_service.read_pdf_upload`: streamed size cap (rejects mid-read, never buffers
+      past MAX_UPLOAD_MB), + a real `%PDF-` magic-header check (content-type is spoofable), + empty.
+      All three routes (case pleading upload/replace, court rule upload/replace) route through it.
+      Caddy `request_body max_size 60MB` drops egregious bodies at the edge. Frontend PleadingUpload
+      pre-checks size/type for UX. Backend 105, frontend 81; ruff/tsc/lint/build clean.
 - [ ] (Tier-2 backlog) Add a `sessionCount` (and maybe `bestScore`) field to the Case payload to
       remove the Dashboard per-card `getCaseSessions` N+1 (the CaseCard rehearsal summary).
 - [ ] (Backlog) Show the case profile on CaseDetail; prefill profile fields from pleading

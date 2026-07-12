@@ -159,6 +159,31 @@ def test_rule_upload_rejects_non_pdf(client, admin_headers, db_session):
     assert resp.status_code == 415
 
 
+def test_rule_upload_rejects_pdf_labelled_bytes_without_a_pdf_header(
+    client, admin_headers, db_session
+):
+    # Magic-byte guard: a non-PDF relabelled as application/pdf (content-type is spoofable) is
+    # rejected on the missing %PDF- header, not silently stored.
+    court = _court(db_session)
+    resp = client.post(
+        f"/api/courts/{court.id}/rules",
+        headers=admin_headers,
+        files={"file": ("fake.pdf", b"this is definitely not a pdf", "application/pdf")},
+    )
+    assert resp.status_code == 415
+    assert "pdf" in resp.json()["detail"].lower()
+
+
+def test_rule_upload_rejects_empty_file(client, admin_headers, db_session):
+    court = _court(db_session)
+    resp = client.post(
+        f"/api/courts/{court.id}/rules",
+        headers=admin_headers,
+        files={"file": ("empty.pdf", b"", "application/pdf")},
+    )
+    assert resp.status_code == 422
+
+
 # --- section-heading extraction (pure, conservative) ----------------------------------------------
 
 def test_extract_section_reference_recognizes_headings():

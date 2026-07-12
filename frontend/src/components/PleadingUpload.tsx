@@ -20,6 +20,10 @@ const STATUS_LABEL: Record<api.PleadingStatus['status'], string> = {
   failed: 'Ingestion failed',
 };
 
+// Mirrors the backend MAX_UPLOAD_MB default — a friendly pre-check so a large file is caught
+// before the upload starts. The server (and Caddy) remain the real enforcement.
+const MAX_UPLOAD_MB = 50;
+
 export function PleadingUpload({ caseId }: { caseId: string }) {
   const queryClient = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -41,8 +45,17 @@ export function PleadingUpload({ caseId }: { caseId: string }) {
 
   const onPick = (file: File | undefined) => {
     setError(null);
-    if (file) upload.mutate(file);
     if (inputRef.current) inputRef.current.value = '';
+    if (!file) return;
+    if (file.type && file.type !== 'application/pdf') {
+      setError('Please choose a PDF file.');
+      return;
+    }
+    if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+      setError(`That file is too large — the limit is ${MAX_UPLOAD_MB} MB.`);
+      return;
+    }
+    upload.mutate(file);
   };
 
   return (
@@ -57,8 +70,8 @@ export function PleadingUpload({ caseId }: { caseId: string }) {
         onChange={(e) => onPick(e.target.files?.[0])}
       />
       <p className="text-xs text-muted-foreground">
-        Upload the full complaint/pleading — Opposing Counsel and the Judge reason from it, not just
-        the summary above.
+        Upload the full complaint/pleading (PDF, up to {MAX_UPLOAD_MB} MB) — Opposing Counsel and the
+        Judge reason from it, not just the summary above.
       </p>
       {upload.isPending && <p className="text-sm text-muted-foreground">Uploading…</p>}
       {error && <p className="text-sm text-destructive">{error}</p>}

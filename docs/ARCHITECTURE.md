@@ -1213,6 +1213,15 @@ hash check.
 `OBJECT_STORAGE_ACCESS_KEY` / `OBJECT_STORAGE_SECRET_KEY` / `OBJECT_STORAGE_REGION` (upload target),
 `EMBEDDING_ENDPOINT` / `EMBEDDING_MODEL` / `EMBEDDING_DIM` / `CASE_SUMMARY_MODEL` (RAG), `MAX_UPLOAD_MB`.
 
+### Upload guardrails
+Every PDF upload (case pleadings + court rule documents) goes through one hardened validator
+(`services/upload_service.read_pdf_upload`): PDF content-type, a **streamed size cap** that rejects
+mid-read at `MAX_UPLOAD_MB` (default 50) so an oversized file is never fully buffered into memory,
+a non-empty check, and a real `%PDF-` magic-header check (a non-PDF relabelled `application/pdf` is
+refused here, not stored). Caddy adds an **edge** `request_body max_size` (60 MB) so egregious
+bodies are dropped at the proxy before the app's multipart parser spools them. The frontend
+pre-checks size/type for UX; the server is the real control.
+
 ### Follow-ups (production hardening)
 - Server-side encryption at rest on the pleading bucket; explicit retention policy (§11).
 - OCR for scanned/image pleadings (ingest currently marks them `failed` with a clear message).

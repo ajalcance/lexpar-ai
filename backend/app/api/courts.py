@@ -26,7 +26,6 @@ from fastapi import (
 )
 from sqlalchemy.orm import Session as DbSession
 
-from app.config import get_settings
 from app.db import SessionLocal, get_db
 from app.models.user import User
 from app.schemas.court import CourtCreate, CourtOut, CourtRuleDocumentOut, PurgeImpactOut
@@ -35,7 +34,12 @@ from app.security import (
     require_admin,
     require_destructive_actions_enabled,
 )
-from app.services import court_knowledge_service, court_service, storage_service
+from app.services import (
+    court_knowledge_service,
+    court_service,
+    storage_service,
+    upload_service,
+)
 
 router = APIRouter(prefix="/api/courts", tags=["courts"])
 
@@ -62,18 +66,9 @@ def _ingest_in_background(
 
 
 async def _validated_pdf(file: UploadFile) -> bytes:
-    """Shared upload validation (upload + replace): PDF only, non-empty, within the size cap."""
-    if file.content_type not in ("application/pdf", "application/octet-stream"):
-        raise HTTPException(status_code=415, detail="Only PDF rule documents are supported.")
-    data = await file.read()
-    max_bytes = get_settings().max_upload_mb * 1024 * 1024
-    if not data:
-        raise HTTPException(status_code=422, detail="The uploaded file is empty.")
-    if len(data) > max_bytes:
-        raise HTTPException(
-            status_code=413, detail=f"File exceeds the {get_settings().max_upload_mb} MB limit."
-        )
-    return data
+    """Shared upload validation (upload + replace) — the hardened guardrails: PDF content-type +
+    real %PDF- header, non-empty, and a streamed size cap that never buffers past the limit."""
+    return await upload_service.read_pdf_upload(file)
 
 
 def _require_document(db: DbSession, court_id: uuid.UUID, document_id: uuid.UUID):
