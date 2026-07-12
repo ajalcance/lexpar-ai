@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session as DbSession
 from app.config import get_settings
 from app.db import get_db
 from app.models.user import User
+from app.rate_limit import auth_rate_limit
 from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UserOut
 from app.security import create_access_token, get_current_user
 from app.services import auth_service
@@ -20,7 +21,12 @@ from app.services import auth_service
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-@router.post("/register", response_model=TokenResponse, status_code=201)
+@router.post(
+    "/register",
+    response_model=TokenResponse,
+    status_code=201,
+    dependencies=[Depends(auth_rate_limit)],
+)
 def register(payload: RegisterRequest, db: DbSession = Depends(get_db)) -> TokenResponse:
     # Deployment-gated (ALLOW_REGISTRATION): this route is unauthenticated and every account it
     # mints can start voice sessions that burn GPU + provider credits — on a public deployment
@@ -37,7 +43,7 @@ def register(payload: RegisterRequest, db: DbSession = Depends(get_db)) -> Token
     return TokenResponse(access_token=create_access_token(str(user.id)))
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post("/login", response_model=TokenResponse, dependencies=[Depends(auth_rate_limit)])
 def login(payload: LoginRequest, db: DbSession = Depends(get_db)) -> TokenResponse:
     user = auth_service.authenticate(db, payload.username, payload.password)
     return TokenResponse(access_token=create_access_token(str(user.id)))

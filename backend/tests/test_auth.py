@@ -146,3 +146,51 @@ def test_register_gate_blocks_signup_but_not_login(client, monkeypatch):
         "/api/auth/login", json={"username": TEST_EMAIL, "password": TEST_PASSWORD}
     )
     assert login.status_code == 200
+
+
+def test_auth_rate_limit_returns_429_after_burst(client):
+    # 10/minute per client: the 11th attempt inside the window is refused, and the limit applies
+    # to bad-password brute force (the whole point — the demo admin creds are handed out).
+    _register(client)
+    for _ in range(9):  # register consumed 1 of the 10
+        client.post("/api/auth/login", json={"username": TEST_EMAIL, "password": "wrong-pass"})
+    resp = client.post(
+        "/api/auth/login", json={"username": TEST_EMAIL, "password": TEST_PASSWORD}
+    )
+    assert resp.status_code == 429
+    assert "Too many attempts" in resp.json()["detail"]
+
+
+def test_rate_limiter_window_slides_with_fake_clock():
+    from app.rate_limit import SlidingWindowLimiter
+
+    now = {"t": 0.0}
+    limiter = SlidingWindowLimiter(limit=2, window_s=60.0, clock=lambda: now["t"])
+    assert limiter.allow("ip") and limiter.allow("ip")
+    assert not limiter.allow("ip")  # third inside the window
+    assert limiter.allow("other")  # independent key
+    now["t"] = 61.0
+    assert limiter.allow("ip")  # window slid
+
+
+def test_rate_limit_keys_on_x_forwarded_for(client):
+    # Behind Caddy every socket peer is the proxy — the real client is the first XFF entry, so
+    # one abuser can't exhaust the shared budget for everyone.
+    for i in range(10):
+        client.post(
+            "/api/auth/login",
+            json={"username": "a@b.c", "password": "wrong"},
+            headers={"X-Forwarded-For": "203.0.113.9"},
+        )
+    blocked = client.post(
+        "/api/auth/login",
+        json={"username": "a@b.c", "password": "wrong"},
+        headers={"X-Forwarded-For": "203.0.113.9"},
+    )
+    assert blocked.status_code == 429
+    other = client.post(
+        "/api/auth/login",
+        json={"username": "a@b.c", "password": "wrong"},
+        headers={"X-Forwarded-For": "198.51.100.7"},
+    )
+    assert other.status_code != 429  # different client, own budget

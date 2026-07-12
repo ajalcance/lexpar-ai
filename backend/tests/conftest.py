@@ -73,3 +73,13 @@ def auth_headers(client: TestClient) -> dict[str, str]:
     )
     assert resp.status_code == 201
     return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+
+@pytest.fixture(autouse=True)
+def _reset_auth_rate_limiter():
+    # The auth limiter is module-global (in-memory, per-process); the suite fires many auth calls
+    # well inside one window, so isolate tests from each other — and from the limiter tests.
+    from app.rate_limit import auth_limiter
+
+    auth_limiter.reset()
+    yield
