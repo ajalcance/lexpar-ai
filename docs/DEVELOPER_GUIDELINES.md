@@ -218,6 +218,30 @@ week has to be undone to build one later.
 - Hooks in `hooks/`, shared state in `store/`.
 - Tailwind utility classes + shadcn/ui primitives only — no ad hoc CSS files.
 
+#### Design system — the color theme (use these, don't invent new hues)
+The UI runs on **two accent roles** plus the neutral `primary`/`muted`/`border` tokens. Reach for
+an accent only when it carries meaning; default to neutral. Alpha tints (`/5`, `/30`) adapt to dark
+mode automatically — prefer them over solid fills.
+
+- **Blue (`blue-500`) = a primary user ACTION** — "do this here." At most one per screen.
+  - Accented card recipe: `border border-blue-500/30 border-l-4 border-l-blue-500 bg-blue-500/5 shadow-sm`
+    (see the Start-a-sparring card in `CaseDetail.tsx`, the Create-a-court card in `Admin.tsx`).
+  - Primary link text: `text-blue-600 underline underline-offset-2 dark:text-blue-500`.
+- **Amber (`amber-500`) = judge / reviewer / announcement / INFO highlight** — anything the reader
+  should notice but not act on. Reserve it for callouts.
+  - Panel recipe: `border border-amber-500/30 bg-muted/30` with an amber eyebrow
+    (`text-xs font-medium uppercase text-amber-600 dark:text-amber-500`) — see `DemoScript.tsx`,
+    `DashboardGuide.tsx`, the "matter before the court" banner, the "Start here" badge.
+- **Speaker / role identity** (transcript, visualizer, scorecard) is a fixed mapping — keep it:
+  **blue = You (attorney)**, **red (`red-500`) = Opposing Counsel**, **amber = Judge**. (Amber does
+  double duty as the judge color and the info-highlight color — intentional; the bench is the
+  authoritative/informational voice.)
+- **Score bands** (`ScoreDial`, criteria bars): green ≥ 75, amber 50–74, red < 50.
+
+Rule of thumb: neutral by default; **blue** for the one action you want taken; **amber** for
+information/aids; **red** only for destructive/error or the OC role. Don't add a new accent hue —
+extend these.
+
 ### Backend (FastAPI)
 - Routes stay thin: parse request → call a service function → return response. If a route
   handler has business logic in it, that logic belongs in a service module instead.

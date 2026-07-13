@@ -14,6 +14,10 @@ including the bespoke `objection_classifier.py`), `infra/` (docker-compose for l
 The Opposing Counsel's LLM backend (Fireworks vs. self-hosted vLLM on AMD MI300X) is a config
 switch, not a code fork.
 
+**UI color theme (keep consistent across new pages):** blue = primary user action, amber =
+judge/reviewer/announcement/info highlight, red = OC role / destructive; neutral otherwise. Full
+recipes in DEVELOPER_GUIDELINES §11 (Design system).
+
 **Reference docs:**
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — system diagram, API routes, DB schema, env vars.
 - [docs/DEVELOPER_GUIDELINES.md](docs/DEVELOPER_GUIDELINES.md) — coding conventions, testing baseline, pre-merge checklist.
