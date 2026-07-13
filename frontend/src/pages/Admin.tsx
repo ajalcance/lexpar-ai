@@ -109,8 +109,8 @@ export function Admin() {
   }
 
   return (
-    // Left accent + eyebrow mark this as a distinct administrative section, not the attorney app.
-    <div className="flex flex-col gap-6 border-l-2 border-primary/40 pl-5">
+    // The Shield eyebrow marks this as the distinct administrative section (no left rail).
+    <div className="flex flex-col gap-6">
       <div>
         <div className="flex items-center gap-1.5 text-xs font-medium tracking-wide text-primary uppercase">
           <Shield className="size-3.5" />
@@ -123,12 +123,12 @@ export function Admin() {
       </div>
 
       {/* The catalog is the landing view (mirrors the Cases dashboard): every forum listed —
-          archived ones included, badged — with creation as a toggled affordance, not the lead. */}
+          archived ones included, badged. Creation is a separate, clearly-delineated card below. */}
       <Card>
         <CardHeader>
           <div className="flex items-start justify-between gap-4">
             <div>
-              <CardTitle className="text-lg">Courts</CardTitle>
+              <CardTitle className="text-lg">Existing courts</CardTitle>
               <CardDescription>
                 Every forum in the catalog. Select one to manage its rule corpus.
               </CardDescription>
@@ -170,10 +170,19 @@ export function Admin() {
               ))}
             </div>
           )}
+        </CardContent>
+      </Card>
 
-          {createOpen && (
+      {/* Create — a distinct card (blue "action" accent) so it's never mistaken for a court row. */}
+      {createOpen && (
+        <Card className="border-blue-500/30 border-l-4 border-l-blue-500 bg-blue-500/5">
+          <CardHeader>
+            <CardTitle className="text-lg">Create a court</CardTitle>
+            <CardDescription>Add a forum, then upload its official rule PDFs below.</CardDescription>
+          </CardHeader>
+          <CardContent>
             <form
-              className="flex flex-col gap-4 rounded-md border p-4"
+              className="flex flex-col gap-4"
               onSubmit={(event: FormEvent) => {
                 event.preventDefault();
                 createCourt.mutate();
@@ -183,9 +192,10 @@ export function Admin() {
                 <Label htmlFor="courtName">Court name</Label>
                 <Input
                   id="courtName"
-                maxLength={LINE_MAX}
+                  maxLength={LINE_MAX}
                   value={courtName}
                   onChange={(event) => setCourtName(event.target.value)}
+                  placeholder="e.g. Special Commercial Court, RTC Branch 9"
                   required
                 />
               </div>
@@ -193,21 +203,33 @@ export function Admin() {
                 <Label htmlFor="jurisdiction">Jurisdiction description</Label>
                 <Input
                   id="jurisdiction"
-                maxLength={TEXT_MAX}
+                  maxLength={TEXT_MAX}
                   value={jurisdiction}
                   onChange={(event) => setJurisdiction(event.target.value)}
+                  placeholder="Optional — the forum this court covers"
                 />
               </div>
               {createCourt.isError && (
                 <p className="text-sm text-destructive">Could not create the court.</p>
               )}
-              <Button type="submit" disabled={createCourt.isPending}>
-                Create court
-              </Button>
+              <div className="flex gap-2">
+                <Button type="submit" disabled={createCourt.isPending}>
+                  Create court
+                </Button>
+                {courts && courts.length > 0 && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setShowCreate(false)}
+                  >
+                    Cancel
+                  </Button>
+                )}
+              </div>
             </form>
-          )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

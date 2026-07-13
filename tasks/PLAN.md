@@ -3159,6 +3159,11 @@ pre-submission if time allows — finalize scope before starting.)
       hearing for reference but DISABLES them ("— coming soon") + a note; oral argument stays
       selectable and default. `ENABLED_PROCEEDINGS` in CaseDetail — add a type there as it's tested.
       Test rewritten to assert the disabled state. Frontend 83; tsc/lint/build clean.
+- [x] Court administration clarity + palette. Renamed the list card "Existing courts"; pulled the
+      create form out of that card into a SEPARATE "Create a court" card with the blue action accent
+      (border-l-4 blue-500 + faint tint, matching the Start-sparring CTA) + Cancel; removed the
+      left rail (kept the Shield eyebrow). Establishes the app palette: blue = primary action,
+      amber = judge/announcement/info highlights. Frontend 83; tsc/lint/build clean.
 - [ ] (Tier-2 backlog) Add a `sessionCount` (and maybe `bestScore`) field to the Case payload to
       remove the Dashboard per-card `getCaseSessions` N+1 (the CaseCard rehearsal summary).
 - [ ] (Backlog) Show the case profile on CaseDetail; prefill profile fields from pleading
