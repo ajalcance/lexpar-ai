@@ -67,22 +67,18 @@ describe('CaseDetail session creation', () => {
     });
   });
 
-  it('sends the selected proceeding type', async () => {
+  it('shows the untested proceedings for reference but disables them (only oral argument selectable)', async () => {
     vi.spyOn(api, 'getCase').mockResolvedValue(CASE);
     vi.spyOn(api, 'getCaseSessions').mockResolvedValue([]);
-    const createSession = vi.spyOn(api, 'createSession').mockResolvedValue({
-      ...SESSION,
-      proceedingType: 'cross_examination',
-    });
-    const user = userEvent.setup();
     renderAt();
 
-    await user.selectOptions(await screen.findByLabelText('Proceeding'), 'cross_examination');
-    await user.click(screen.getByRole('button', { name: 'Start sparring' }));
-
-    await waitFor(() => {
-      expect(createSession).toHaveBeenCalledWith('c1', 'cross_examination');
-    });
+    await screen.findByLabelText('Proceeding');
+    // Oral argument is selectable; the others are visible ("coming soon") but disabled.
+    expect(screen.getByRole('option', { name: 'Oral argument' })).toBeEnabled();
+    for (const label of ['Direct examination', 'Cross-examination', 'Motion hearing']) {
+      const option = screen.getByRole('option', { name: `${label} — coming soon` });
+      expect(option).toBeDisabled();
+    }
   });
 
   it('archives the case (soft default) after an explicit confirm', async () => {

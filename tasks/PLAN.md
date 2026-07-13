@@ -3154,6 +3154,11 @@ pre-submission if time allows — finalize scope before starting.)
       case). Because all reviewers share the demo account, the SARC card is flagged with an amber
       "Start here" badge + highlight (`isDemoCase`, DEMO_CASE_TITLE override via VITE_DEMO_CASE_TITLE)
       so judges don't get lost among cases others create. Frontend 82; tsc/lint/build clean.
+- [x] Gate untested proceeding types in the UI. Only oral_argument is validated end-to-end, so the
+      case-detail Proceeding selector now shows Direct examination / Cross-examination / Motion
+      hearing for reference but DISABLES them ("— coming soon") + a note; oral argument stays
+      selectable and default. `ENABLED_PROCEEDINGS` in CaseDetail — add a type there as it's tested.
+      Test rewritten to assert the disabled state. Frontend 83; tsc/lint/build clean.
 - [ ] (Tier-2 backlog) Add a `sessionCount` (and maybe `bestScore`) field to the Case payload to
       remove the Dashboard per-card `getCaseSessions` N+1 (the CaseCard rehearsal summary).
 - [ ] (Backlog) Show the case profile on CaseDetail; prefill profile fields from pleading

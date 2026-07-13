@@ -35,6 +35,10 @@ import {
 
 const DEFAULT_PROCEEDING: ProceedingType = 'oral_argument';
 
+// Only oral argument is validated end-to-end so far; the others are shown for reference but not
+// yet selectable. Add a type here as it's tested — the disabled options light up automatically.
+const ENABLED_PROCEEDINGS: readonly ProceedingType[] = ['oral_argument'];
+
 const STATUS_LABEL: Record<Session['status'], string> = {
   in_progress: 'In progress',
   completed: 'Completed',
@@ -127,12 +131,18 @@ export function CaseDetail() {
               value={proceeding}
               onChange={(event) => setProceeding(event.target.value as ProceedingType)}
             >
-              {Object.entries(PROCEEDING_TYPE_LABELS).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
+              {Object.entries(PROCEEDING_TYPE_LABELS).map(([value, label]) => {
+                const enabled = ENABLED_PROCEEDINGS.includes(value as ProceedingType);
+                return (
+                  <option key={value} value={value} disabled={!enabled}>
+                    {enabled ? label : `${label} — coming soon`}
+                  </option>
+                );
+              })}
             </select>
+            <p className="text-xs text-muted-foreground">
+              Only oral argument is available in this release; the others are coming soon.
+            </p>
           </div>
           <Button onClick={() => startSession.mutate()} disabled={startSession.isPending}>
             Start sparring
