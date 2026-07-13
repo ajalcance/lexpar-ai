@@ -1,8 +1,9 @@
 # LexPar AI — Developer Guidelines
 
-**Status:** Living document. Pairs with `docs/ARCHITECTURE.md` (what we're building) and
-`CLAUDE.md` (pointer file for AI-assisted sessions). This document is the "how we build it" —
-apply it to every file, whether written by a human or by Claude Code.
+**Status:** Living document — refreshed against the built codebase (the principles held; the test
+baseline, security controls, and workflow sections were updated to match reality). Pairs with
+`docs/ARCHITECTURE.md` (what we're building) and `CLAUDE.md` (pointer file for AI-assisted
+sessions). This document is the "how we build it" — apply it to every file, human or Claude Code.
 
 ---
 
@@ -38,7 +39,12 @@ Concrete splitting patterns for this codebase:
 | Agents | Prompt text inline inside `opposing_counsel.py` | Logic in `opposing_counsel.py`, prompt text in `prompts/opposing_counsel.md` |
 
 Splitting by responsibility, not by line count for its own sake — a 350-line file that does one
-coherent thing is fine; a 150-line file doing three unrelated things is not.
+coherent thing is fine; a 150-line file doing three unrelated things is not. **Known exception:**
+the agents voice-worker entrypoint `agents/main.py` runs well past this — it's the one place the
+real-time session control flow (STT → objection → ruling → recovery → finalize) is wired together,
+and splitting the orchestration across files would cost more in indirection than the length saves.
+Pure logic keeps moving OUT of it into `opposing_counsel.py`, `judge.py`, `voice_interrupt.py`,
+`turn_recovery.py`, etc.; `main.py` stays the wiring.
 
 ---
 
@@ -64,8 +70,9 @@ Security notes: All routes require a valid bearer token. Uploaded case_facts
 ```typescript
 /**
  * File: src/pages/CaseUpload.tsx
- * Purpose: Lets an attorney upload case facts/documents to start a new case.
- * Depends on: lib/api.ts (upload endpoint), store/auth.ts (bearer token)
+ * Purpose: Create a case as a structured profile (parties, side represented, relief); the
+ *   pleading PDF is attached in the next step.
+ * Depends on: lib/api.ts (createCase), components/PleadingUpload.tsx
  * Related: backend/app/api/cases.py (the API this calls)
  */
 ```
@@ -100,18 +107,31 @@ instance).
 
 ## 6. Testing baseline
 
-Tests are the guardrail that makes AI-assisted development safe to move fast with — they catch
-a plausible-looking but wrong change before it ships, which matters more here than in
-hand-written code, not less.
+Tests are the guardrail that makes AI-assisted development safe to move fast with — they catch a
+plausible-looking but wrong change before it ships. The suites are now substantial (~250 agent,
+~110 backend, ~80 frontend) and are the **local gate**: the live LiveKit voice path can't be
+exercised locally, so a green suite + build is what we rely on before pushing, and the real thing
+is validated live on the droplet. Keep all three green on every change.
 
-- **Backend:** pytest. Minimum coverage: auth checks, session state transitions, scorecard
-  generation logic.
-- **Frontend:** Vitest + React Testing Library for the critical flows — login, case upload,
-  scorecard display.
-- **Agents — highest priority to test:** `objection_classifier.py` in isolation. Feed it sample
-  attorney transcripts (leading questions, hearsay, clean statements) and assert it fires or
-  doesn't fire correctly. This is your bespoke logic and the piece most likely to regress
-  silently if untested.
+- **Backend (pytest, ~110):** auth + rate limiting, session/status transitions, scorecard + rubric
+  persistence, the agent-only internal routes (service-token auth, least privilege), upload
+  guardrails (streamed size cap, `%PDF-` magic bytes, active-content scan), form-field length caps,
+  deletion/purge cascade **and delete-ordering**, session **isolation** (no content bleeds between
+  rehearsals of one case), and the §13 court/rule-corpus flow. `conftest.py` runs SQLite with
+  `PRAGMA foreign_keys=ON` so tests enforce the same FK constraints as production Postgres — a
+  delete-order bug once passed the suite and failed only live (LESSONS).
+- **Frontend (Vitest + RTL, ~80):** the critical flows (login, case creation, scorecard) plus the
+  data-channel parsers, the score dial/criteria, and the reviewer aids.
+- **Agents (~250) — still the highest-value suite:** `objection_classifier.py` in isolation stays
+  the core (fires/holds on leading, hearsay, clean statements, proceeding-aware), joined by the
+  judge assessment + quick-ruling parsing, streaming sentence verification, turn recovery, STT
+  keyterm extraction, case-posture derivation, and the session-end scorecard builder — all with the
+  model call monkeypatched (no network; live behavior is validated on the droplet).
+- **Prompt changes are prompt-AND-golden together.** Every prompt is byte-golden-tested
+  (`agents/tests/test_prompts.py`, `backend/tests/test_prompts.py`); a wording change updates the
+  golden in the same commit — that diff **is** the signal that model behavior is meant to change
+  (§10). gpt-oss `max_tokens` floors move with prompt/context size — re-check every consumer of the
+  shared `snapshot()` when it grows (LESSONS).
 
 ---
 
@@ -120,9 +140,20 @@ hand-written code, not less.
 We are not building a compliance program this week. We are making sure nothing we build this
 week has to be undone to build one later.
 
-- Every endpoint requires a bearer token. Auth is real bcrypt password auth (register +
-  login-against-hash); the legacy `admin`/`admin` stub was removed at the production cutover.
-- Input validation via Pydantic on every request, no exceptions.
+- User-facing endpoints require a bearer token (real bcrypt password auth — register +
+  login-against-hash; the legacy `admin`/`admin` stub was removed at the production cutover). The
+  internal agent-write routes use a **separate scoped service token** (`X-Agent-Token`,
+  `security_agent.py`) that grants nothing else — service-to-service, distinct from user auth.
+- Input validation via Pydantic on every request, no exceptions. This includes **form-field length
+  caps** (`schemas/limits.py` — fields flow into LLM prompts, so an unbounded one is a cost/DoS +
+  injection surface) and **upload guardrails** (`upload_service.read_pdf_upload`: streamed size cap
+  that never buffers past `MAX_UPLOAD_MB`, `%PDF-` magic-byte check, and a PDF active-content scan;
+  Caddy adds an edge `request_body max_size`).
+- **Auth rate limiting** (`rate_limit.py`) on login/register, and a `ALLOW_REGISTRATION` gate so a
+  public deployment can lock signup after its accounts are provisioned.
+- **Destructive actions are flag-gated** (`DESTRUCTIVE_ACTIONS_ENABLED`): archive/purge return 403
+  when off — used to lock down the shared-credential public demo so no visitor can delete data. The
+  backend flag is the real control; the frontend flag only hides the buttons.
 - Secrets live in environment variables only. `.env` is gitignored; `.env.example` documents
   the shape with no real values.
 - Never log case facts, transcripts, or scorecard content in plaintext application logs.
@@ -145,10 +176,11 @@ week has to be undone to build one later.
 
 ## 8. Compliance-readiness (not implementing now, but not blocking later)
 
-- **Data residency:** note where data physically lives (AMD Developer Cloud region, object
-  storage region) in `ARCHITECTURE.md` once decided — attorneys will ask.
-- **Retention:** use soft deletes (`deleted_at` column) instead of hard deletes from the start.
-  Enforcing an actual retention policy later becomes a query change, not a schema change.
+- **Data residency:** data currently lives on the AMD Developer Cloud droplet — Postgres + MinIO
+  (S3-compatible) on-box (ARCHITECTURE §10). Encryption-at-rest on the pleading bucket + an explicit
+  retention policy stay on the roadmap (ARCHITECTURE follow-ups).
+- **Retention:** soft deletes (`deleted_at`) are the default; hard purge is a separate, admin-only,
+  flag-gated tier. Enforcing an actual retention policy later is a query change, not a schema one.
 - **Sensitive-field tagging:** mark PII/privileged fields with a consistent code comment
   (`# SENSITIVE: attorney work product`) so a future audit can grep for them instead of
   re-reading the whole schema.
@@ -162,13 +194,20 @@ week has to be undone to build one later.
 
 ## 9. Git & workflow conventions
 
-- Branches: `feature/...`, `fix/...`.
-- Commits: conventional style — `feat:`, `fix:`, `chore:`, `docs:`.
-- Open a PR even solo — reviewing your own diff before merging catches mistakes an in-editor
-  view doesn't, and it leaves a clean, auditable history if this ever needs to survive
-  due-diligence review.
-- CI (lint, type-check, tests) must pass before merge, no exceptions for "it's just a small
-  change."
+- **Conventional commits** — `feat:`, `fix:`, `docs:`, `style:`, `chore:`. Claude attribution is
+  disabled (`.claude/settings.json`) — no co-author trailers.
+- **Solo hackathon repo: work lands on `main` directly** as small, self-reviewed commits, and the
+  droplet deploys from a **pinned commit SHA** (detached HEAD), not by tracking `main` — so every
+  change is a real, auditable commit and a deploy is always a specific SHA. (Feature-branch + PR is
+  the right shape once there's more than one committer.)
+- **Run the full local gate before pushing** — each touched area's lint + type-check + tests +
+  build (agents: pytest + ruff; backend: pytest + ruff; frontend: tsc + vitest + lint + build). CI
+  re-runs them; a green local gate is what keeps CI green.
+- **Additive-only on shared surfaces + flag-gate risky behavior.** Local dev must keep working: a
+  new behavior defaults to the OLD one unless a flag opts in, with a one-line env rollback
+  (`FLOOR_DYNAMICS`, `DERIVE_MATTER`, `RECOVER_DROPPED_TURNS`, `DESTRUCTIVE_ACTIONS_ENABLED`,
+  `INTERRUPT_CANCEL_TIMEOUT_S`, …). Record the mistake-and-fix in `docs/LESSONS.md` when one is
+  worth not repeating.
 
 ---
 
@@ -264,5 +303,8 @@ extend these.
 - [ ] File is under ~300 lines, or has a documented reason not to be
 - [ ] No secrets or hardcoded credentials
 - [ ] No sensitive data (case facts, transcripts) in log statements
-- [ ] Types/schemas defined at every boundary
-- [ ] Tests exist for new business logic
+- [ ] Types/schemas defined at every boundary (incl. length caps on user-submitted fields)
+- [ ] Tests exist for new business logic; all three suites + build still green
+- [ ] Prompt changed? Golden updated in the **same** commit
+- [ ] Risky behavior change flag-gated with a one-line env rollback
+- [ ] Docs kept in sync (ARCHITECTURE / DEVELOPER_GUIDELINES / LESSONS) per the self-updating rule
