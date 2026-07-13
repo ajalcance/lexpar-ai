@@ -49,8 +49,14 @@ export function Dashboard() {
       </div>
 
       <div className={cn('grid gap-6', SHOW_REVIEWER_AIDS && 'lg:grid-cols-3')}>
-        {/* Reviewer/judge guide (hackathon aid) — left 1/3 on desktop, stacks on mobile. */}
-        {SHOW_REVIEWER_AIDS && <DashboardGuide className="lg:col-span-1" />}
+        {/* Reviewer/judge guide (hackathon aid) — left 1/3 on desktop, stacks on mobile. The demo
+            case's REAL id is passed through so the guide links straight to it (no hardcoded UUID). */}
+        {SHOW_REVIEWER_AIDS && (
+          <DashboardGuide
+            className="lg:col-span-1"
+            demoCaseId={cases?.find((legalCase) => isDemoCase(legalCase.title))?.id}
+          />
+        )}
 
         <div className={cn('flex flex-col gap-4', SHOW_REVIEWER_AIDS && 'lg:col-span-2')}>
           {isError && (

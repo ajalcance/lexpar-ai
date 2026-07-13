@@ -8,10 +8,19 @@
  * Related: pages/Dashboard.tsx (renders this in the left column), components/DemoScript.tsx
  */
 
+import { Link } from 'react-router-dom';
 import { DEMO_CASE_TITLE } from '@/lib/flags';
 import { cn } from '@/lib/utils';
 
-export function DashboardGuide({ className }: { className?: string }) {
+/** `demoCaseId` (when the ready case is in the list) makes the case name a direct link — wired from
+ *  the live case's real id in Dashboard, so it never hardcodes a UUID that would break on recreate. */
+export function DashboardGuide({
+  className,
+  demoCaseId,
+}: {
+  className?: string;
+  demoCaseId?: string;
+}) {
   return (
     <aside
       className={cn(
@@ -29,9 +38,19 @@ export function DashboardGuide({ className }: { className?: string }) {
       <div className="flex flex-col gap-1">
         <p className="font-medium">1. Fastest — open the ready case</p>
         <p className="text-xs text-muted-foreground">
-          Click <strong>{DEMO_CASE_TITLE}</strong> below (look for the{' '}
-          <span className="font-medium text-amber-600 dark:text-amber-500">Start here</span> tag).
-          It's fully set up — start a session and the page shows a read-aloud script; just read it.
+          {demoCaseId ? (
+            <Link
+              to={`/case/${demoCaseId}`}
+              className="font-medium text-amber-600 underline underline-offset-2 hover:text-amber-700 dark:text-amber-500"
+            >
+              {DEMO_CASE_TITLE}
+            </Link>
+          ) : (
+            <strong>{DEMO_CASE_TITLE}</strong>
+          )}{' '}
+          is set up and ready (or find the{' '}
+          <span className="font-medium text-amber-600 dark:text-amber-500">Start here</span> tag
+          below). Start a session and the page shows a read-aloud script — just read it.
         </p>
       </div>
 

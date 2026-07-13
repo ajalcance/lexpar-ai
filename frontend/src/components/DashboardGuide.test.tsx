@@ -6,15 +6,22 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { screen } from '@testing-library/react';
+import { renderWithProviders } from '@/test/utils';
 import { DashboardGuide } from '@/components/DashboardGuide';
 import { DEMO_CASE_TITLE } from '@/lib/flags';
 
 describe('DashboardGuide', () => {
   it('names the ready demo case and the two-step path', () => {
-    render(<DashboardGuide />);
+    renderWithProviders(<DashboardGuide />);
     expect(screen.getByText(DEMO_CASE_TITLE)).toBeInTheDocument();
     expect(screen.getByText(/Court administration/)).toBeInTheDocument();
     expect(screen.getByText(/Two ways to test/)).toBeInTheDocument();
+  });
+
+  it('links the case name straight to the case when the id is known', () => {
+    renderWithProviders(<DashboardGuide demoCaseId="case-123" />);
+    const link = screen.getByRole('link', { name: DEMO_CASE_TITLE });
+    expect(link).toHaveAttribute('href', '/case/case-123');
   });
 });
