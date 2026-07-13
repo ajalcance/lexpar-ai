@@ -26,7 +26,7 @@ Single monorepo. One repo, one source of truth, no cross-repo version drift for 
 lexpar-ai/
 ├── frontend/                    React + TypeScript (Vite)
 │   ├── src/
-│   │   ├── components/          Shared UI + app shell (AppLayout, UserMenu, Breadcrumbs; shadcn/ui + Tailwind)
+│   │   ├── components/          Shared UI + app shell (AppLayout, UserMenu, Breadcrumbs; ScoreDial, DemoScript, DashboardGuide reviewer aids; shadcn/ui + Tailwind)
 │   │   ├── pages/
 │   │   │   ├── Login.tsx
 │   │   │   ├── Dashboard.tsx         Cases list
@@ -38,7 +38,7 @@ lexpar-ai/
 │   │   │   └── Scorecard.tsx
 │   │   ├── hooks/
 │   │   ├── store/                auth.ts, session.ts (Zustand)
-│   │   ├── lib/                  api.ts (REST client), livekit.ts (room client wrapper)
+│   │   ├── lib/                  api.ts (REST client), livekit.ts (room client wrapper), flags.ts (VITE_ feature gates), limits.ts (field caps mirror of backend)
 │   │   └── App.tsx                routes + auth guard
 │   ├── vite.config.ts
 │   └── package.json
@@ -55,10 +55,13 @@ lexpar-ai/
 │   │   │   ├── internal.py       agent-token routes (context/knowledge/court-rules/provenance)
 │   │   │   └── livekit_token.py  issues LiveKit room access tokens
 │   │   ├── models/               SQLAlchemy models (incl. §12/§13: court, court_rule, ruling_provenance)
-│   │   ├── services/             business logic (case/court knowledge, embeddings, storage, auth)
+│   │   ├── schemas/              Pydantic request/response shapes + limits.py (shared field caps)
+│   │   ├── security.py           auth deps + destructive-action gate (require_destructive_actions_enabled)
+│   │   ├── services/             business logic (case/court knowledge, embeddings, storage, auth, upload_service PDF guardrails)
 │   │   ├── prompts/              prompt_loader.py + *.md (pleading summarizer) — backend twin of agents/prompts.py
 │   │   ├── db.py
 │   │   └── config.py             reads .env
+│   ├── alembic/                  schema migrations (through 0006 scorecard criteria, 0007 case profile)
 │   ├── requirements.txt
 │   └── Dockerfile
 │
@@ -69,6 +72,12 @@ lexpar-ai/
 │   ├── objection_classifier.py   watches live partial transcript, fires interrupts
 │   ├── case_knowledge.py         pleading retrieval (§12); court_knowledge.py = rules retrieval (§13)
 │   ├── citation_check.py         turn-scoped citation grounding check (§13)
+│   ├── case_posture.py           derives "the matter before the court" at join (DERIVE_MATTER, §6.5)
+│   ├── turn_recovery.py          recovers attorney turns the SDK drops mid-utterance (RECOVER_DROPPED_TURNS)
+│   ├── stt_keyterms.py           boosts case party names/terms as Deepgram keyterms (STT_KEYTERMS)
+│   ├── floor_dynamics.py         natural floor-contest timing (flag-gated FLOOR_DYNAMICS, default off)
+│   ├── voice_interrupt.py        objection force-interrupt + cancel-timeout plumbing (§6)
+│   ├── session_state.py          per-room shared OC/judge state (keeps rehearsals isolated)
 │   ├── llm_router.py             switches Fireworks <-> self-hosted vLLM per agent
 │   ├── prompts.py                prompt registry: render()/cache for EVERY LLM prompt (DEV §10)
 │   ├── prompts/                  all agent prompt text (personas + sub-task prompts), one *.md each
@@ -114,8 +123,8 @@ flowchart TB
     end
 
     subgraph LLM[LLM inference - swappable]
-        D1[Fireworks AI - Gemma]
-        D2[Self-hosted vLLM - AMD MI300X]
+        D1[Fireworks AI - gpt-oss-120b Judge/verify]
+        D2[Self-hosted vLLM Qwen2.5-72B - AMD MI300X OC]
     end
 
     subgraph Speech
@@ -777,7 +786,8 @@ Switching is a config change (`.env` value), never a code change — this is del
 note:** the Judge must move to a Gemma model before relying on Gemma-track eligibility; tracked as an
 open item until a serverless Gemma is available on the account.
 
-**Model-latency note:** Opposing Counsel stays on `deepseek-v4-pro` — benchmarked over repeated live
+**Model-latency note:** on the Fireworks/local path Opposing Counsel runs `deepseek-v4-pro` (the
+droplet self-hosts Qwen2.5-72B instead — table above) — benchmarked over repeated live
 runs at a median ~4s (3.5–7.8s), every run `finish=stop` with non-empty content. Its direct
 "generate a rebuttal" task does not trigger the long deliberation that made deepseek slow (30–60s)
 and intermittently empty for the Judge's "rule only if warranted" task — which is why the Judge
@@ -925,12 +935,16 @@ S3-compatible (MinIO locally, DigitalOcean Spaces in production).
 | `OPPOSING_COUNSEL_LLM_MODEL` | Reasoning model id (default: `deepseek-v4-pro`) |
 | `JUDGE_LLM_PROVIDER` | keep as `fireworks` (Gemma bonus eligibility once Gemma is deployed) |
 | `JUDGE_LLM_ENDPOINT` | Fireworks endpoint |
-| `JUDGE_LLM_MODEL` | Judge model id (default: `deepseek-v4-pro`; use Gemma once available) |
+| `JUDGE_LLM_MODEL` | Judge model id (default: `gpt-oss-120b`, JSON-structured; move to Gemma once a serverless Gemma is reachable — §7, §11) |
 | `VERIFICATION_LLM_PROVIDER` / `VERIFICATION_LLM_ENDPOINT` / `VERIFICATION_LLM_MODEL` | Verifier, NOT the reasoning model (§6.5; default `gpt-oss-120b` — swap for a smaller model when deployed) |
 | `OBJECTION_LLM_PROVIDER` / `OBJECTION_LLM_ENDPOINT` / `OBJECTION_LLM_MODEL` | Objection classifier — the latency-sensitive streaming call (§6; default `gpt-oss-120b`) |
+| `OBJECTION_REFIRE_COOLDOWN_S` | Minimum gap before Opposing Counsel may object again after a sustained/overruled objection — stops objection-on-every-turn (§6). Default **20.0** |
+| `FLOOR_DYNAMICS` | Natural floor-contest dynamics (`floor_dynamics` module). Default **off** — the live path is byte-identical until set `true`; one env line rolls it back (same pattern as `ELEVENLABS_STREAMING`) |
 | `FIREWORKS_API_KEY` / `DEEPGRAM_API_KEY` / `ELEVENLABS_API_KEY` | Provider auth |
 | `SELF_HOSTED_API_KEY` | Key for any LLM role whose provider is not `fireworks` (self-hosted vLLM per §10.5). vLLM ignores it; default `EMPTY` is a valid placeholder. Resolved by `llm_router.api_key_for()` |
-| `DEEPGRAM_MODEL` / `ELEVENLABS_MODEL` / `ELEVENLABS_VOICE_ID` | Voice pipeline (agents/main.py); defaults `nova-3` / `eleven_flash_v2_5` / "George" (premade, free-tier-usable) |
+| `DEEPGRAM_MODEL` / `ELEVENLABS_MODEL` / `ELEVENLABS_VOICE_ID` | Voice pipeline (agents/main.py); defaults `nova-3` / `eleven_flash_v2_5` / "George" (premade, free-tier-usable). The droplet overrides `ELEVENLABS_VOICE_ID` to Asher (`UaYTS0wayjmO9KD1LR4R`) for Opposing Counsel |
+| `ELEVENLABS_STREAMING` / `ELEVENLABS_AUTO_MODE` | Websocket-streamed TTS + latency-optimized auto mode (§6.5). Both default **on** (paid tier); set `false` to fall back to buffered synthesis |
+| `MIN_ENDPOINTING_DELAY` / `MAX_ENDPOINTING_DELAY` | How long the session waits before committing end-of-turn — the pause that lets the attorney finish a thought without being cut off (§6.5). Defaults **0.8** / **6.0** seconds |
 | `JUDGE_VOICE_ID` | The Judge's DISTINCT voice (§6.5 inline rulings; default "Daniel") — speakers are tellable apart by ear |
 | `INTERRUPTION_MIN_DURATION` | Seconds of attorney speech required to interrupt the agent mid-utterance (§6). Default `1.0` — above the SDK's 0.5 so a brief noise/echo can't cut Opposing Counsel off before it speaks (the VAD false-interruption bug); raise to 1.5-2.0 in a noisy room, lower if interruptions feel unresponsive |
 | `{OC,JUDGE}_VOICE_{STABILITY,SIMILARITY_BOOST,STYLE,USE_SPEAKER_BOOST}` | ElevenLabs `voice_settings` expressiveness (§6.5). `style`=0 reverts to flat delivery; tune by ear |
@@ -942,13 +956,23 @@ S3-compatible (MinIO locally, DigitalOcean Spaces in production).
 | `JWT_SECRET` | Token signing — **required, ≥ 32 chars**; the app refuses to start with a blank/missing/weak key (`openssl rand -hex 32`) |
 | _(auth mode)_ | Removed — auth is always real bcrypt password auth; there is no `AUTH_MODE` setting (a leftover value in `.env` is ignored) |
 | `CORS_ORIGINS` | Comma-separated browser origins allowed to call the API (e.g. the Vite dev server) |
+| `ALLOW_REGISTRATION` | Gate on `POST /api/auth/register` (default `true`). Set `false` after the admin-bootstrap account exists to close public sign-up |
+| `MAX_UPLOAD_MB` | Hard cap on PDF upload size, enforced by a streamed byte counter (`upload_service.py`, §7 uploads). Default **25** |
+| `DESTRUCTIVE_ACTIONS_ENABLED` | Master gate on archive/purge across the API (`security.require_destructive_actions_enabled`, 403 when off). Default `true`; set **`false`** during the competition so no reviewer can delete data. Mirror on the frontend with `VITE_DESTRUCTIVE_ACTIONS_ENABLED` |
 | `AGENT_SERVICE_TOKEN` | Scoped service credential for the agent's internal session-write routes (§5) — NOT user auth. Empty = internal routes locked |
 | `AGENT_BACKEND_URL` | (agents worker) Base URL of the backend the worker persists to (default `http://localhost:8000`) |
 
 Never commit `.env` — `.env.example` documents the shape, real values stay local/secrets-managed.
 
-**Frontend env:** the React app reads `VITE_API_BASE_URL` (default `http://localhost:8000`) to reach
-the backend — see `frontend/.env.example`. Vite only exposes vars prefixed `VITE_` to the browser.
+**Frontend env** (all prefixed `VITE_`, the only prefix Vite exposes to the browser; see
+`frontend/.env.example`, read via `frontend/src/lib/flags.ts`):
+
+| Variable | Purpose |
+|---|---|
+| `VITE_API_BASE_URL` | Backend base URL (default `http://localhost:8000`) |
+| `VITE_DESTRUCTIVE_ACTIONS_ENABLED` | Client mirror of the backend `DESTRUCTIVE_ACTIONS_ENABLED` gate — hides the Archive/Purge UI when `false` (the API still enforces it; this just stops rendering dead controls). Default off for the competition |
+| `VITE_SHOW_DEMO_SCRIPT` | Show the read-aloud reviewer aids (DemoScript on the sparring page, DashboardGuide on the dashboard). Reviewer/demo builds only |
+| `VITE_DEMO_CASE_TITLE` | Title of the case that gets the "Start here" marker in the reviewer guide (default the SARC case) |
 
 ---
 
