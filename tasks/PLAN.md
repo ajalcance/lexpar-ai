@@ -19,6 +19,53 @@ non-trivial task (3+ steps), checks items off as it goes, and adds a short resul
 **Result:** short summary once done.
 ```
 
+## ⚠️ Post-hackathon reactivation checklist (pinned)
+
+Things deliberately deactivated / changed **for the AMD hackathon (Act II)** that must be reverted
+once judging closes and the repo goes back to private. Pinned here so it isn't lost in the log
+below. Cross-refs: memory `hackathon-droplet-deployment`, `lexpar-license-gate`; ARCHITECTURE §9/§10.5.
+
+**Security / access (revert first):**
+- [ ] **Re-enable destructive actions.** Flip `DESTRUCTIVE_ACTIONS_ENABLED=true` (backend) and
+      `VITE_DESTRUCTIVE_ACTIONS_ENABLED=true` (frontend) — restores Archive/Purge site-wide
+      (disabled so no shared-account reviewer could delete data). Gate: `security.py` + `lib/flags.ts`.
+- [ ] **Rotate admin credentials.** Rotate the shared judge admin `counsel@lexpar.ai` password
+      after judging. Also the deferred check: confirm the old compromised `admin1234` returns 401
+      on the droplet (skipped during Phase 5 setup).
+- [ ] **Close public sign-up** if desired: `ALLOW_REGISTRATION=false` once the accounts that need
+      to exist exist (left open so judges could self-register).
+- [ ] **Clean the demo database.** Judges share one admin account and create cases/sessions —
+      purge demo data before any real use.
+
+**Repo / license (irreversible — read before acting):**
+- [ ] **Make the GitHub repo private again** after judging. ⚠️ MIT on any *published* commit is
+      IRREVOCABLE — re-privating does NOT retract it, and the tuned `agents/prompts/*.md` are
+      committed under MIT. Confirm the AMD Act-II exclusive-IP clause implications first
+      (see `lexpar-license-gate`). This toggle is the user's to make.
+- [ ] **Turn off reviewer aids for real users:** `VITE_SHOW_DEMO_SCRIPT=false` — hides the
+      read-aloud DemoScript, the DashboardGuide, and the "Start here" demo-case badge. Optionally
+      unset `VITE_DEMO_CASE_TITLE`.
+
+**Droplet lifecycle:**
+- [ ] Droplet is temporary (~40h AMD credits). After it lapses, revert to local dev; the OC LLM
+      rolls back `self_hosted → fireworks` via one env line (ARCHITECTURE §10.5 Step 7). The
+      `hackathon-submission` git tag stays as the frozen submission; main continues locally.
+
+**Deferred features (activate when ready — not hackathon-security):**
+- [ ] **Re-enable untested proceeding types** as each is validated end-to-end: add to
+      `ENABLED_PROCEEDINGS` in `CaseDetail.tsx` (only `oral_argument` is on today).
+- [ ] `FLOOR_DYNAMICS` stays **off** (largely redundant now the attorney can't cut OC off) —
+      re-evaluate rather than blindly re-enable.
+- [ ] Move the Judge to a **Gemma** model (`JUDGE_LLM_MODEL`) for bonus-track eligibility once a
+      serverless Gemma is reachable (ARCHITECTURE §7/§11).
+- [ ] Production **ClamAV** virus scan for PDF uploads (current gate tests for active-content
+      vectors only; compressed-stream obfuscation evades a raw scan — ARCHITECTURE §7).
+- [ ] Backlog: Case `sessionCount`/`bestScore` to kill the Dashboard N+1; show the case profile on
+      CaseDetail (prefill from pleading ingestion, confirm-before-apply); self-host vs. Fireworks
+      cost re-eval at real volume; Stripe billing; written data-retention/encryption policy.
+
+---
+
 ## Current plan
 
 ### Scaffold frontend (Vite + React + TS + Tailwind + shadcn/ui, mock data) — status: done
