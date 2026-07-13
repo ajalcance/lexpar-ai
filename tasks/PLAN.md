@@ -3147,6 +3147,13 @@ pre-submission if time allows — finalize scope before starting.)
       case_facts 100_000→1000; rule-doc metadata + auth full_name/firm_name/email/password were
       unbounded → bounded. Pydantic enforces (422); frontend maxLength for UX. Backend 110,
       frontend 81; all green.
+- [x] Dashboard reviewer guide + "Start here" demo-case marker. Dashboard is now 2-column on
+      desktop (left 1/3 = `DashboardGuide`, right 2/3 = the cases list), flag-gated by
+      SHOW_REVIEWER_AIDS (same VITE_SHOW_DEMO_SCRIPT toggle as the sparring script). The guide gives
+      two paths: open the ready SARC case, or build one in two steps (Court administration → New
+      case). Because all reviewers share the demo account, the SARC card is flagged with an amber
+      "Start here" badge + highlight (`isDemoCase`, DEMO_CASE_TITLE override via VITE_DEMO_CASE_TITLE)
+      so judges don't get lost among cases others create. Frontend 82; tsc/lint/build clean.
 - [ ] (Tier-2 backlog) Add a `sessionCount` (and maybe `bestScore`) field to the Case payload to
       remove the Dashboard per-card `getCaseSessions` N+1 (the CaseCard rehearsal summary).
 - [ ] (Backlog) Show the case profile on CaseDetail; prefill profile fields from pleading

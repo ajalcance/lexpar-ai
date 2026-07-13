@@ -43,9 +43,11 @@ describe('Dashboard', () => {
     vi.spyOn(api, 'getCases').mockResolvedValue([]);
     renderWithProviders(<Dashboard />);
 
-    // The "New case" control renders as a Base UI Button-as-Link (role=button), so assert the
-    // destination via its anchor rather than the link role.
-    const newCase = await screen.findByText('New case');
-    expect(newCase.closest('a')).toHaveAttribute('href', '/case/new');
+    // The "New case" control renders as a Base UI Button-as-Link — assert via its anchor. Several
+    // "New case" texts exist now (header + empty-state buttons + the reviewer guide's instruction
+    // text), so assert at least one sits inside an anchor to /case/new (the guide text does not).
+    const texts = await screen.findAllByText('New case');
+    const hrefs = texts.map((el) => el.closest('a')?.getAttribute('href'));
+    expect(hrefs).toContain('/case/new');
   });
 });

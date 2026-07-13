@@ -11,6 +11,7 @@
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Plus, Scale } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -20,7 +21,10 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { DashboardGuide } from '@/components/DashboardGuide';
 import * as api from '@/lib/api';
+import { SHOW_REVIEWER_AIDS, isDemoCase } from '@/lib/flags';
+import { cn } from '@/lib/utils';
 import type { Case } from '@/lib/types';
 
 export function Dashboard() {
@@ -44,40 +48,47 @@ export function Dashboard() {
         </Button>
       </div>
 
-      {isError && (
-        <p className="text-sm text-destructive">Could not load cases. Try again.</p>
-      )}
+      <div className={cn('grid gap-6', SHOW_REVIEWER_AIDS && 'lg:grid-cols-3')}>
+        {/* Reviewer/judge guide (hackathon aid) — left 1/3 on desktop, stacks on mobile. */}
+        {SHOW_REVIEWER_AIDS && <DashboardGuide className="lg:col-span-1" />}
 
-      {isLoading && (
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Skeleton className="h-40" />
-          <Skeleton className="h-40" />
+        <div className={cn('flex flex-col gap-4', SHOW_REVIEWER_AIDS && 'lg:col-span-2')}>
+          {isError && (
+            <p className="text-sm text-destructive">Could not load cases. Try again.</p>
+          )}
+
+          {isLoading && (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Skeleton className="h-40" />
+              <Skeleton className="h-40" />
+            </div>
+          )}
+
+          {cases?.length === 0 && !isLoading && (
+            <Card className="items-center gap-4 py-10 text-center">
+              <Scale className="size-8 text-muted-foreground" aria-hidden />
+              <div className="flex flex-col gap-1">
+                <CardTitle className="text-lg">Start your first case</CardTitle>
+                <CardDescription>
+                  Add a case, then rehearse it aloud against opposing counsel and the judge.
+                </CardDescription>
+              </div>
+              <Button nativeButton={false} render={<Link to="/case/new" />}>
+                <Plus className="size-4" />
+                New case
+              </Button>
+            </Card>
+          )}
+
+          {cases && cases.length > 0 && (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {cases.map((legalCase) => (
+                <CaseCard key={legalCase.id} legalCase={legalCase} />
+              ))}
+            </div>
+          )}
         </div>
-      )}
-
-      {cases?.length === 0 && !isLoading && (
-        <Card className="items-center gap-4 py-10 text-center">
-          <Scale className="size-8 text-muted-foreground" aria-hidden />
-          <div className="flex flex-col gap-1">
-            <CardTitle className="text-lg">Start your first case</CardTitle>
-            <CardDescription>
-              Add a case, then rehearse it aloud against opposing counsel and the judge.
-            </CardDescription>
-          </div>
-          <Button nativeButton={false} render={<Link to="/case/new" />}>
-            <Plus className="size-4" />
-            New case
-          </Button>
-        </Card>
-      )}
-
-      {cases && cases.length > 0 && (
-        <div className="grid gap-4 sm:grid-cols-2">
-          {cases.map((legalCase) => (
-            <CaseCard key={legalCase.id} legalCase={legalCase} />
-          ))}
-        </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -88,6 +99,7 @@ export function Dashboard() {
  * long-term fix is a session-count field on the Case payload from the backend.
  */
 function CaseCard({ legalCase }: { legalCase: Case }) {
+  const demo = SHOW_REVIEWER_AIDS && isDemoCase(legalCase.title);
   const { data: sessions } = useQuery({
     queryKey: ['case-sessions', legalCase.id],
     queryFn: () => api.getCaseSessions(legalCase.id),
@@ -108,9 +120,21 @@ function CaseCard({ legalCase }: { legalCase: Case }) {
       to={`/case/${legalCase.id}`}
       className="rounded-lg outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
     >
-      <Card className="h-full transition-colors hover:border-primary/40">
+      <Card
+        className={cn(
+          'h-full transition-colors hover:border-primary/40',
+          demo && 'border-amber-500/60 bg-amber-500/5',
+        )}
+      >
         <CardHeader>
-          <CardTitle>{legalCase.title}</CardTitle>
+          <div className="flex items-start justify-between gap-2">
+            <CardTitle>{legalCase.title}</CardTitle>
+            {demo && (
+              <Badge className="shrink-0 border-transparent bg-amber-500 text-amber-950">
+                Start here
+              </Badge>
+            )}
+          </div>
           <CardDescription>
             Added {new Date(legalCase.createdAt).toLocaleDateString()}
           </CardDescription>
