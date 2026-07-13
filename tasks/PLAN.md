@@ -3140,6 +3140,13 @@ pre-submission if time allows — finalize scope before starting.)
       remediation message ("export a flattened copy"). Honest scope documented (compressed-stream
       obfuscation evades a raw scan → ClamAV stays a production follow-up in ARCH). Backend 109
       (+4: all vectors fire, boundary cases don't, clean passes, route 422s). No new deps/infra.
+- [x] Form-field length caps (guardrail). These fields flow into the case profile → every LLM
+      prompt, so an unbounded one was a cost/DoS + injection surface. Shared limits (backend
+      `schemas/limits.py` ↔ frontend `lib/limits.ts`): LINE_MAX=200 (titles/parties/numbers/
+      citations/names), TEXT_MAX=1000 (relief, case_facts, jurisdiction). Fixed the real holes:
+      case_facts 100_000→1000; rule-doc metadata + auth full_name/firm_name/email/password were
+      unbounded → bounded. Pydantic enforces (422); frontend maxLength for UX. Backend 110,
+      frontend 81; all green.
 - [ ] (Tier-2 backlog) Add a `sessionCount` (and maybe `bestScore`) field to the Case payload to
       remove the Dashboard per-card `getCaseSessions` N+1 (the CaseCard rehearsal summary).
 - [ ] (Backlog) Show the case profile on CaseDetail; prefill profile fields from pleading

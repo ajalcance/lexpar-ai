@@ -1222,6 +1222,14 @@ refused here, not stored). Caddy adds an **edge** `request_body max_size` (60 MB
 bodies are dropped at the proxy before the app's multipart parser spools them. The frontend
 pre-checks size/type for UX; the server is the real control.
 
+**Form-field length caps.** Every user-submitted text field is length-bounded (`schemas/limits.py`
+→ mirrored in `frontend/src/lib/limits.ts`): single-line fields (titles, party names, case numbers,
+citations, person/firm names) at 200 chars, free-text answers (relief sought, additional case
+context, jurisdiction) at 1000. These fields flow into the case profile → every LLM prompt, so an
+unbounded field was a prompt-cost/DoS + injection surface — most were bounded but `case_facts` was
+100k and the rule-doc metadata + auth names were unbounded. Enforced by Pydantic (422); the
+frontend `maxLength` stops the typing for UX.
+
 **Active-content gate (the PDF-appropriate malware guard).** Uploaded PDFs are never served back
 to other users — they are only parsed server-side (pypdf) for ingestion — so instead of a generic
 AV engine, uploads are scanned for the PDF threat vectors themselves: embedded JavaScript

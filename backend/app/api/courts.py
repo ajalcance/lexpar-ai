@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session as DbSession
 from app.db import SessionLocal, get_db
 from app.models.user import User
 from app.schemas.court import CourtCreate, CourtOut, CourtRuleDocumentOut, PurgeImpactOut
+from app.schemas.limits import LINE_MAX
 from app.security import (
     get_current_user,
     require_admin,
@@ -115,9 +116,9 @@ async def upload_rule_document(
     court_id: uuid.UUID,
     background: BackgroundTasks,
     file: UploadFile = File(...),
-    title: str | None = Form(default=None),
-    source_citation: str | None = Form(default=None),
-    source_reference: str | None = Form(default=None),
+    title: str | None = Form(default=None, max_length=LINE_MAX),
+    source_citation: str | None = Form(default=None, max_length=LINE_MAX),
+    source_reference: str | None = Form(default=None, max_length=LINE_MAX),
     admin: User = Depends(require_admin),
     db: DbSession = Depends(get_db),
 ) -> CourtRuleDocumentOut:
@@ -171,9 +172,9 @@ async def replace_rule_document(
     document_id: uuid.UUID,
     background: BackgroundTasks,
     file: UploadFile = File(...),
-    title: str | None = Form(default=None),
-    source_citation: str | None = Form(default=None),
-    source_reference: str | None = Form(default=None),
+    title: str | None = Form(default=None, max_length=LINE_MAX),
+    source_citation: str | None = Form(default=None, max_length=LINE_MAX),
+    source_reference: str | None = Form(default=None, max_length=LINE_MAX),
     admin: User = Depends(require_admin),
     db: DbSession = Depends(get_db),
 ) -> CourtRuleDocumentOut:

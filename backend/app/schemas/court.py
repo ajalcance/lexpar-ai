@@ -14,10 +14,12 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.limits import LINE_MAX, TEXT_MAX
+
 
 class CourtCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=300)
-    jurisdiction_description: str | None = Field(default=None, max_length=5_000)
+    name: str = Field(min_length=1, max_length=LINE_MAX)
+    jurisdiction_description: str | None = Field(default=None, max_length=TEXT_MAX)
 
 
 class CourtOut(BaseModel):

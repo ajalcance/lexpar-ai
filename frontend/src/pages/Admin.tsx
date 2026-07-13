@@ -25,6 +25,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RuleDocumentRow } from '@/components/RuleDocumentRow';
 import * as api from '@/lib/api';
+import { LINE_MAX, TEXT_MAX } from '@/lib/limits';
 import { DESTRUCTIVE_ACTIONS_ENABLED } from '@/lib/flags';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth';
@@ -182,6 +183,7 @@ export function Admin() {
                 <Label htmlFor="courtName">Court name</Label>
                 <Input
                   id="courtName"
+                maxLength={LINE_MAX}
                   value={courtName}
                   onChange={(event) => setCourtName(event.target.value)}
                   required
@@ -191,6 +193,7 @@ export function Admin() {
                 <Label htmlFor="jurisdiction">Jurisdiction description</Label>
                 <Input
                   id="jurisdiction"
+                maxLength={TEXT_MAX}
                   value={jurisdiction}
                   onChange={(event) => setJurisdiction(event.target.value)}
                 />
@@ -253,6 +256,7 @@ export function Admin() {
                   <Label htmlFor="ruleTitle">Title</Label>
                   <Input
                     id="ruleTitle"
+                maxLength={LINE_MAX}
                     value={ruleTitle}
                     onChange={(event) => setRuleTitle(event.target.value)}
                   />
@@ -261,6 +265,7 @@ export function Admin() {
                   <Label htmlFor="sourceCitation">Source citation</Label>
                   <Input
                     id="sourceCitation"
+                maxLength={LINE_MAX}
                     value={sourceCitation}
                     onChange={(event) => setSourceCitation(event.target.value)}
                     placeholder="Formal citation of the instrument"
@@ -270,6 +275,7 @@ export function Admin() {
                   <Label htmlFor="sourceReference">Source URL / reference</Label>
                   <Input
                     id="sourceReference"
+                maxLength={LINE_MAX}
                     value={sourceReference}
                     onChange={(event) => setSourceReference(event.target.value)}
                     placeholder="Where this official copy came from"

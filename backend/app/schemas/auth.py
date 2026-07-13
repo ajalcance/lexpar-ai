@@ -11,17 +11,24 @@ import uuid
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.limits import LINE_MAX
+
+# Email max per RFC 5321; password max bounds the bcrypt input (huge inputs are a hashing-cost DoS).
+_EMAIL_MAX = 254
+_PASSWORD_MAX = 128
+
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(max_length=_EMAIL_MAX)
+    password: str = Field(max_length=_PASSWORD_MAX)
 
 
 class RegisterRequest(BaseModel):
-    email: str
-    password: str = Field(min_length=8)  # basic strength floor; enforce more in production
-    full_name: str | None = None
-    firm_name: str | None = None
+    email: str = Field(max_length=_EMAIL_MAX)
+    # basic strength floor; enforce more in production. Max bounds the bcrypt input.
+    password: str = Field(min_length=8, max_length=_PASSWORD_MAX)
+    full_name: str | None = Field(default=None, max_length=LINE_MAX)
+    firm_name: str | None = Field(default=None, max_length=LINE_MAX)
 
 
 class TokenResponse(BaseModel):

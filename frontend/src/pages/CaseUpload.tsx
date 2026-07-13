@@ -29,6 +29,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Breadcrumbs } from '@/components/Breadcrumbs';
 import { PleadingUpload } from '@/components/PleadingUpload';
 import * as api from '@/lib/api';
+import { LINE_MAX, TEXT_MAX } from '@/lib/limits';
 
 export function CaseUpload() {
   const navigate = useNavigate();
@@ -115,6 +116,7 @@ export function CaseUpload() {
             <Label htmlFor="title">Case title</Label>
             <Input
               id="title"
+              maxLength={LINE_MAX}
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               placeholder={'Name your case — e.g. "Smith v. Jones"'}
@@ -125,6 +127,7 @@ export function CaseUpload() {
             <Label htmlFor="caseNumber">Case number (optional)</Label>
             <Input
               id="caseNumber"
+              maxLength={LINE_MAX}
               value={caseNumber}
               onChange={(event) => setCaseNumber(event.target.value)}
               placeholder="Docket or case number, if you have one"
@@ -135,6 +138,7 @@ export function CaseUpload() {
               <Label htmlFor="petitioner">Petitioner / plaintiff</Label>
               <Input
                 id="petitioner"
+                maxLength={LINE_MAX}
                 value={petitioner}
                 onChange={(event) => setPetitioner(event.target.value)}
                 placeholder="The party bringing the case"
@@ -145,6 +149,7 @@ export function CaseUpload() {
               <Label htmlFor="respondent">Respondent / defendant</Label>
               <Input
                 id="respondent"
+                maxLength={LINE_MAX}
                 value={respondent}
                 onChange={(event) => setRespondent(event.target.value)}
                 placeholder="The party defending against it"
@@ -177,6 +182,7 @@ export function CaseUpload() {
             <Label htmlFor="reliefSought">Relief sought</Label>
             <Textarea
               id="reliefSought"
+              maxLength={TEXT_MAX}
               value={reliefSought}
               onChange={(event) => setReliefSought(event.target.value)}
               placeholder="What you're asking the court to grant"
@@ -188,6 +194,7 @@ export function CaseUpload() {
             <Label htmlFor="caseFacts">Additional context (optional)</Label>
             <Textarea
               id="caseFacts"
+              maxLength={TEXT_MAX}
               value={caseFacts}
               onChange={(event) => setCaseFacts(event.target.value)}
               placeholder="Optional — anything useful that isn't in the pleading"

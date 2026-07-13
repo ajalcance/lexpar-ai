@@ -12,19 +12,22 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.limits import LINE_MAX, TEXT_MAX
+
 
 class CaseCreate(BaseModel):
-    title: str = Field(min_length=1, max_length=300)
+    title: str = Field(min_length=1, max_length=LINE_MAX)
     # Case profile — structured, user-stated identity the pleading can't reliably supply (which
     # side the attorney is on, the relief they seek) or that must be machine-readable (parties
     # for STT keyterms, the docket number for the record). Optional at the API for compatibility;
-    # the UI requires the ones that drive the courtroom (parties, side, relief).
-    case_number: str | None = Field(default=None, max_length=200)
-    petitioner: str | None = Field(default=None, max_length=500)
-    respondent: str | None = Field(default=None, max_length=500)
+    # the UI requires the ones that drive the courtroom (parties, side, relief). Length-capped
+    # (limits.py) — these flow into every LLM prompt, so an unbounded field is a cost/DoS vector.
+    case_number: str | None = Field(default=None, max_length=LINE_MAX)
+    petitioner: str | None = Field(default=None, max_length=LINE_MAX)
+    respondent: str | None = Field(default=None, max_length=LINE_MAX)
     represented_party: Literal["petitioner", "respondent"] | None = None
-    relief_sought: str | None = Field(default=None, max_length=2_000)
-    case_facts: str | None = Field(default=None, max_length=100_000)
+    relief_sought: str | None = Field(default=None, max_length=TEXT_MAX)
+    case_facts: str | None = Field(default=None, max_length=TEXT_MAX)
     # The forum whose rules ground this case (§13). Optional during the §13 rollout — the UI has
     # no Court selector until the catalog route + frontend land (Phases 2/6); it flips to
     # required then. Validated against an existing, active Court when provided (case_service).

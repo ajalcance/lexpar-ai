@@ -586,3 +586,20 @@ def test_archived_court_can_still_be_purged(client, admin_headers, db_session):
     # an archived court was an invisible, undeletable orphan.
     assert resp.status_code == 204
     assert client.get("/api/courts?include_archived=true", headers=admin_headers).json() == []
+
+
+def test_form_field_length_caps_reject_overlong_input(client, auth_headers, admin_headers):
+    # Case profile fields flow into LLM prompts — an overlong field is rejected (422), not stored.
+    long_line = "x" * 300  # over LINE_MAX (200)
+    resp = client.post("/api/cases", headers=auth_headers, json={"title": long_line})
+    assert resp.status_code == 422
+    long_text = "y" * 1500  # over TEXT_MAX (1000)
+    resp = client.post(
+        "/api/cases",
+        headers=auth_headers,
+        json={"title": "Fine", "case_facts": long_text},
+    )
+    assert resp.status_code == 422
+    # Court name is capped too.
+    resp = client.post("/api/courts", headers=admin_headers, json={"name": long_line})
+    assert resp.status_code == 422
