@@ -27,6 +27,7 @@ import { RuleDocumentRow } from '@/components/RuleDocumentRow';
 import * as api from '@/lib/api';
 import { LINE_MAX, TEXT_MAX } from '@/lib/limits';
 import { DESTRUCTIVE_ACTIONS_ENABLED } from '@/lib/flags';
+import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 
 export function Courts() {
@@ -73,7 +74,9 @@ export function Courts() {
       setShowCreate(false);
       setSelectedCourtId(court.id);
       await queryClient.invalidateQueries({ queryKey: ['courts'] });
+      toast.success(`Court "${court.name}" created — upload its rule PDFs below.`);
     },
+    onError: (e) => toast.error(e instanceof Error ? e.message : 'Could not create the court.'),
   });
 
   const uploadRule = useMutation({
@@ -91,7 +94,9 @@ export function Courts() {
       setSourceCitation('');
       setSourceReference('');
       await queryClient.invalidateQueries({ queryKey: ['court-rules', selectedCourtId] });
+      toast.success('Rule document uploaded — ingesting now.');
     },
+    onError: (e) => toast.error(e instanceof Error ? e.message : 'Upload failed.'),
   });
 
   return (

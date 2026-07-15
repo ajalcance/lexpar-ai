@@ -15,6 +15,7 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -65,10 +66,12 @@ export function CaseUpload() {
       }),
     onSuccess: async (created) => {
       await queryClient.invalidateQueries({ queryKey: ['cases'] });
+      toast.success('Case created — attach the pleading next.');
       // Reveal the pleading-upload step for the new case instead of leaving immediately, so the
       // attorney can attach the full filing that grounds the AI (§12).
       setCreatedCaseId(created.id);
     },
+    onError: (e) => toast.error(e instanceof Error ? e.message : 'Could not create the case.'),
   });
 
   const handleSubmit = (event: FormEvent) => {

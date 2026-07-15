@@ -10,15 +10,40 @@
 
 import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { CheckCircle2, Loader2, XCircle } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import * as api from '@/lib/api';
+import { toast } from '@/lib/toast';
+import { cn } from '@/lib/utils';
 
 const STATUS_LABEL: Record<api.PleadingStatus['status'], string> = {
   pending: 'Ingesting… (extracting + embedding the pleading)',
   ready: 'Ready — the AI will argue from this pleading',
   failed: 'Ingestion failed',
 };
+
+/** A visual status chip: a spinner while ingesting, a check when ready, an X on failure — so the
+ *  pleading's state reads at a glance instead of as a plain sentence. */
+function StatusChip({ status }: { status: api.PleadingStatus['status'] }) {
+  const styles: Record<api.PleadingStatus['status'], string> = {
+    pending: 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400',
+    ready: 'border-green-500/30 bg-green-500/10 text-green-700 dark:text-green-400',
+    failed: 'border-destructive/30 bg-destructive/10 text-destructive',
+  };
+  const Icon = status === 'ready' ? CheckCircle2 : status === 'failed' ? XCircle : Loader2;
+  return (
+    <span
+      className={cn(
+        'inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs',
+        styles[status],
+      )}
+    >
+      <Icon className={cn('size-3.5', status === 'pending' && 'motion-safe:animate-spin')} />
+      {STATUS_LABEL[status]}
+    </span>
+  );
+}
 
 // Mirrors the backend MAX_UPLOAD_MB default — a friendly pre-check so a large file is caught
 // before the upload starts. The server (and Caddy) remain the real enforcement.
@@ -39,8 +64,15 @@ export function PleadingUpload({ caseId }: { caseId: string }) {
 
   const upload = useMutation({
     mutationFn: (file: File) => api.uploadPleading(caseId, file),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pleadings', caseId] }),
-    onError: (e) => setError(e instanceof Error ? e.message : 'Upload failed.'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pleadings', caseId] });
+      toast.success('Pleading uploaded — ingesting now.');
+    },
+    onError: (e) => {
+      const msg = e instanceof Error ? e.message : 'Upload failed.';
+      setError(msg);
+      toast.error(msg);
+    },
   });
 
   const onPick = (file: File | undefined) => {
@@ -78,20 +110,14 @@ export function PleadingUpload({ caseId }: { caseId: string }) {
       {pleadings && pleadings.length > 0 && (
         <ul className="flex flex-col gap-1 text-sm">
           {pleadings.map((p) => (
-            <li key={p.id} className="flex items-center justify-between rounded border px-3 py-2">
-              <span className="truncate">{p.filename}</span>
-              <span
-                className={
-                  p.status === 'failed'
-                    ? 'text-destructive'
-                    : p.status === 'ready'
-                      ? 'text-foreground'
-                      : 'text-muted-foreground'
-                }
-              >
-                {STATUS_LABEL[p.status]}
-                {p.status === 'failed' && p.error ? ` — ${p.error}` : ''}
-              </span>
+            <li key={p.id} className="flex flex-col gap-1 rounded border px-3 py-2">
+              <div className="flex items-center justify-between gap-3">
+                <span className="truncate font-medium">{p.filename}</span>
+                <StatusChip status={p.status} />
+              </div>
+              {p.status === 'failed' && p.error && (
+                <span className="text-xs text-destructive">{p.error}</span>
+              )}
             </li>
           ))}
         </ul>

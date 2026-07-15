@@ -141,3 +141,16 @@
     @apply font-sans;
     }
 }
+/* Print: strip the app chrome so "Save as PDF" from the Scorecard yields a clean document —
+   just the score, breakdown, strengths/weaknesses, ruling, and transcript. Buttons/nav/toaster
+   carry `print:hidden`; this trims page margins and drops shadows/tints that waste ink. */
+@media print {
+  main {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+  .shadow-sm,
+  .shadow {
+    box-shadow: none !important;
+  }
+}

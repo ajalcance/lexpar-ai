@@ -10,6 +10,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppLayout } from '@/components/AppLayout';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
+import { Toaster } from '@/components/Toaster';
 import { Courts } from '@/pages/Courts';
 import { CaseDetail } from '@/pages/CaseDetail';
 import { CaseUpload } from '@/pages/CaseUpload';
@@ -21,6 +22,8 @@ import { SparringRoom } from '@/pages/SparringRoom';
 
 export default function App() {
   return (
+    <>
+      <Toaster />
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route element={<ProtectedRoute />}>
@@ -37,5 +40,6 @@ export default function App() {
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
+    </>
   );
 }

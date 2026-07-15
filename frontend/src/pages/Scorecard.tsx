@@ -10,8 +10,9 @@
 
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Download, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import {
   Card,
   CardContent,
@@ -129,8 +130,18 @@ export function Scorecard() {
 
   return (
     <div className="flex flex-col gap-6">
-      <Breadcrumbs items={crumbs} />
-      <h1 className="text-2xl font-semibold">Scorecard</h1>
+      <div className="print:hidden">
+        <Breadcrumbs items={crumbs} />
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold">Scorecard</h1>
+        {/* Save as PDF via the browser's print dialog (Save as PDF) — no PDF dependency; a print
+            stylesheet (index.css) hides the app chrome so the printed page is just the scorecard. */}
+        <Button variant="outline" size="sm" onClick={() => window.print()} className="print:hidden">
+          <Download className="size-4" />
+          Save as PDF
+        </Button>
+      </div>
 
       <Card>
         <CardContent className="flex flex-col items-center gap-2 pt-6">

@@ -239,11 +239,31 @@ email-dependent work). Phase 5 is being done in batches; this is **batch A: Case
 - [x] Gate: backend ruff clean **112 pass**; agents **277 pass**; frontend tsc clean **84 pass**,
       lint clean, build ✓.
 
-**Remaining Phase 5 batches (sequence next):** ingestion-progress chip; empty-state/onboarding
-polish; pre-session device check (mic/level/output — **needs a live LiveKit room to verify**, so
-flagged); transcript/scorecard PDF export (**needs a dep decision**: client PDF lib vs print CSS);
-app-wide skeletons + error toasts (**needs a dep decision**: adopt `sonner` or hand-roll). Password
-reset stays deferred until an email provider is chosen.
+#### Phase 5 — batch B: feedback + polish — status: done
+Dependency calls made in-house (kept deps lean, no new packages): **toasts hand-rolled**, **PDF via
+print CSS**.
+- [x] **App-wide toasts** (`lib/toast.ts` Zustand store + `components/Toaster.tsx`, mounted at the
+      app root so Login has it too; red/green/neutral variants, auto-dismiss + click-dismiss). Wired
+      into the key mutations: case create (success/error), court create + rule upload
+      (success/error), pleading upload (success/error). **Live-verified**: created a case in-browser
+      → green "Case created — attach the pleading next." toast rendered bottom-right; console clean.
+- [x] **Ingestion status chip** (`PleadingUpload`): the pending/ready/failed status is now a
+      color-coded chip with a spinner (pending) / check (ready) / X (failed), error surfaced below.
+- [x] **Scorecard PDF export**: a "Save as PDF" button prints via the browser dialog; a `@media
+      print` stylesheet + `print:hidden` on nav/breadcrumbs/buttons/toaster yield a clean document —
+      no PDF dependency added.
+- [x] Empty states/onboarding reviewed — already in good shape (Dashboard "Start your first case",
+      Courts auto-opens the create form on an empty catalog, CaseDetail "No sessions yet"); no change.
+- [x] Tests: Toaster (push → render → dismiss; empty → nothing). Gate: frontend tsc clean **86
+      pass**, lint clean, build ✓; backend/agents unchanged.
+- [x] Docs: ARCHITECTURE §4 (Toaster/ScoreTrend/chip/PDF).
+
+**Result:** Phase 5 is functionally complete for everything buildable+verifiable without a live
+LiveKit room. **One item intentionally left for a focused follow-up:** the **pre-session device
+check** (mic permission + input-level meter + output test) — it lives on the SparringRoom entry, the
+fragile real-time path, and needs a live room + microphone to build and verify responsibly, so it
+warrants its own session with a mic rather than a blind implementation. **Password reset** stays
+deferred until an email provider is chosen (Resend recommended).
 
 ### Scaffold frontend (Vite + React + TS + Tailwind + shadcn/ui, mock data) — status: done
 

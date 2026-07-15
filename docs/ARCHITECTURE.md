@@ -26,7 +26,7 @@ Single monorepo. One repo, one source of truth, no cross-repo version drift for 
 lexpar-ai/
 ├── frontend/                    React + TypeScript (Vite)
 │   ├── src/
-│   │   ├── components/          Shared UI + app shell (AppLayout, UserMenu, Breadcrumbs; ScoreDial, DemoScript, DashboardGuide reviewer aids; shadcn/ui + Tailwind)
+│   │   ├── components/          Shared UI + app shell (AppLayout, UserMenu, Breadcrumbs, Toaster; ScoreDial, ScoreTrend, PleadingUpload status chip; DemoScript, DashboardGuide reviewer aids; shadcn/ui + Tailwind)
 │   │   ├── pages/
 │   │   │   ├── Login.tsx
 │   │   │   ├── Dashboard.tsx         Cases list
@@ -257,7 +257,9 @@ the one thing still absent:
   judge ruling (GET `/api/sessions/{id}/scorecard`), plus a **Transcript** section built
   from the real persisted turns (GET `/api/sessions/{id}`, reusing `TranscriptLine` with the
   objection styling). Multi-line strengths/weaknesses use `whitespace-pre-line` so the per-fact and
-  per-objection bullet lines survive. Verified end-to-end offline via the harness (Gap 5).
+  per-objection bullet lines survive. A **Save as PDF** button prints the scorecard via the browser's
+  print dialog (a `@media print` stylesheet + `print:hidden` on the chrome — no PDF dependency).
+  Verified end-to-end offline via the harness (Gap 5).
 - **Before a scorecard exists** (session still `in_progress`), GET scorecard returns 409/404 and the
   frontend shows an honest "not available yet" fallback rather than fabricating a score.
 - **No dedicated ledger/verification UI.** SessionState's ledger (established facts, objections) and
