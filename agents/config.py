@@ -100,14 +100,6 @@ ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb")
 JUDGE_VOICE_ID = os.getenv("JUDGE_VOICE_ID", "onwK4e9ZLuTAKqWW03F9")
 
 
-def _getfloat(name: str, default: float) -> float:
-    """Parse a float env var, falling back to the default on missing/malformed input."""
-    try:
-        return float(os.getenv(name, str(default)))
-    except (TypeError, ValueError):
-        return default
-
-
 def _getbool(name: str, default: bool) -> bool:
     """Parse a boolean env var (1/true/yes/on = True); default when unset."""
     raw = os.getenv(name)

@@ -3,8 +3,10 @@ File: app/api/cases.py
 Purpose: Case routes — create, list, and fetch cases for the authenticated attorney.
 Depends on: fastapi, app/services/case_service.py, app/security.py, app/schemas/case.py
 Related: docs/ARCHITECTURE.md §5, frontend Dashboard.tsx / CaseUpload.tsx
-Security notes: Every route requires a bearer token; the service scopes all data to current_user.
-    Document upload to object storage is deferred — case_facts is JSON only for now.
+Security notes: Every route requires a bearer token. Ownership is STRUCTURAL: {case_id} routes
+    resolve the case through api/deps.get_owned_case (404 on foreign/missing cases), so a new
+    route cannot forget the check (AUDIT_REPORT A6). purge_case is the deliberate exception —
+    admin-scoped, to be org-scoped in Phase 3 (tenancy).
 """
 
 import uuid
@@ -20,7 +22,9 @@ from fastapi import (
 )
 from sqlalchemy.orm import Session as DbSession
 
+from app.api.deps import get_owned_case
 from app.db import SessionLocal, get_db
+from app.models.case import Case
 from app.models.user import User
 from app.schemas.case import CaseCreate, CaseDocumentOut, CaseOut
 from app.schemas.session import SessionOut
@@ -79,47 +83,39 @@ def list_cases(
 
 
 @router.get("/{case_id}", response_model=CaseOut)
-def get_case(
-    case_id: uuid.UUID,
-    current_user: User = Depends(get_current_user),
-    db: DbSession = Depends(get_db),
-) -> CaseOut:
-    return case_service.get_case(db, current_user, case_id)
+def get_case(case: Case = Depends(get_owned_case)) -> CaseOut:
+    return case
 
 
 @router.get("/{case_id}/sessions", response_model=list[SessionOut])
 def list_case_sessions(
-    case_id: uuid.UUID,
+    case: Case = Depends(get_owned_case),
     current_user: User = Depends(get_current_user),
     db: DbSession = Depends(get_db),
 ) -> list[SessionOut]:
     """A case's rehearsal history — its sessions, newest first. 404 if the case isn't the
-    attorney's (ownership check), so past scorecards are reachable from the case detail view."""
-    case_service.get_case(db, current_user, case_id)  # 404/ownership check
-    return session_service.list_sessions_for_case(db, current_user, case_id)
+    attorney's (get_owned_case), so past scorecards are reachable from the case detail view."""
+    return session_service.list_sessions_for_case(db, current_user, case.id)
 
 
 @router.post(
     "/{case_id}/documents", response_model=CaseDocumentOut, status_code=status.HTTP_202_ACCEPTED
 )
 async def upload_pleading(
-    case_id: uuid.UUID,
     background: BackgroundTasks,
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user),
+    case: Case = Depends(get_owned_case),
     db: DbSession = Depends(get_db),
 ) -> CaseDocumentOut:
     """Attach a pleading (PDF) to a case: store it, then ingest it (extract → chunk → embed) in the
     background so the agents can ground objections/rulings in it (§12). Returns immediately with a
     'pending' status the client polls."""
-    case_service.get_case(db, current_user, case_id)  # 404/ownership check
-
     data = await upload_service.read_pdf_upload(file)
 
-    key = storage_service.object_key(str(case_id), file.filename or "pleading.pdf")
+    key = storage_service.object_key(str(case.id), file.filename or "pleading.pdf")
     storage_service.put_object(key, data, content_type="application/pdf")
     document = case_knowledge_service.create_document_row(
-        db, case_id, file.filename or "pleading.pdf", key, "application/pdf", len(data)
+        db, case.id, file.filename or "pleading.pdf", key, "application/pdf", len(data)
     )
     background.add_task(_ingest_in_background, document.id, key)
     return CaseDocumentOut(**case_knowledge_service.as_status_dict(document))
@@ -127,29 +123,25 @@ async def upload_pleading(
 
 @router.get("/{case_id}/documents", response_model=list[CaseDocumentOut])
 def list_pleadings(
-    case_id: uuid.UUID,
-    current_user: User = Depends(get_current_user),
+    case: Case = Depends(get_owned_case),
     db: DbSession = Depends(get_db),
 ) -> list[CaseDocumentOut]:
     """Ingestion status of each attached pleading (for the upload UI to poll)."""
-    case_service.get_case(db, current_user, case_id)
     return [
         CaseDocumentOut(**case_knowledge_service.as_status_dict(d))
-        for d in case_knowledge_service.documents_for(db, case_id)
+        for d in case_knowledge_service.documents_for(db, case.id)
     ]
 
 
 @router.delete("/{case_id}/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 def archive_pleading(
-    case_id: uuid.UUID,
     document_id: uuid.UUID,
-    current_user: User = Depends(get_current_user),
+    case: Case = Depends(get_owned_case),
     db: DbSession = Depends(get_db),
 ) -> None:
     """SOFT tier for a pleading (owner action): excluded from retrieval via the document-state
     filter; rows/chunks/file kept so provenance stays resolvable."""
-    case_service.get_case(db, current_user, case_id)  # 404/ownership
-    document = case_knowledge_service.get_case_document(db, case_id, document_id)
+    document = case_knowledge_service.get_case_document(db, case.id, document_id)
     if document is None:
         raise HTTPException(status_code=404, detail="Pleading not found.")
     case_knowledge_service.archive_case_document(db, document)
@@ -161,19 +153,17 @@ def archive_pleading(
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def replace_pleading(
-    case_id: uuid.UUID,
     document_id: uuid.UUID,
     background: BackgroundTasks,
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user),
+    case: Case = Depends(get_owned_case),
     db: DbSession = Depends(get_db),
 ) -> CaseDocumentOut:
     """Atomic Replace for a corrected version of the same pleading: the old version stays in
     retrieval until the new one ingests to 'ready' (then archived + lineage recorded). The case
     summary is last-writer-wins — correct for a replacement (§12 documented limitation for
     genuinely multi-document cases)."""
-    case_service.get_case(db, current_user, case_id)
-    old = case_knowledge_service.get_case_document(db, case_id, document_id)
+    old = case_knowledge_service.get_case_document(db, case.id, document_id)
     if old is None:
         raise HTTPException(status_code=404, detail="Pleading not found.")
     if old.deleted_at is not None:
@@ -181,10 +171,10 @@ async def replace_pleading(
 
     data = await upload_service.read_pdf_upload(file)
 
-    key = storage_service.object_key(str(case_id), file.filename or "pleading.pdf")
+    key = storage_service.object_key(str(case.id), file.filename or "pleading.pdf")
     storage_service.put_object(key, data, content_type="application/pdf")
     document = case_knowledge_service.create_document_row(
-        db, case_id, file.filename or "pleading.pdf", key, "application/pdf", len(data)
+        db, case.id, file.filename or "pleading.pdf", key, "application/pdf", len(data)
     )
     background.add_task(_ingest_in_background, document.id, key, old.id)
     return CaseDocumentOut(**case_knowledge_service.as_status_dict(document))
@@ -192,14 +182,12 @@ async def replace_pleading(
 
 @router.delete("/{case_id}", status_code=status.HTTP_204_NO_CONTENT)
 def archive_case(
-    case_id: uuid.UUID,
-    current_user: User = Depends(get_current_user),
+    case: Case = Depends(get_owned_case),
     db: DbSession = Depends(get_db),
     _guard: None = Depends(require_destructive_actions_enabled),
 ) -> None:
     """SOFT tier (owner action, the default): the case disappears from lists/detail; sessions,
     scorecards, documents, and provenance stay intact. Reversible at the DB level."""
-    case = case_service.get_case(db, current_user, case_id)
     case_service.archive_case(db, case)
 
 
@@ -212,9 +200,8 @@ def purge_case(
 ) -> None:
     """HARD tier (ADMIN-only): genuinely delete the case and everything under it (sessions,
     transcripts, scorecards, provenance, documents, chunks, stored files). For test/mistake
-    cases."""
-    from app.models.case import Case
-
+    cases. NOTE (AUDIT B6): deliberately NOT get_owned_case — the admin purges cases they don't
+    own. The global-admin reach across all users is the Phase 3 tenancy fix (org scoping)."""
     case = db.get(Case, case_id)
     if case is None:
         raise HTTPException(status_code=404, detail="Case not found.")

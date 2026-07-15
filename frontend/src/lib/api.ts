@@ -4,14 +4,15 @@
  *   these functions — never fetch() directly. They call the real FastAPI backend, attach the
  *   bearer token from the auth store, and map the API's snake_case JSON onto the camelCase
  *   frontend types so components don't change shape.
- * Depends on: store/auth.ts (token), lib/types.ts, lib/mockData.ts (scripted transcript only)
+ * Depends on: store/auth.ts (token), lib/types.ts, lib/flags.ts; lib/mockData.ts is lazily
+ *   imported by getSessionScript only when reviewer aids are enabled
  * Related: backend/app/api/* (the REST routes), docs/ARCHITECTURE.md §5
  * Security notes: The bearer token is read from the in-memory auth store and sent only to the
  *   configured API base URL. On a 401 the store is cleared so the guard redirects to /login.
  *   Never log request/response bodies (they carry credentials and work product).
  */
 
-import { mockTranscript } from '@/lib/mockData';
+import { SHOW_REVIEWER_AIDS } from '@/lib/flags';
 import { useAuthStore } from '@/store/auth';
 import type {
   Case,
@@ -27,6 +28,11 @@ import type {
 } from '@/lib/types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
+
+/** Milliseconds before an in-flight JSON API request is aborted — a hung backend must not leave
+ *  the UI waiting forever (fetch has no default timeout). The multipart upload helpers keep their
+ *  own un-timed fetch: a large PDF on a slow link can legitimately exceed this. */
+const REQUEST_TIMEOUT_MS = 15_000;
 
 /** Error carrying the HTTP status so callers (e.g. Scorecard) can branch on 404/409. */
 export class ApiError extends Error {
@@ -57,11 +63,26 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     }
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  // Abort a request that outlives the timeout so a hung backend surfaces as a catchable error
+  // (status 0 — no HTTP status exists) instead of an indefinitely pending fetch.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new ApiError('The server is not responding. Please try again.', 0);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (response.status === 401) {
     // Stale/invalid token — clear auth so ProtectedRoute redirects to /login.
@@ -524,9 +545,15 @@ export async function getLiveKitToken(sessionId: string): Promise<LiveKitAccess>
 }
 
 /**
- * The scripted transcript SparringRoom replays. Still mocked — there is no agents pipeline
- * producing a live transcript yet (ARCHITECTURE §4 "Wiring status").
+ * The scripted transcript SparringRoom replays in FALLBACK mode (connection failed / no agent
+ * joined). Reviewer-aid only: gated behind SHOW_REVIEWER_AIDS and dynamically imported, so a
+ * real-user build (VITE_SHOW_DEMO_SCRIPT=false) ships an empty fallback instead of bundling the
+ * demo fixture into the live session path.
  */
 export async function getSessionScript(sessionId: string): Promise<Transcript[]> {
-  return Promise.resolve(mockTranscript.map((line) => ({ ...line, sessionId })));
+  if (!SHOW_REVIEWER_AIDS) {
+    return [];
+  }
+  const { mockTranscript } = await import('@/lib/mockData');
+  return mockTranscript.map((line) => ({ ...line, sessionId }));
 }
