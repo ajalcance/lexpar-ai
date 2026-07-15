@@ -26,16 +26,15 @@ once judging closes and the repo goes back to private. Pinned here so it isn't l
 below. Cross-refs: memory `hackathon-droplet-deployment`, `lexpar-license-gate`; ARCHITECTURE §9/§10.5.
 
 **Security / access (revert first):**
-- [ ] **Re-enable destructive actions.** Flip `DESTRUCTIVE_ACTIONS_ENABLED=true` (backend) and
-      `VITE_DESTRUCTIVE_ACTIONS_ENABLED=true` (frontend) — restores Archive/Purge site-wide
-      (disabled so no shared-account reviewer could delete data). Gate: `security.py` + `lib/flags.ts`.
-- [ ] **Rotate admin credentials.** Rotate the shared judge admin `counsel@lexpar.ai` password
-      after judging. Also the deferred check: confirm the old compromised `admin1234` returns 401
-      on the droplet (skipped during Phase 5 setup).
-- [ ] **Close public sign-up** if desired: `ALLOW_REGISTRATION=false` once the accounts that need
-      to exist exist (left open so judges could self-register).
-- [ ] **Clean the demo database.** Judges share one admin account and create cases/sessions —
-      purge demo data before any real use.
+- [x] **Re-enable destructive actions.** **Moot 2026-07-15:** the droplet (and its `.env.prod`
+      overrides) was destroyed after judging; the code/local defaults were always `true`. Set
+      `false` again only on a future shared-credential demo. Gate: `security.py` + `lib/flags.ts`.
+- [x] **Rotate admin credentials.** **Moot 2026-07-15:** the droplet DB — and with it the shared
+      `counsel@lexpar.ai` account and the deferred `admin1234` 401 check — died with the droplet.
+- [x] **Close public sign-up.** **Moot 2026-07-15:** no live deployment exists.
+      `ALLOW_REGISTRATION=false` remains the knob for future public deploys once accounts exist.
+- [x] **Clean the demo database.** **Moot 2026-07-15:** destroyed with the droplet (backed up
+      first via `infra/backup.sh` → copies pulled to the user's machine).
 
 **Repo / license (irreversible — read before acting):**
 - [ ] **Make the GitHub repo private again** after judging. ⚠️ MIT on any *published* commit is
@@ -47,15 +46,19 @@ below. Cross-refs: memory `hackathon-droplet-deployment`, `lexpar-license-gate`;
       unset `VITE_DEMO_CASE_TITLE`.
 
 **Droplet lifecycle:**
-- [ ] Droplet is temporary (~40h AMD credits). After it lapses, revert to local dev; the OC LLM
-      rolls back `self_hosted → fireworks` via one env line (ARCHITECTURE §10.5 Step 7). The
-      `hackathon-submission` git tag stays as the frozen submission; main continues locally.
+- [x] **Done 2026-07-15:** AMD credits exhausted → data backed up (`infra/backup.sh` + scp) →
+      droplet destroyed. OC LLM is back on the Fireworks code default (the `self_hosted` override
+      lived only in the droplet's `.env.prod`). The `hackathon-submission` git tag stays as the
+      frozen submission; main continues locally. Next hosting home TBD (small DO/Hetzner VM —
+      deliberately deferred until there's a reason to deploy).
 
 **Deferred features (activate when ready — not hackathon-security):**
 - [ ] **Re-enable untested proceeding types** as each is validated end-to-end: add to
       `ENABLED_PROCEEDINGS` in `CaseDetail.tsx` (only `oral_argument` is on today).
-- [ ] `FLOOR_DYNAMICS` stays **off** (largely redundant now the attorney can't cut OC off) —
-      re-evaluate rather than blindly re-enable.
+- [x] `FLOOR_DYNAMICS` — **decided 2026-07-15: stays off.** Largely dormant by design now OC is
+      non-interruptible (the attorney can't cut OC off, so the cut-off→floor-request dance rarely
+      triggers). The flag and module stay for a future re-evaluation with real-user feedback;
+      nothing to build now.
 - [ ] Move the Judge to a **Gemma** model (`JUDGE_LLM_MODEL`) for bonus-track eligibility once a
       serverless Gemma is reachable (ARCHITECTURE §7/§11).
 - [ ] Production **ClamAV** virus scan for PDF uploads (current gate tests for active-content
@@ -67,6 +70,35 @@ below. Cross-refs: memory `hackathon-droplet-deployment`, `lexpar-license-gate`;
 ---
 
 ## Current plan
+
+### Post-audit hardening & product plan (2026-07-15) — status: in progress
+
+Master phasing adopted from `docs/AUDIT_REPORT.md` (user-approved; hackathon stream dropped —
+building everything). Each phase is its own task section as it starts; full local gate before
+each push. Phases: **0** hygiene/quick wins → **1** reliability core (LLM timeouts, pooled
+clients, bounded executor, concurrency tests) → **2** resilience + observability (retry/fallback
+provider, token accounting, metrics + the "no verified sentences" canary) → **3** tenancy
+(organizations, org-scoped queries, firm-admin vs platform-admin) → **4** storage scale (pgvector
+for court rules first, FK indexes, Dashboard N+1) → **5** UI/UX product pass (password reset
+[email provider: default Resend], pre-session device check, ingestion progress, empty states/
+onboarding, score trends, transcript/scorecard PDF export, skeletons + toasts, case profile on
+CaseDetail). Deferred: redeploy, SSO, Stripe, invite-to-org, ClamAV, Redis rate-limit.
+
+#### Phase 0 — hygiene + quick wins — status: done
+- [x] A1: delete the shadowed duplicate `_getfloat` in `agents/config.py`
+- [x] A4: `AbortController` timeout in the frontend `request()` helper (15 s, JSON routes only —
+      multipart uploads keep an un-timed fetch; timeout surfaces as ApiError status 0)
+- [x] A5: gate the mock transcript out of the prod bundle (reviewer-aids flag + dynamic import)
+- [x] A6: structural `get_owned_case` dependency (`app/api/deps.py`) replacing per-route ownership
+      checks in `api/cases.py` (foundation for Phase 3 org scoping; purge_case deliberately stays
+      admin-reach with a Phase-3 note)
+- [x] Checklist bookkeeping: droplet/security items marked moot; FLOOR_DYNAMICS decision recorded
+- [x] Full local gate: agents (ruff clean, 252 pass), backend (ruff clean, 110 pass), frontend
+      (tsc clean, 83 pass, lint = pre-existing advisory warnings only, build ✓)
+
+**Result:** All four audit quick-wins landed with zero behavior change for enabled-flag builds.
+Build output confirms A5: `mockData` is now a separate 1.54 kB lazy chunk, fetched only when
+reviewer aids are on. Next: Phase 1 (reliability core).
 
 ### Scaffold frontend (Vite + React + TS + Tailwind + shadcn/ui, mock data) — status: done
 
