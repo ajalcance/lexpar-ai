@@ -31,6 +31,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable, Iterable, Iterator
 
+import executor as _executor_mod
 import opposing_counsel
 import verification
 from session_state import SessionState
@@ -240,7 +241,10 @@ async def astream_verified_reply(
         finally:
             loop.call_soon_threadsafe(queue.put_nowait, _DONE)
 
-    producer = loop.run_in_executor(None, _produce)
+    # The producer (generate + per-sentence verify, blocking) runs on the worker's BOUNDED pool
+    # (executor.py) — on the default pool, N sessions' producers plus their verifier calls
+    # contended head-of-line with everything else (AUDIT B3). None (rollback) = default pool.
+    producer = loop.run_in_executor(_executor_mod.get_executor(), _produce)
     try:
         while True:
             item = await queue.get()

@@ -22,6 +22,7 @@ import asyncio
 import logging
 import time
 
+import executor
 from objection_classifier import Decision, ObjectionClassifier
 
 logger = logging.getLogger("lexpar.agents.voice")
@@ -90,7 +91,9 @@ async def handle_interim(
     t_start = time.perf_counter()
     # is_final enables the comparative-grounds fallback for completed finals only (interims stay
     # cheap at the regex gate); passed straight through consider() to the decider.
-    decision = await asyncio.to_thread(classifier.consider, transcript, is_final)
+    # Bounded pool (executor.py), not the shared default one — classifier decisions must not
+    # contend with every other session's blocking work (AUDIT B3/B4).
+    decision = await executor.run_blocking(classifier.consider, transcript, is_final)
     t_decided = time.perf_counter()
     if decision.fire:
         objection = classifier.state.record_objection(

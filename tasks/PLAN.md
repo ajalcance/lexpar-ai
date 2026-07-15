@@ -98,7 +98,35 @@ CaseDetail). Deferred: redeploy, SSO, Stripe, invite-to-org, ClamAV, Redis rate-
 
 **Result:** All four audit quick-wins landed with zero behavior change for enabled-flag builds.
 Build output confirms A5: `mockData` is now a separate 1.54 kB lazy chunk, fetched only when
-reviewer aids are on. Next: Phase 1 (reliability core).
+reviewer aids are on. Committed b60601b + b82ac3a, pushed.
+
+#### Phase 1 — reliability core (AUDIT B1/B3/B4/B9) — status: done
+- [x] **Timeouts on every LLM call:** `llm_router.chat`/`chat_stream` now always pass a timeout —
+      `LLM_TIMEOUT_S` (default 30 s; stream = read-timeout between chunks; previously the SDK's
+      600 s). The objection classifier passes a tighter explicit 10 s (it holds that session's
+      classifier lock; past 10 s the objection moment has passed — fail closed).
+- [x] **Pooled clients:** `pooled_endpoint()` (lru_cache per LlmConfig, process-lifetime,
+      thread-safe) replaces fresh-client-per-call at all 9 live call sites (opposing_counsel ×3,
+      judge ×3, objection_classifier, verification, case_posture). `build_endpoint` remains for
+      explicit fresh construction.
+- [x] **Dedicated bounded executor** (`agents/executor.py`, `AGENT_EXECUTOR_WORKERS` default 16,
+      `<= 0` = rollback to the default pool): all worker blocking dispatches moved onto it —
+      `voice_interrupt.handle_interim` (classifier), `streaming_verify` producer, and main.py's 7
+      `asyncio.to_thread` sites (context load, matter, quick_ruling, provenance ×2, assessment,
+      persistence ×2).
+- [x] **Verifier backpressure:** `VERIFY_MAX_CONCURRENT` (default 8, `<= 0` = uncapped)
+      BoundedSemaphore around the per-sentence consistency call.
+- [x] **Concurrency tests (B9):** `tests/test_reliability.py` — timeout default/override on
+      chat + stream, pooled-client identity, executor bound + rollback, **8 real parallel threads
+      through `consider()` fire exactly once** (7 debounced), verifier gate peak-concurrency ≤ cap.
+- [x] Docs: ARCHITECTURE §9 rows + `.env.example` for the three new env vars.
+- [x] Gate: agents ruff clean, **263 pass** (+11), 9 live deselected. Backend/frontend untouched.
+
+**Result:** One hung provider call can no longer pin a shared thread for 10 minutes or starve
+other sessions: every LLM call is time-bounded, blocking work runs on an isolated bounded pool,
+clients reuse pooled connections, and the verifier has backpressure. All three knobs are additive
+env rollbacks (`LLM_TIMEOUT_S`, `AGENT_EXECUTOR_WORKERS<=0`, `VERIFY_MAX_CONCURRENT<=0`).
+Next: Phase 2 (retry/fallback provider, token accounting, metrics + canary).
 
 ### Scaffold frontend (Vite + React + TS + Tailwind + shadcn/ui, mock data) — status: done
 

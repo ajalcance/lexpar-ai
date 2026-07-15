@@ -223,6 +223,25 @@ JUDGE_VOICE_SETTINGS = {
 JUDGE_EXPRESSIVE_FINAL_RULING = _getbool("JUDGE_EXPRESSIVE_FINAL_RULING", False)
 JUDGE_V3_MODEL = os.getenv("JUDGE_V3_MODEL", "eleven_v3")
 
+# --- Phase 1 reliability knobs (docs/AUDIT_REPORT.md B3/B4) ---------------------------------
+
+# Default timeout (seconds) on EVERY LLM chat/stream call (llm_router). Without it the OpenAI SDK
+# default is 600s — one hung provider connection pinned a worker thread for 10 minutes and, on the
+# shared pool, degraded EVERY concurrent session on the worker. 30s is generous (the slowest
+# healthy call, OC reasoning, medians ~4s); every caller already fails closed/safe on error. For
+# streams this is the read timeout BETWEEN chunks, so a stalled stream raises rather than hangs.
+LLM_TIMEOUT_S = _getfloat("LLM_TIMEOUT_S", 30.0)
+
+# Size of the worker's DEDICATED executor for blocking LLM/HTTP work (agents/executor.py). The
+# default asyncio pool is shared process-wide and unbounded per-session, so N concurrent sessions
+# contend head-of-line (AUDIT B3). <= 0 = rollback to the default asyncio pool (old behavior).
+AGENT_EXECUTOR_WORKERS = int(_getfloat("AGENT_EXECUTOR_WORKERS", 16))
+
+# Cap on simultaneous in-flight consistency-verifier calls (verification.py) — backpressure so a
+# burst of concurrent replies queues at the semaphore instead of stampeding the provider and
+# starving the executor. <= 0 disables the cap (old behavior).
+VERIFY_MAX_CONCURRENT = int(_getfloat("VERIFY_MAX_CONCURRENT", 8))
+
 # Backend persistence (Gap 4): the worker completes the session + writes the scorecard/transcript
 # at session end, authenticating with the scoped agent service token (NOT a user login).
 AGENT_BACKEND_URL = os.getenv("AGENT_BACKEND_URL", "http://localhost:8000")

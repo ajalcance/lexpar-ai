@@ -27,7 +27,7 @@ import audio_tags
 import citation_check
 import court_knowledge
 import prompts
-from llm_router import build_endpoint, chat, judge_config, objection_config
+from llm_router import chat, judge_config, objection_config, pooled_endpoint
 from session_state import Objection, SessionState
 
 logger = logging.getLogger("lexpar.agents.judge")
@@ -111,7 +111,7 @@ def generate_ruling(state: SessionState, attorney_turn: str) -> str:
     session_id (live worker), the ruling is grounded in retrieved pleading excerpts + the forum's
     procedural rules (§13 — this closes the Judge's missing-RAG gap found by the audit)."""
     retrieval = court_knowledge.dual_retrieval(state.session_id, attorney_turn)
-    endpoint = build_endpoint(judge_config())
+    endpoint = pooled_endpoint(judge_config())
     content = chat(
         endpoint,
         build_messages(state, attorney_turn, *retrieval.blocks()),
@@ -300,7 +300,7 @@ def quick_ruling(state: SessionState, objection: Objection, fragment: str) -> Qu
         timeout=court_knowledge.FAST_TIMEOUT,
     )
     excerpts, rules = retrieval.blocks()
-    endpoint = build_endpoint(objection_config())
+    endpoint = pooled_endpoint(objection_config())
     content = chat(
         endpoint,
         _build_quick_ruling_messages(state, objection, fragment, excerpts, rules),
@@ -356,7 +356,7 @@ def assess_session(state: SessionState, *, expressive: bool = False) -> dict:
         state.session_id, f"{pending} {last_turn}".strip(), k=8
     )
     excerpts, rules = retrieval.blocks()
-    endpoint = build_endpoint(judge_config())
+    endpoint = pooled_endpoint(judge_config())
     try:
         content = chat(
             endpoint,

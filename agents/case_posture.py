@@ -21,7 +21,7 @@ import json
 import logging
 
 import prompts
-from llm_router import build_endpoint, chat, judge_config
+from llm_router import chat, judge_config, pooled_endpoint
 from session_state import SessionState
 
 logger = logging.getLogger("lexpar.agents.posture")
@@ -77,7 +77,7 @@ def derive_matter(state: SessionState) -> str:
     if not (state.case_summary.strip() or state.case_facts.strip()):
         return ""  # nothing to frame a matter from
     try:
-        endpoint = build_endpoint(judge_config())
+        endpoint = pooled_endpoint(judge_config())
         content = chat(
             endpoint,
             build_matter_messages(state),

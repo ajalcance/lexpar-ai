@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
+from functools import lru_cache
 
 from openai import OpenAI
 
@@ -78,9 +79,26 @@ def objection_config() -> LlmConfig:
 
 
 def build_endpoint(cfg: LlmConfig) -> LlmEndpoint:
-    """Construct an OpenAI-compatible client for the given routing (no network call here)."""
+    """Construct a FRESH OpenAI-compatible client for the given routing (no network call here).
+    Prefer `pooled_endpoint` on the live paths — a fresh client per call re-does connection setup
+    and defeats httpx connection pooling (AUDIT B1)."""
     client = OpenAI(base_url=cfg.endpoint, api_key=api_key_for(cfg.provider))
     return LlmEndpoint(client=client, model=cfg.model)
+
+
+@lru_cache(maxsize=None)
+def pooled_endpoint(cfg: LlmConfig) -> LlmEndpoint:
+    """The shared, connection-pooled client for a routing config. One client per distinct
+    LlmConfig for the process lifetime (the OpenAI client is thread-safe; a config change lands
+    on the next deploy/restart, like the prompt cache). Every live call site uses this."""
+    return build_endpoint(cfg)
+
+
+def _resolve_timeout(timeout: float | None) -> float:
+    """The per-call timeout: the caller's explicit value, else the global default. Without an
+    explicit ceiling the OpenAI SDK waits 600s — one hung provider connection pinned a pooled
+    worker thread for 10 minutes and degraded every concurrent session (AUDIT B4)."""
+    return timeout if timeout is not None else config.LLM_TIMEOUT_S
 
 
 def chat(
@@ -90,8 +108,10 @@ def chat(
     temperature: float = 0.7,
     max_tokens: int = 512,
     response_format: dict | None = None,
+    timeout: float | None = None,
 ) -> str:
-    """Run a chat completion and return the message text (empty if the model returns none)."""
+    """Run a chat completion and return the message text (empty if the model returns none).
+    Always time-bounded (`timeout`, default config.LLM_TIMEOUT_S) — callers fail closed/safe."""
     kwargs: dict = {}
     if response_format is not None:
         kwargs["response_format"] = response_format
@@ -100,6 +120,7 @@ def chat(
         messages=messages,
         temperature=temperature,
         max_tokens=max_tokens,
+        timeout=_resolve_timeout(timeout),
         **kwargs,
     )
     return response.choices[0].message.content or ""
@@ -111,14 +132,18 @@ def chat_stream(
     *,
     temperature: float = 0.7,
     max_tokens: int = 512,
+    timeout: float | None = None,
 ) -> Iterator[str]:
-    """Run a streaming chat completion, yielding text deltas as they arrive (§6.5 streaming)."""
+    """Run a streaming chat completion, yielding text deltas as they arrive (§6.5 streaming).
+    `timeout` (default config.LLM_TIMEOUT_S) is the httpx read timeout — it bounds the wait
+    BETWEEN chunks, so a mid-stream stall raises instead of hanging the producer thread."""
     stream = endpoint.client.chat.completions.create(
         model=endpoint.model,
         messages=messages,
         temperature=temperature,
         max_tokens=max_tokens,
         stream=True,
+        timeout=_resolve_timeout(timeout),
     )
     for chunk in stream:
         if not chunk.choices:

@@ -43,6 +43,7 @@ from livekit.plugins import deepgram, elevenlabs, openai, silero
 
 import backend_client
 import config
+import executor
 import floor_dynamics
 import judge
 import llm_router
@@ -362,7 +363,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     proceeding_type = ""
     profile: dict = {}
     try:
-        context = await asyncio.to_thread(backend_client.get_session_context, session_id)
+        context = await executor.run_blocking(backend_client.get_session_context, session_id)
         case_facts = context.get("case_facts", "")
         case_summary = context.get("case_summary", "")
         case_title = context.get("case_title", "")
@@ -412,7 +413,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         try:
             import case_posture
 
-            state.matter = await asyncio.to_thread(case_posture.derive_matter, state)
+            state.matter = await executor.run_blocking(case_posture.derive_matter, state)
         except Exception:
             logger.warning("matter derivation failed for %s; proceeding without it", session_id)
         if state.matter:
@@ -689,7 +690,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     async def _judge_rule_impl(objection, fragment: str, wait_for_clear) -> None:
         try:
             result = await asyncio.wait_for(
-                asyncio.to_thread(judge.quick_ruling, state, objection, fragment), timeout=10.0
+                executor.run_blocking(judge.quick_ruling, state, objection, fragment), timeout=10.0
             )
         except Exception:
             logger.warning("inline ruling unavailable — objection stays pending")
@@ -704,7 +705,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         # provenance must never delay or block the spoken ruling; a failure is logged, not raised.
         async def _persist_provenance() -> None:
             try:
-                await asyncio.to_thread(
+                await executor.run_blocking(
                     backend_client.write_provenance,
                     session_id,
                     "objection_ruling",
@@ -820,7 +821,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                 )
         if not any(turn.speaker == "attorney" for turn in state.transcript):
             return
-        assessment = await asyncio.to_thread(
+        assessment = await executor.run_blocking(
             judge.assess_session, state, expressive=config.JUDGE_EXPRESSIVE_FINAL_RULING
         )
         for objection, ruling in zip(state.pending_objections(), assessment["rulings"]):
@@ -866,14 +867,14 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         )
         turn_count = len(state.transcript)
         try:
-            await asyncio.to_thread(backend_client.complete_session, session_id)
-            await asyncio.to_thread(backend_client.write_scorecard, session_id, payload)
+            await executor.run_blocking(backend_client.complete_session, session_id)
+            await executor.run_blocking(backend_client.write_scorecard, session_id, payload)
             logger.info("Persisted session %s (scorecard + %d turns)", session_id, turn_count)
         except Exception:
             logger.exception("Failed to persist session %s", session_id)
         # §13 Phase 5: the final ruling's audit trail (best-effort — never blocks finalization).
         try:
-            await asyncio.to_thread(
+            await executor.run_blocking(
                 backend_client.write_provenance,
                 session_id,
                 "final_ruling",

@@ -17,12 +17,26 @@ from __future__ import annotations
 
 import json
 import re
+import threading
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+import config
 import prompts
-from llm_router import build_endpoint, chat, verification_config
+from llm_router import chat, pooled_endpoint, verification_config
 from session_state import SessionState
+
+# Backpressure on the verifier (AUDIT B3): every streaming reply makes one consistency call PER
+# SENTENCE, so N concurrent sessions can stampede the provider and hog the bounded executor. This
+# gate caps simultaneous in-flight verifier calls — excess callers queue here (their sentence
+# simply verifies a moment later) instead of head-of-line blocking everything else.
+# VERIFY_MAX_CONCURRENT <= 0 disables the cap (the env rollback).
+_VERIFY_GATE = (
+    threading.BoundedSemaphore(config.VERIFY_MAX_CONCURRENT)
+    if config.VERIFY_MAX_CONCURRENT > 0
+    else None
+)
 
 # Earliest plausible U.S. case-law year (Judiciary Act era). Anything before this, or in the
 # future, is treated as a fabrication signal.
@@ -127,19 +141,21 @@ def check_consistency(reply: str, state: SessionState) -> list[str]:
     descriptions — empty means consistent. Fails closed: if the verifier output can't be parsed,
     returns a non-empty result so the caller regenerates rather than trusting an unverified draft.
     """
-    endpoint = build_endpoint(verification_config())
+    endpoint = pooled_endpoint(verification_config())
     messages = _build_consistency_messages(reply, state)
-    content = chat(
-        endpoint,
-        messages,
-        temperature=0.0,
-        # gpt-oss reasons before emitting (docs/LESSONS.md): the SESSION RECORD this checks
-        # against grew with the CASE PROFILE + MATTER blocks, and a live session showed repeated
-        # fail-closed "no verified sentences" silences — a truncated/empty verifier response
-        # parses as a contradiction and silences a fine reply. 512 -> 1024; ceiling, not floor.
-        max_tokens=1024,
-        response_format={"type": "json_object"},
-    )
+    with _VERIFY_GATE if _VERIFY_GATE is not None else nullcontext():
+        content = chat(
+            endpoint,
+            messages,
+            temperature=0.0,
+            # gpt-oss reasons before emitting (docs/LESSONS.md): the SESSION RECORD this checks
+            # against grew with the CASE PROFILE + MATTER blocks, and a live session showed
+            # repeated fail-closed "no verified sentences" silences — a truncated/empty verifier
+            # response parses as a contradiction and silences a fine reply. 512 -> 1024; ceiling,
+            # not floor.
+            max_tokens=1024,
+            response_format={"type": "json_object"},
+        )
     try:
         return _parse_consistency(content)
     except (ValueError, json.JSONDecodeError):

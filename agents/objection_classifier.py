@@ -64,7 +64,7 @@ import time
 from dataclasses import dataclass
 
 import prompts
-from llm_router import build_endpoint, chat, objection_config
+from llm_router import chat, objection_config, pooled_endpoint
 from session_state import SessionState
 
 # Objection taxonomy the classifier may return (ARCHITECTURE §13). The recall gate detects
@@ -452,7 +452,7 @@ def classify_fragment(fragment: str, state: SessionState, *, is_final: bool = Fa
                     timeout=court_knowledge.FAST_TIMEOUT,
                 )
             )
-        endpoint = build_endpoint(objection_config())
+        endpoint = pooled_endpoint(objection_config())
         content = chat(
             endpoint,
             _build_messages(fragment, state, candidates, rules, via_fallback=via_fallback),
@@ -467,6 +467,11 @@ def classify_fragment(fragment: str, state: SessionState, *, is_final: bool = Fa
             # docs/LESSONS.md, the gpt-oss max_tokens entry).
             max_tokens=1024,
             response_format={"type": "json_object"},
+            # Tighter than the global LLM_TIMEOUT_S: this call holds THIS session's classifier
+            # lock (consider() serializes), so a hang delays every queued interim for the
+            # utterance. Healthy calls run ~1.3-3s; past 10s the objection moment has passed
+            # anyway — fail closed (no interruption) and move on.
+            timeout=10.0,
         )
         decision = _parse_decision(content)
         # Belt-and-braces: the prompt only OFFERS eligible types, but if the model fires with one

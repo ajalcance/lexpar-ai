@@ -23,7 +23,7 @@ import logging
 from collections.abc import Iterator
 
 import prompts
-from llm_router import build_endpoint, chat, chat_stream, opposing_counsel_config
+from llm_router import chat, chat_stream, opposing_counsel_config, pooled_endpoint
 from session_state import SessionState
 
 logger = logging.getLogger("lexpar.agents.oc")
@@ -115,7 +115,7 @@ def build_continuation_messages(
 
 def generate_reply(state: SessionState, attorney_turn: str) -> str:
     """Generate Opposing Counsel's next reply (blocking, full completion). Makes a live API call."""
-    endpoint = build_endpoint(opposing_counsel_config())
+    endpoint = pooled_endpoint(opposing_counsel_config())
     messages = build_messages(state, attorney_turn)
     return chat(endpoint, messages, temperature=0.7, max_tokens=_OC_REPLY_MAX_TOKENS).strip()
 
@@ -137,7 +137,7 @@ def stream_reply(
 
         retrieval = court_knowledge.dual_retrieval(session_id, attorney_turn)
         excerpts, rules = retrieval.blocks()
-    endpoint = build_endpoint(opposing_counsel_config())
+    endpoint = pooled_endpoint(opposing_counsel_config())
     spoken: list[str] = []
     for delta in chat_stream(
         endpoint,
@@ -164,6 +164,6 @@ def stream_continuation(
     state: SessionState, attorney_turn: str, spoken_prefix: str, failure_reason: str
 ) -> Iterator[str]:
     """Stream the repair continuation after a mid-stream verification failure. Live API call."""
-    endpoint = build_endpoint(opposing_counsel_config())
+    endpoint = pooled_endpoint(opposing_counsel_config())
     messages = build_continuation_messages(state, attorney_turn, spoken_prefix, failure_reason)
     yield from chat_stream(endpoint, messages, temperature=0.7, max_tokens=_OC_REPLY_MAX_TOKENS)
