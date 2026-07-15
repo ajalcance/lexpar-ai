@@ -242,6 +242,39 @@ AGENT_EXECUTOR_WORKERS = int(_getfloat("AGENT_EXECUTOR_WORKERS", 16))
 # starving the executor. <= 0 disables the cap (old behavior).
 VERIFY_MAX_CONCURRENT = int(_getfloat("VERIFY_MAX_CONCURRENT", 8))
 
+# --- Phase 2 resilience knobs (docs/AUDIT_REPORT.md B8) --------------------------------------
+
+# Extra attempts after a failed LLM call before giving up on that endpoint (0 = fail on first
+# error). Callers on hard latency budgets pass retries=0 explicitly (objection classifier).
+LLM_RETRIES = int(_getfloat("LLM_RETRIES", 1))
+# Pause between retry attempts (seconds).
+LLM_RETRY_BACKOFF_S = _getfloat("LLM_RETRY_BACKOFF_S", 0.5)
+# Circuit breaker: after this many CONSECUTIVE failures on an endpoint, skip it for the cooldown
+# and go straight to its fallback (if configured) — a dead provider stops eating a full
+# timeout+retry on every call. A success closes the circuit. <= 0 disables the breaker.
+LLM_CB_FAILURES = int(_getfloat("LLM_CB_FAILURES", 3))
+LLM_CB_COOLDOWN_S = _getfloat("LLM_CB_COOLDOWN_S", 60.0)
+
+
+def _fallback_triple(prefix: str) -> tuple[str, str, str] | None:
+    """Optional per-role fallback routing: (provider, endpoint, model), or None when unset.
+    Requires PROVIDER + MODEL; ENDPOINT defaults to Fireworks. Unset (the default) = no fallback,
+    exactly the old single-provider behavior."""
+    provider = os.getenv(f"{prefix}_LLM_FALLBACK_PROVIDER", "").strip()
+    model = os.getenv(f"{prefix}_LLM_FALLBACK_MODEL", "").strip()
+    if not provider or not model:
+        return None
+    endpoint = os.getenv(f"{prefix}_LLM_FALLBACK_ENDPOINT", "").strip() or _FIREWORKS_ENDPOINT
+    return (provider, endpoint, model)
+
+
+# Per-role fallback LLM routing (AUDIT B8): where a role's calls go when its primary provider is
+# down (llm_router failover + circuit breaker). None = no fallback for that role.
+OPPOSING_COUNSEL_FALLBACK = _fallback_triple("OPPOSING_COUNSEL")
+JUDGE_FALLBACK = _fallback_triple("JUDGE")
+VERIFICATION_FALLBACK = _fallback_triple("VERIFICATION")
+OBJECTION_FALLBACK = _fallback_triple("OBJECTION")
+
 # Backend persistence (Gap 4): the worker completes the session + writes the scorecard/transcript
 # at session end, authenticating with the scoped agent service token (NOT a user login).
 AGENT_BACKEND_URL = os.getenv("AGENT_BACKEND_URL", "http://localhost:8000")

@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, ForeignKey, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.types import JSON
 
 from app.db import Base
 from app.models.transcript import Transcript
@@ -44,6 +45,11 @@ class Session(Base):
         String, nullable=False, default=DEFAULT_PROCEEDING_TYPE
     )
     llm_backend_used: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Per-session LLM usage + quality-canary counters, written by the worker with the scorecard
+    # (migration 0008; llm_metrics.snapshot() shape: {"roles": {...}, "canaries": {...}}). The
+    # billing/observability record (AUDIT B7/B8) — counts only, never content. NULL for sessions
+    # persisted by an older worker.
+    llm_usage: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

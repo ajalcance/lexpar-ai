@@ -95,6 +95,7 @@ def build_session_end_payload(
     performance_score: int | None = None,
     performance_notes: list[str] | None = None,
     performance_criteria: list[dict] | None = None,
+    llm_usage: dict | None = None,
 ) -> dict:
     """The full POST /scorecard body: derived scorecard + the transcript batch.
 
@@ -122,4 +123,8 @@ def build_session_end_payload(
         "judge_ruling": judge_ruling,
         "criteria": performance_criteria or [],
         "transcript": build_transcript(state),
+        # Per-session LLM usage/canary counters (llm_metrics.snapshot()) — persisted to
+        # sessions.llm_usage (migration 0008), the billing/observability record (AUDIT B7/B8).
+        # Additive: an older worker omitting it persists NULL, never an error.
+        "llm_usage": llm_usage or {},
     }

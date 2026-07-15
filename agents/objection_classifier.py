@@ -470,8 +470,11 @@ def classify_fragment(fragment: str, state: SessionState, *, is_final: bool = Fa
             # Tighter than the global LLM_TIMEOUT_S: this call holds THIS session's classifier
             # lock (consider() serializes), so a hang delays every queued interim for the
             # utterance. Healthy calls run ~1.3-3s; past 10s the objection moment has passed
-            # anyway — fail closed (no interruption) and move on.
+            # anyway — fail closed (no interruption) and move on. retries=0 for the same reason:
+            # by the time a retry finished, the moment to object is gone (fallback failover in
+            # llm_router still applies when configured — one attempt each).
             timeout=10.0,
+            retries=0,
         )
         decision = _parse_decision(content)
         # Belt-and-braces: the prompt only OFFERS eligible types, but if the model fires with one

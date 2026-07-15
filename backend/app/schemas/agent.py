@@ -36,6 +36,9 @@ class ScorecardWriteIn(BaseModel):
     # optional: an older worker that omits it persists an empty breakdown, not an error.
     criteria: list[CriterionIn] = []
     transcript: list[TranscriptTurnIn] = []
+    # Per-session LLM usage/canary counters (agents llm_metrics.snapshot()) → sessions.llm_usage
+    # (migration 0008). Additive and optional, same contract as criteria. Counts only.
+    llm_usage: dict = {}
 
 
 class SessionContextOut(BaseModel):

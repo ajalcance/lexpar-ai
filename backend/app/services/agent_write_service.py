@@ -139,6 +139,10 @@ def write_scorecard(db: DbSession, session_id: uuid.UUID, data: ScorecardWriteIn
         judge_ruling=data.judge_ruling,
         criteria=[{"name": c.name, "score": c.score} for c in data.criteria],
     )
+    # Per-session LLM usage record (migration 0008) — billing/observability groundwork
+    # (AUDIT B7/B8). Counts only. Empty dict from an older worker → stays NULL.
+    if data.llm_usage:
+        session.llm_usage = data.llm_usage
     db.add(scorecard)
     db.commit()
     db.refresh(scorecard)

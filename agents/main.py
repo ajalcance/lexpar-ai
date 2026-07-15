@@ -46,6 +46,7 @@ import config
 import executor
 import floor_dynamics
 import judge
+import llm_metrics
 import llm_router
 import opposing_counsel
 import prompts
@@ -316,7 +317,9 @@ class OpposingCounselAgent(Agent):
             elif completed:
                 # The reply ran to completion and the verifier rejected every sentence — the real
                 # fail-closed case worth a warning (a live flood of the old combined log turned out
-                # to be mostly cancellations mislabeled as verifier rejections).
+                # to be mostly cancellations mislabeled as verifier rejections). THE quality canary
+                # (AUDIT B7): a rising rate here means OC is silently going quiet on users.
+                llm_metrics.record_canary("no_verified_sentences")
                 logger.warning("no verified sentences this turn — staying silent (fail closed)")
             else:
                 # Closed early before the first sentence was voiced — expected under contention.
@@ -348,6 +351,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     # Preload every prompt file once, up front, so no live-path LLM call does file I/O mid-session
     # (prompts.py — the single prompt registry). Cheap; the reads are cached for the process.
     prompts.warm_cache()
+
+    # Zero the LLM counters at session start so the end-of-session snapshot (persisted as
+    # sessions.llm_usage) is THIS session's usage — exact under the LiveKit default of one job
+    # per process; a shared-process deployment would make it cumulative (documented in §9).
+    llm_metrics.reset()
 
     session_id = _session_id_from_room(ctx.room)
 
@@ -858,12 +866,18 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                 logger.exception("judge closing ruling could not be spoken")
             finally:
                 judge_idle.set()
+        # Per-session LLM usage + canaries (llm_metrics): logged as the operability summary and
+        # persisted with the scorecard (sessions.llm_usage, migration 0008) — the record billing
+        # will meter from (AUDIT B7/B8). Counts only, never content.
+        usage = llm_metrics.snapshot()
+        logger.info("session %s llm usage: %s", session_id, usage)
         payload = scorecard_builder.build_session_end_payload(
             state,
             ruling,
             performance_score=assessment.get("performance_score"),
             performance_notes=assessment.get("performance_notes"),
             performance_criteria=assessment.get("performance_criteria"),
+            llm_usage=usage,
         )
         turn_count = len(state.transcript)
         try:

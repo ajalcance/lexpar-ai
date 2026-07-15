@@ -32,6 +32,7 @@ import logging
 from collections.abc import AsyncIterator, Callable, Iterable, Iterator
 
 import executor as _executor_mod
+import llm_metrics
 import opposing_counsel
 import verification
 from session_state import SessionState
@@ -195,6 +196,7 @@ def stream_verified_reply(
                 spoken.append(sentence)
                 yield sentence
         except Exception as exc:  # fail closed — stop at the last verified sentence
+            llm_metrics.record_canary("stream_error")
             logger.warning(
                 "streaming reply stopped early after %d verified sentences (%s)",
                 len(spoken),
@@ -203,6 +205,7 @@ def stream_verified_reply(
             return
         if failure is None:
             return  # stream finished clean
+        llm_metrics.record_canary("sentence_rejected")
         if repairs_left <= 0:
             # Class only, never content: "contradiction" = the verifier genuinely rejected the
             # claim; "verifier-error" = the verifier call itself failed/unparseable (budget or
@@ -210,12 +213,14 @@ def stream_verified_reply(
             failure_class = (
                 "contradiction" if failure.startswith("contradicts") else "verifier-error"
             )
+            llm_metrics.record_canary("reply_truncated")
             logger.info(
                 "verification failure (%s) with no repairs left — truncating at %d sentences",
                 failure_class,
                 len(spoken),
             )
             return
+        llm_metrics.record_canary("repair_attempted")
         repairs_left -= 1
         stream = repair(state, attorney_turn, " ".join(spoken), failure)
 
