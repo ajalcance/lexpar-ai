@@ -63,7 +63,8 @@ below. Cross-refs: memory `hackathon-droplet-deployment`, `lexpar-license-gate`;
       serverless Gemma is reachable (ARCHITECTURE §7/§11).
 - [ ] Production **ClamAV** virus scan for PDF uploads (current gate tests for active-content
       vectors only; compressed-stream obfuscation evades a raw scan — ARCHITECTURE §7).
-- [ ] Backlog: Case `sessionCount`/`bestScore` to kill the Dashboard N+1; show the case profile on
+- [x] **Done (Phase 4):** Case `sessionCount`/`bestScore`/`lastRehearsedAt` on the list payload
+      killed the Dashboard N+1 (one grouped query). Remaining backlog: show the case profile on
       CaseDetail (prefill from pleading ingestion, confirm-before-apply); self-host vs. Fireworks
       cost re-eval at real volume; Stripe billing; written data-retention/encryption policy.
 
@@ -191,8 +192,33 @@ thing). Recommendation accepted: courts become per-user-owned (no shared rules l
 
 **Result:** One account = one owner of everything in it, enforced structurally (get_owned_case /
 get_owned_court), no roles anywhere. Cross-account access is impossible by construction, not by a
-role check. Multi-user org accounts + RBAC remain a documented future opt-in. Next: Phase 4
-(storage scale — pgvector for court rules, FK indexes, Dashboard N+1).
+role check. Multi-user org accounts + RBAC remain a documented future opt-in. Committed, pushed.
+
+#### Phase 4 — storage scale (AUDIT B5) — status: done
+**Scope call:** the plan listed pgvector, but it's Postgres-only and would break the SQLite-portable
+schema the whole test suite builds from — and the audit itself triaged B5 as "wait until a large
+corpus." No users, no corpus. So pgvector is **deliberately deferred** (documented in ARCHITECTURE
+§12 as the scale-up path with a dialect-branch plan), and Phase 4 did the portable, valuable parts.
+- [x] **FK indexes (migration 0010)** on the hot/growing paths that had none: `transcripts.
+      session_id` (the audit's call-out — fastest-growing table), `cases.user_id`, `courts.user_id`,
+      `sessions.case_id`, `sessions.user_id`. Added `index=True` on the models too (SQLite parity).
+      These also speed the `WHERE court_id/case_id` filter that precedes the Python cosine.
+- [x] **Dashboard N+1 killed:** the case list now carries `session_count`/`best_score`/
+      `last_rehearsed_at`, computed in ONE grouped `outerjoin` query in `case_service.list_cases`
+      (transient attrs → CaseOut via from_attributes; get_case detail leaves them None). Frontend
+      `CaseCard` reads them off the case payload — no per-card `getCaseSessions` fetch — and shows a
+      "Best NN" badge.
+- [x] Tests: backend list-aggregate (counts/best/last + zero-session case + detail omits summary);
+      frontend Dashboard asserts the summary renders AND `getCaseSessions` is never called.
+- [x] Migration verified 0001→0010 clean on real Postgres; all 5 indexes present.
+- [x] Docs: ARCHITECTURE §5 (case-list route), §8 (migrations), §12 (pgvector deferral + reasoning).
+- [x] Gate: backend ruff clean **111 pass**; agents **277 pass**; frontend tsc clean **82 pass**,
+      lint clean, build ✓.
+
+**Result:** The N+1 is gone (Dashboard is one query regardless of case count) and the FK indexes are
+in on the paths that grow. pgvector is deferred with a clear rationale rather than breaking the
+portable-schema design for zero current load. Next: Phase 5 (UI/UX product pass — password reset,
+pre-session device check, ingestion progress, empty states/onboarding, score trends, PDF export).
 
 ### Scaffold frontend (Vite + React + TS + Tailwind + shadcn/ui, mock data) — status: done
 

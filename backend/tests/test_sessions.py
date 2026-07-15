@@ -141,3 +141,38 @@ def test_list_case_sessions_unknown_case_404(client, auth_headers):
 
     resp = client.get(f"/api/cases/{_uuid.uuid4()}/sessions", headers=auth_headers)
     assert resp.status_code == 404
+
+
+# --- GET /api/cases list aggregate (rehearsal summary, no N+1) — AUDIT B5 ----------------------
+
+
+def test_case_list_carries_rehearsal_summary(client, auth_headers, db_session):
+    """The case LIST returns session_count / best_score / last_rehearsed_at computed in one
+    grouped query (drives the Dashboard cards without a per-card fetch)."""
+    import uuid as _uuid
+
+    from app.models.scorecard import Scorecard
+
+    with_sessions = _create_case_via_api(client, auth_headers, "Rehearsed")
+    _create_case_via_api(client, auth_headers, "Untouched")
+    s1 = _start_session_via_api(client, auth_headers, with_sessions)
+    _start_session_via_api(client, auth_headers, with_sessions)
+    # two scorecards on one session's case → best_score is the max
+    db_session.add(Scorecard(session_id=_uuid.UUID(s1), overall_score=71))
+    db_session.commit()
+
+    cases = {c["title"]: c for c in client.get("/api/cases", headers=auth_headers).json()}
+    assert cases["Rehearsed"]["session_count"] == 2
+    assert cases["Rehearsed"]["best_score"] == 71
+    assert cases["Rehearsed"]["last_rehearsed_at"] is not None
+    # a case with no sessions reports zero, not null, and no best score
+    assert cases["Untouched"]["session_count"] == 0
+    assert cases["Untouched"]["best_score"] is None
+    assert cases["Untouched"]["last_rehearsed_at"] is None
+
+
+def test_case_detail_omits_the_summary(client, auth_headers):
+    # get_case (detail) leaves the aggregate fields None — they're a list-only convenience.
+    case_id = _create_case_via_api(client, auth_headers)
+    body = client.get(f"/api/cases/{case_id}", headers=auth_headers).json()
+    assert body["session_count"] is None

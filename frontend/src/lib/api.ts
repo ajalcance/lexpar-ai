@@ -132,6 +132,9 @@ interface CaseJson {
   case_facts: string | null;
   court_id: string | null;
   created_at: string;
+  session_count: number | null;
+  best_score: number | null;
+  last_rehearsed_at: string | null;
 }
 interface CourtJson {
   id: string;
@@ -206,6 +209,9 @@ const toCase = (j: CaseJson): Case => ({
   caseFacts: j.case_facts ?? '',
   courtId: j.court_id,
   createdAt: j.created_at,
+  sessionCount: j.session_count ?? null,
+  bestScore: j.best_score ?? null,
+  lastRehearsedAt: j.last_rehearsed_at ?? null,
 });
 
 const toCourt = (j: CourtJson): Court => ({

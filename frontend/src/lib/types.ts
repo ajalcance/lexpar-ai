@@ -61,6 +61,11 @@ export interface Case {
   /** The forum whose procedural rules ground this case's sessions (§13). Null on pre-§13 cases. */
   courtId: string | null;
   createdAt: string;
+  /** Rehearsal summary — present on the LIST (Dashboard cards) from one grouped query; null on the
+   *  case-detail fetch, which doesn't use them. */
+  sessionCount: number | null;
+  bestScore: number | null;
+  lastRehearsedAt: string | null;
 }
 
 /** A court in the catalog (§13) — the forum whose rules ground a case. */

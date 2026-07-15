@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete, select
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.orm import Session as DbSession
 
 from app.models.case import Case
@@ -65,12 +65,32 @@ def create_case(db: DbSession, user: User, data: CaseCreate) -> Case:
 
 
 def list_cases(db: DbSession, user: User) -> list[Case]:
+    """The owner's cases, each carrying a rehearsal summary (session count, best score, last
+    rehearsal) computed in ONE grouped query — not an N+1 of per-case session fetches (AUDIT B5;
+    the summary drives the Dashboard cards). The aggregate fields ride as transient attributes that
+    CaseOut reads via from_attributes; get_case (detail) leaves them unset (None)."""
     stmt = (
-        select(Case)
+        select(
+            Case,
+            func.count(func.distinct(Session.id)).label("session_count"),
+            func.max(Scorecard.overall_score).label("best_score"),
+            func.max(Session.started_at).label("last_rehearsed_at"),
+        )
+        .outerjoin(
+            Session, and_(Session.case_id == Case.id, Session.deleted_at.is_(None))
+        )
+        .outerjoin(Scorecard, Scorecard.session_id == Session.id)
         .where(Case.user_id == user.id, Case.deleted_at.is_(None))
+        .group_by(Case.id)
         .order_by(Case.created_at.desc())
     )
-    return list(db.scalars(stmt))
+    cases: list[Case] = []
+    for case, session_count, best_score, last_rehearsed_at in db.execute(stmt):
+        case.session_count = int(session_count or 0)
+        case.best_score = float(best_score) if best_score is not None else None
+        case.last_rehearsed_at = last_rehearsed_at
+        cases.append(case)
+    return cases
 
 
 def get_case(db: DbSession, user: User, case_id: uuid.UUID) -> Case:

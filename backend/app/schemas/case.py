@@ -49,6 +49,12 @@ class CaseOut(BaseModel):
     court_id: uuid.UUID | None = None
     storage_path: str | None = None
     created_at: datetime
+    # Rehearsal summary — populated on the LIST (case_service.list_cases, one grouped query) so the
+    # Dashboard cards need no per-case fetch (AUDIT B5, N+1). None on the detail route (get_case),
+    # which doesn't use them.
+    session_count: int | None = None
+    best_score: float | None = None
+    last_rehearsed_at: datetime | None = None
 
 
 class CaseDocumentOut(BaseModel):

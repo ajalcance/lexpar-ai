@@ -26,6 +26,9 @@ const CASE: Case = {
   caseFacts: 'A contract dispute.',
   courtId: null,
   createdAt: '2026-07-07T00:00:00Z',
+  sessionCount: null,
+  bestScore: null,
+  lastRehearsedAt: null,
 };
 
 const SESSION: Session = {

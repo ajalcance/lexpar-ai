@@ -100,26 +100,14 @@ export function Dashboard() {
 }
 
 /**
- * One case tile. Fetches the case's sessions to show a rehearsal summary. This is one query per
- * card (an N+1 over the list) — fine at the app's current scale and cached by TanStack; the clean
- * long-term fix is a session-count field on the Case payload from the backend.
+ * One case tile. The rehearsal summary (count, last rehearsal, best score) rides on the case
+ * payload from the list query (backend computes it in one grouped query — no per-card N+1).
  */
 function CaseCard({ legalCase }: { legalCase: Case }) {
   const demo = SHOW_REVIEWER_AIDS && isDemoCase(legalCase.title);
-  const { data: sessions } = useQuery({
-    queryKey: ['case-sessions', legalCase.id],
-    queryFn: () => api.getCaseSessions(legalCase.id),
-    retry: false,
-  });
-
-  const count = sessions?.length ?? 0;
-  const lastRehearsed =
-    sessions && sessions.length > 0
-      ? sessions
-          .map((session) => session.startedAt)
-          .sort()
-          .at(-1)
-      : null;
+  const count = legalCase.sessionCount ?? 0;
+  const lastRehearsed = legalCase.lastRehearsedAt;
+  const bestScore = legalCase.bestScore;
 
   return (
     <Link
@@ -147,15 +135,20 @@ function CaseCard({ legalCase }: { legalCase: Case }) {
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           <p className="line-clamp-3 text-sm text-muted-foreground">{legalCase.caseFacts}</p>
-          <div className="text-xs text-muted-foreground">
-            {sessions === undefined ? (
-              <Skeleton className="h-3 w-32" />
-            ) : count === 0 ? (
-              'No rehearsals yet'
-            ) : (
-              `${count} rehearsal${count === 1 ? '' : 's'} · last ${new Date(
-                lastRehearsed!,
-              ).toLocaleDateString()}`
+          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+            <span>
+              {count === 0
+                ? 'No rehearsals yet'
+                : `${count} rehearsal${count === 1 ? '' : 's'}${
+                    lastRehearsed
+                      ? ` · last ${new Date(lastRehearsed).toLocaleDateString()}`
+                      : ''
+                  }`}
+            </span>
+            {bestScore !== null && (
+              <Badge variant="secondary" className="shrink-0">
+                Best {Math.round(bestScore)}
+              </Badge>
             )}
           </div>
         </CardContent>

@@ -29,7 +29,10 @@ class Court(Base):
     # courts + rule corpus, scoped exactly like its cases — there is no shared/global catalog.
     # Nullable only for legacy pre-0009 rows (there is no production data); every court the app
     # creates sets it, and every query filters by it.
-    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    # Indexed: every court list/lookup filters by owner (migration 0010).
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
     name: Mapped[str] = mapped_column(String, nullable=False)
     jurisdiction_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

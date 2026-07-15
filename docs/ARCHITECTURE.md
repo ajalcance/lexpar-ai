@@ -270,7 +270,7 @@ the one thing still absent:
 | POST | `/api/auth/login` | Verifies password against the bcrypt hash, issues JWT | no |
 | GET | `/api/auth/me` | Returns current user from token | yes |
 | POST | `/api/cases` | Create a case (optional `court_id`, §13) | yes |
-| GET | `/api/cases` | List attorney's cases | yes |
+| GET | `/api/cases` | List your cases (+ rehearsal summary: session_count/best_score/last_rehearsed_at, one grouped query — no N+1) | yes |
 | GET | `/api/cases/{id}` | Case detail | yes |
 | POST | `/api/cases/{id}/documents` | Upload a pleading PDF → ingest (§12) | yes |
 | GET | `/api/cases/{id}/documents` | Pleading ingestion status (§12) | yes |
@@ -890,7 +890,9 @@ CREATE TABLE scorecards (
 Migrations: `0001_initial`, `0002_case_knowledge_and_auth` (§12), `0003_court_grounding` (§13
 tables + the `court_id` / `proceeding_type` columns above, with backfills), and
 `0004_ruling_provenance` (§13). Later: `0008_session_llm_usage` (per-session LLM usage), and
-`0009_per_user_no_roles` (drop `users.role`, add `courts.user_id` — single-owner accounts).
+`0009_per_user_no_roles` (drop `users.role`, add `courts.user_id` — single-owner accounts),
+and `0010_fk_indexes` (FK indexes on the hot query paths: transcripts.session_id, cases/courts.user_id,
+sessions.case_id/user_id).
 
 ## Object storage layout
 
@@ -1220,7 +1222,12 @@ An attorney uploads the pleading (PDF) and every objection/reply/ruling is groun
    built.
 3. **Portable vector store:** embeddings are stored as **JSON arrays** and cosine-ranked in Python —
    so the same models run on Postgres (prod) and SQLite (CI), no infra change; a pleading is ~100
-   chunks so brute-force top-k is <1 ms. **pgvector is the documented scale-up path** (many cases/ANN).
+   chunks so brute-force top-k is <1 ms. The `WHERE court_id/case_id` filter that precedes the
+   Python cosine is **indexed** (migration 0010). **pgvector is the documented scale-up path**
+   (many cases / large rules corpora / ANN) — deliberately **deferred** (AUDIT B5): it is
+   Postgres-only and would break the SQLite-portable schema the whole test suite builds from, and
+   there is no volume yet to justify that cost. Adopt it when a real corpus makes brute-force cosine
+   the bottleneck (a dialect-branched retrieval: pgvector on Postgres, Python cosine on SQLite).
 
 ### Hybrid retrieval into the reasoning
 - The **structured summary is always in every agent prompt** via `SessionState.snapshot()` — the

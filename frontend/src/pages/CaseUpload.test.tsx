@@ -29,6 +29,9 @@ describe('CaseUpload', () => {
     caseFacts: '',
     courtId: null,
     createdAt: '2026-07-07T00:00:00Z',
+    sessionCount: null,
+    bestScore: null,
+    lastRehearsedAt: null,
   };
 
   /** Fill the required profile fields (parties, side, relief). */

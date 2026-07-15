@@ -25,7 +25,10 @@ class Transcript(Base):
     __tablename__ = "transcripts"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    session_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sessions.id"), nullable=False)
+    # Indexed: the fastest-growing table, always read/joined by session (migration 0010).
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("sessions.id"), nullable=False, index=True
+    )
     speaker: Mapped[str] = mapped_column(String, nullable=False)
     # SENSITIVE: attorney work product — never log in plaintext.
     content: Mapped[str] = mapped_column(Text, nullable=False)

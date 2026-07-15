@@ -35,8 +35,14 @@ class Session(Base):
     __tablename__ = "sessions"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    case_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("cases.id"), nullable=False)
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    # Indexed: sessions are listed per case and per owner, and joined from the case list
+    # aggregate (migration 0010).
+    case_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("cases.id"), nullable=False, index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
     status: Mapped[str] = mapped_column(String, nullable=False, default="in_progress")
     # What kind of proceeding is being rehearsed (§13) — drives which objection grounds are
     # eligible (agents PROCEEDING_ELIGIBLE_GROUNDS). Existing rows were backfilled to

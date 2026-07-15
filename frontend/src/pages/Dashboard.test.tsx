@@ -22,6 +22,10 @@ const CASE = {
   caseFacts: 'A contract dispute.',
   courtId: null,
   createdAt: '2026-07-07T00:00:00Z',
+  // Rehearsal summary now rides on the case payload (one grouped query — no per-card N+1).
+  sessionCount: 2,
+  bestScore: 88,
+  lastRehearsedAt: '2026-07-09T00:00:00Z',
 };
 
 describe('Dashboard', () => {
@@ -29,14 +33,17 @@ describe('Dashboard', () => {
     vi.restoreAllMocks();
   });
 
-  it('lists a case linking to its detail page', async () => {
+  it('lists a case with its rehearsal summary, linking to its detail page', async () => {
     vi.spyOn(api, 'getCases').mockResolvedValue([CASE]);
-    // Each card fetches its own sessions for the rehearsal summary.
-    vi.spyOn(api, 'getCaseSessions').mockResolvedValue([]);
+    const getSessions = vi.spyOn(api, 'getCaseSessions');
     renderWithProviders(<Dashboard />);
 
     const link = await screen.findByRole('link', { name: /Doe v\. Roe/ });
     expect(link).toHaveAttribute('href', '/case/c1');
+    // The summary comes from the list payload — no per-card session fetch (no N+1).
+    expect(screen.getByText(/2 rehearsals/)).toBeInTheDocument();
+    expect(screen.getByText('Best 88')).toBeInTheDocument();
+    expect(getSessions).not.toHaveBeenCalled();
   });
 
   it('offers a New case action', async () => {
