@@ -14,7 +14,6 @@ import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Breadcrumbs } from '@/components/Breadcrumbs';
-import { useAuthStore } from '@/store/auth';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -68,7 +67,6 @@ export function CaseDetail() {
 
   // Two-tier deletion: Archive (soft, owner) is the default; Purge (hard) is admin-only and
   // requires the case title typed back — never one accidental click away from Archive.
-  const user = useAuthStore((state) => state.user);
   const [confirming, setConfirming] = useState<'archive' | 'purge' | null>(null);
   const [typedTitle, setTypedTitle] = useState('');
   const [dangerError, setDangerError] = useState<string | null>(null);
@@ -209,9 +207,8 @@ export function CaseDetail() {
         <CardHeader>
           <CardTitle className="text-lg text-destructive">Danger zone</CardTitle>
           <CardDescription>
-            Archive hides this case (sessions and scorecards are kept).
-            {user?.role === 'admin' &&
-              ' Purge permanently deletes the case and everything under it.'}
+            Archive hides this case (sessions and scorecards are kept). Purge permanently deletes
+            the case and everything under it.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
@@ -224,16 +221,14 @@ export function CaseDetail() {
             >
               Archive case
             </Button>
-            {user?.role === 'admin' && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-destructive hover:text-destructive"
-                onClick={() => setConfirming('purge')}
-              >
-                Purge case…
-              </Button>
-            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-destructive hover:text-destructive"
+              onClick={() => setConfirming('purge')}
+            >
+              Purge case…
+            </Button>
           </div>
           {confirming && (
             <div className="flex flex-col gap-2 rounded-md border border-destructive/40 p-3">

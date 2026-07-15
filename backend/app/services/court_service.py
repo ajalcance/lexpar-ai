@@ -1,12 +1,13 @@
 """
 File: app/services/court_service.py
-Purpose: Court catalog logic (§13) — create a court (admin action) and list/fetch active courts
-    for the case-creation flow. The rule-corpus ingest/retrieval lives separately in
-    court_knowledge_service.py (one responsibility per file).
-Depends on: fastapi, sqlalchemy, app/models/court.py, app/schemas/court.py
-Related: app/api/courts.py, app/services/court_knowledge_service.py, scripts/seed_court.py
-Security notes: Court data is public information; the write path is admin-gated at the route
-    (app/security.py require_admin), not here.
+Purpose: Court catalog logic (§13) — create/list/fetch a user's OWN courts for the case-creation
+    flow. Every query is scoped to the owner (user_id): courts are per-user (migration 0009), so a
+    user only ever sees or touches courts they created. The rule-corpus ingest/retrieval lives
+    separately in court_knowledge_service.py (one responsibility per file).
+Depends on: fastapi, sqlalchemy, app/models/{court,user}.py, app/schemas/court.py
+Related: app/api/courts.py, app/api/deps.py (get_owned_court), court_knowledge_service.py
+Security notes: Owner-scoped. Court names/jurisdiction descriptions are public information, but the
+    corpus is the owner's — every read/write here filters by user_id (least privilege).
 """
 
 import logging
@@ -20,39 +21,57 @@ from sqlalchemy.orm import Session as DbSession
 from app.models.case import Case
 from app.models.court import Court
 from app.models.court_rule import CourtRuleChunk, CourtRuleDocument
+from app.models.user import User
 from app.schemas.court import CourtCreate
 
 logger = logging.getLogger("lexpar.courts")
 
 
-def create_court(db: DbSession, data: CourtCreate) -> Court:
-    court = Court(name=data.name, jurisdiction_description=data.jurisdiction_description)
+def create_court(db: DbSession, user: User, data: CourtCreate) -> Court:
+    court = Court(
+        user_id=user.id,
+        name=data.name,
+        jurisdiction_description=data.jurisdiction_description,
+    )
     db.add(court)
     db.commit()
     db.refresh(court)
     return court
 
 
-def list_active_courts(db: DbSession) -> list[Court]:
-    """The catalog the case-creation dropdown shows: active, non-deleted courts."""
+def list_active_courts(db: DbSession, user: User) -> list[Court]:
+    """The catalog the case-creation dropdown shows: the user's own active, non-deleted courts."""
     stmt = (
         select(Court)
-        .where(Court.is_active.is_(True), Court.deleted_at.is_(None))
+        .where(
+            Court.user_id == user.id,
+            Court.is_active.is_(True),
+            Court.deleted_at.is_(None),
+        )
         .order_by(Court.name)
     )
     return list(db.scalars(stmt))
 
 
-def list_all_courts(db: DbSession) -> list[Court]:
-    """The ADMIN catalog: every court including archived ones (active first, then by name) — an
-    archived forum must stay visible (and purgeable) instead of silently vanishing from the UI."""
-    stmt = select(Court).order_by(Court.deleted_at.isnot(None), Court.name)
+def list_all_courts(db: DbSession, user: User) -> list[Court]:
+    """The owner's full catalog: every court they own including archived ones (active first, then
+    by name) — an archived forum must stay visible (and purgeable) instead of silently vanishing."""
+    stmt = (
+        select(Court)
+        .where(Court.user_id == user.id)
+        .order_by(Court.deleted_at.isnot(None), Court.name)
+    )
     return list(db.scalars(stmt))
 
 
-def get_court(db: DbSession, court_id: uuid.UUID) -> Court:
+def get_court(db: DbSession, user: User, court_id: uuid.UUID) -> Court:
+    """Fetch one of the user's own active courts, or 404 (a foreign/archived court is not found)."""
     court = db.scalar(
-        select(Court).where(Court.id == court_id, Court.deleted_at.is_(None))
+        select(Court).where(
+            Court.id == court_id,
+            Court.user_id == user.id,
+            Court.deleted_at.is_(None),
+        )
     )
     if court is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Court not found.")

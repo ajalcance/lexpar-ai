@@ -30,12 +30,14 @@ logger = logging.getLogger("lexpar.cases")
 
 
 def create_case(db: DbSession, user: User, data: CaseCreate) -> Case:
-    # §13: when a court is named it must be a real, active one — a case grounded in a
-    # nonexistent/retired forum would silently produce ungrounded sessions later.
+    # §13: when a court is named it must be a real, active one THE USER OWNS — courts are per-user
+    # (migration 0009), so a case can only be grounded in one of the owner's own forums; a
+    # nonexistent/retired/foreign court would silently produce ungrounded sessions later.
     if data.court_id is not None:
         court = db.scalar(
             select(Court).where(
                 Court.id == data.court_id,
+                Court.user_id == user.id,
                 Court.is_active.is_(True),
                 Court.deleted_at.is_(None),
             )

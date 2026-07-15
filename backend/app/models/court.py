@@ -7,14 +7,15 @@ Depends on: sqlalchemy, app/db.py
 Related: app/models/court_rule.py, app/models/case.py (cases.court_id),
     app/services/court_knowledge_service.py (Phase 2), docs/ARCHITECTURE.md §13
 Security notes: Court names/jurisdiction descriptions are public information — nothing here is
-    attorney work product. `deleted_at` supports soft deletes (DEV_GUIDELINES §8); `is_active`
-    additionally lets an admin retire a court from the case-creation catalog without deleting it.
+    attorney work product. Courts are OWNER-SCOPED (`user_id`, migration 0009): a user only ever
+    sees/manages their own. `deleted_at` supports soft deletes (DEV_GUIDELINES §8); `is_active`
+    additionally lets the owner retire a court from their case-creation catalog without deleting it.
 """
 
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, String, Text, Uuid
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -24,6 +25,11 @@ class Court(Base):
     __tablename__ = "courts"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    # The owner. Courts are per-user (migration 0009): each account creates and manages its own
+    # courts + rule corpus, scoped exactly like its cases — there is no shared/global catalog.
+    # Nullable only for legacy pre-0009 rows (there is no production data); every court the app
+    # creates sets it, and every query filters by it.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     jurisdiction_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

@@ -2,7 +2,7 @@
  * File: src/components/DashboardGuide.tsx
  * Purpose: A reviewer/judge aid on the Cases dashboard (companion to the sparring DemoScript) —
  *   two ways to test: open the ready SARC case, or build one in two steps (create a courtroom in
- *   Court administration, then a case). Because all reviewers share the demo account, the case
+ *   Courts, then a case). Because all reviewers share the demo account, the case
  *   list grows; this points them at the flagged "Start here" case so they don't get lost.
  * Depends on: lib/flags (DEMO_CASE_TITLE), lib/utils (cn)
  * Related: pages/Dashboard.tsx (renders this in the left column), components/DemoScript.tsx
@@ -58,8 +58,7 @@ export function DashboardGuide({
         <p className="font-medium">2. Or build your own in two steps</p>
         <ol className="ml-4 list-decimal text-xs text-muted-foreground [&>li]:mt-1">
           <li>
-            Open <strong>Court administration</strong> (top-right) and create a courtroom, then
-            upload its rule PDF.
+            Open <strong>Courts</strong> (top nav) and create a courtroom, then upload its rule PDF.
           </li>
           <li>
             Click <strong>New case</strong>, fill in the parties and the side you represent, and

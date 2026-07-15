@@ -120,7 +120,6 @@ interface UserJson {
   email: string;
   full_name: string | null;
   firm_name: string | null;
-  role: User['role'];
 }
 interface CaseJson {
   id: string;
@@ -194,7 +193,6 @@ const toUser = (j: UserJson): User => ({
   email: j.email,
   fullName: j.full_name,
   firmName: j.firm_name,
-  role: j.role ?? 'attorney',
 });
 
 const toCase = (j: CaseJson): Case => ({
@@ -313,7 +311,7 @@ export async function getCourts(options?: { includeArchived?: boolean }): Promis
   return data.map(toCourt);
 }
 
-/** Create a court (admin only — the backend enforces the role). */
+/** Create a court (owned by the authenticated user; the backend scopes it to the owner). */
 export async function createCourt(input: {
   name: string;
   jurisdictionDescription?: string;
@@ -330,13 +328,13 @@ export async function createCourt(input: {
   return toCourt(data);
 }
 
-/** Rule-document ingestion statuses for a court (admin only). */
+/** Rule-document ingestion statuses for one of your courts. */
 export async function getCourtRules(courtId: string): Promise<CourtRuleDocument[]> {
   const data = await request<CourtRuleDocumentJson[]>(`/api/courts/${courtId}/rules`);
   return data.map(toCourtRuleDocument);
 }
 
-/** Upload an OFFICIAL rule document PDF for a court (admin only; multipart — its own path,
+/** Upload an OFFICIAL rule document PDF for one of your courts (multipart — its own path,
  *  not the JSON `request` helper). Provenance fields record where the operator says it's from. */
 export async function uploadCourtRule(
   courtId: string,
@@ -363,7 +361,7 @@ export async function uploadCourtRule(
 // --- Two-tier deletion (archive/replace vs purge, §13) ---------------------------------------
 
 /** Replace a rule document with a corrected/newer version (atomic supersede: the old version
- *  stays in retrieval until the new one ingests to 'ready'). Admin only. */
+ *  stays in retrieval until the new one ingests to 'ready'). Owner only. */
 export async function replaceCourtRule(
   courtId: string,
   documentId: string,
@@ -417,7 +415,7 @@ export async function getCourtRulePurgeImpact(
   return { provenanceRulings: data.provenance_rulings, chunkCount: data.chunk_count };
 }
 
-/** PURGE (hard, irreversible, admin): delete the document, its chunks, and the stored file. */
+/** PURGE (hard, irreversible): delete the document, its chunks, and the stored file. */
 export async function purgeCourtRule(courtId: string, documentId: string): Promise<void> {
   await request<void>(`/api/courts/${courtId}/rules/${documentId}/purge`, { method: 'POST' });
 }
@@ -437,7 +435,7 @@ export async function archiveCase(caseId: string): Promise<void> {
   await request<void>(`/api/cases/${caseId}`, { method: 'DELETE' });
 }
 
-/** PURGE a case (hard, admin): the case and everything under it, gone. */
+/** PURGE a case (hard, owner self-service): the case and everything under it, gone. */
 export async function purgeCase(caseId: string): Promise<void> {
   await request<void>(`/api/cases/${caseId}/purge`, { method: 'POST' });
 }

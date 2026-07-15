@@ -126,7 +126,73 @@ reviewer aids are on. Committed b60601b + b82ac3a, pushed.
 other sessions: every LLM call is time-bounded, blocking work runs on an isolated bounded pool,
 clients reuse pooled connections, and the verifier has backpressure. All three knobs are additive
 env rollbacks (`LLM_TIMEOUT_S`, `AGENT_EXECUTOR_WORKERS<=0`, `VERIFY_MAX_CONCURRENT<=0`).
-Next: Phase 2 (retry/fallback provider, token accounting, metrics + canary).
+Committed 7e46a26, pushed.
+
+#### Phase 2 — resilience + observability (AUDIT B7/B8) — status: done
+- [x] **Retry with backoff** in `llm_router` (`LLM_RETRIES`=1, `LLM_RETRY_BACKOFF_S`=0.5);
+      objection classifier passes `retries=0` (by the time a retry finished, the moment to object
+      is gone). Streams retry **only before the first yielded delta** — spoken text is never
+      re-spoken; mid-stream errors propagate to the existing fail-closed truncation.
+- [x] **Per-role fallback provider** (`*_LLM_FALLBACK_{PROVIDER,ENDPOINT,MODEL}`, unset = old
+      single-provider behavior) attached once in `pooled_endpoint`, so every call site gets
+      failover for free.
+- [x] **Circuit breaker per endpoint** (`LLM_CB_FAILURES`=3 consecutive / `LLM_CB_COOLDOWN_S`=60):
+      open → skip primary straight to fallback; half-open after cooldown; success closes. Never
+      dead-ends (no fallback → primary always tried).
+- [x] **llm_metrics.py** (new): thread-safe per-role counters (calls, errors, fallback use,
+      latency total/max, prompt/completion tokens) + named quality canaries — `no_verified_
+      sentences` (THE canary: OC silently going quiet), `sentence_rejected`, `repair_attempted`,
+      `reply_truncated`, `stream_error` — recorded from llm_router, streaming_verify, and main.py.
+      Prometheus/OTel exporter deliberately deferred to deploy time; these counters are its source.
+- [x] **Per-session token accounting persisted:** `llm_metrics.snapshot()` logged at session end
+      and shipped in the scorecard payload → `sessions.llm_usage` (**migration 0008**, JSON,
+      nullable; additive — an older worker persists NULL). Billing groundwork (B8).
+- [x] Tests: agents `tests/test_resilience.py` (+14 — retry, failover, breaker
+      open/half-open/close, breaker-skip, stream retry-before-first-delta / never-restart-after,
+      metrics + canaries + payload); backend llm_usage round-trip + older-worker NULL (+1).
+- [x] Migration verified live: `alembic upgrade head` 0001→0008 on real Postgres (compose),
+      `sessions.llm_usage` present. (SQLite can't run the pre-existing migration chain — known,
+      tests build schema from metadata.)
+- [x] Docs: ARCHITECTURE §8 (schema) + §9 (env rows); `.env.example`.
+- [x] Gate: agents ruff clean **277 pass** (+14); backend ruff clean **111 pass** (+1); frontend
+      untouched.
+
+**Result:** A provider blip no longer silences the product: calls retry, fail over per role, and
+a dead provider trips a breaker instead of eating timeout+retry per call. Every call is metered
+per role, the "OC went silent" canary is counted, and each session persists its LLM usage record
+for future billing. Committed, pushed.
+
+#### Phase 3 — single-owner accounts, no roles (revised per user) — status: done
+**Scope change (user decision):** NOT multi-tenant orgs/RBAC. The app already is per-user; the user
+wants each account to be a self-owned island with NO admin/attorney distinction. So Phase 3 became
+"collapse to one role" + "make courts per-user" (they were the last globally-shared, admin-curated
+thing). Recommendation accepted: courts become per-user-owned (no shared rules library).
+- [x] **Roles removed:** dropped `users.role`, `USER_ROLES`, `require_admin`, and the entire
+      first-login admin bootstrap (`ensure_admin_bootstrap`). `UserOut` no longer carries `role`.
+- [x] **Courts per-user:** added `courts.user_id`; `court_service` + all `/api/courts*` routes now
+      owner-scoped via a new `deps.get_owned_court` (404 on a foreign court). `include_archived` is
+      no longer role-gated — it's just the owner's full list. `create_case` validates the court is
+      the user's own.
+- [x] **Purge is owner self-service:** `purge_case` (and court/rule purge) scoped to the owner via
+      `get_owned_case`/`get_owned_court` — the old global-admin cross-user reach (AUDIT B6) is gone.
+- [x] **Migration 0009** (`drop users.role`, `add courts.user_id`) — verified 0001→0009 applies
+      clean on real Postgres; `users.role` gone, `courts.user_id` present.
+- [x] **Frontend:** `role` removed from the User type + api mapper; `/admin`→`/courts`,
+      `Admin.tsx`→`Courts.tsx` (git-mv), "Court administration" pill → a plain **Courts** nav item
+      for everyone; Profile role badge removed; case Purge shown to the owner (no role gate).
+- [x] **seed_court.py** now seeds a court owned by a required `--owner-email` account.
+- [x] Tests reworked to the no-roles model: backend auth/court-schema (no bootstrap; `role` absent),
+      courts-API (admin-gating → **ownership isolation**: A's court is 404 to B), deletion-purge +
+      agent-routes court fixtures owner-scoped; frontend Courts/Profile/Login/DashboardGuide.
+- [x] Docs: ARCHITECTURE (repo tree, §4/§5 routes tables, §5 auth mechanisms, §8 schema+migrations,
+      §13 rewritten "Per-user courts, no roles"), DEVELOPER_GUIDELINES §7, CLAUDE.md.
+- [x] Gate: backend ruff clean **109 pass**; agents **277 pass**; frontend tsc clean, **82 pass**,
+      lint clean, build ✓.
+
+**Result:** One account = one owner of everything in it, enforced structurally (get_owned_case /
+get_owned_court), no roles anywhere. Cross-account access is impossible by construction, not by a
+role check. Multi-user org accounts + RBAC remain a documented future opt-in. Next: Phase 4
+(storage scale — pgvector for court rules, FK indexes, Dashboard N+1).
 
 ### Scaffold frontend (Vite + React + TS + Tailwind + shadcn/ui, mock data) — status: done
 

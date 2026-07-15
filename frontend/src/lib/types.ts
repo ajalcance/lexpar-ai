@@ -40,8 +40,6 @@ export interface User {
   email: string;
   fullName: string | null;
   firmName: string | null;
-  /** 'attorney' | 'admin' (§13) — gates the admin UI; the backend enforces the real check. */
-  role: 'attorney' | 'admin';
 }
 
 /** A case an attorney is preparing to argue. Mirrors the `cases` table (API-visible fields). */

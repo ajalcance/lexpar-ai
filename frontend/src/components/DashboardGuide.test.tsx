@@ -15,7 +15,7 @@ describe('DashboardGuide', () => {
   it('names the ready demo case and the two-step path', () => {
     renderWithProviders(<DashboardGuide />);
     expect(screen.getByText(DEMO_CASE_TITLE)).toBeInTheDocument();
-    expect(screen.getByText(/Court administration/)).toBeInTheDocument();
+    expect(screen.getByText(/create a courtroom/)).toBeInTheDocument();
     expect(screen.getByText(/Two ways to test/)).toBeInTheDocument();
   });
 

@@ -1,21 +1,20 @@
 """
 File: tests/test_courts_api.py
-Purpose: Phase 2 (§13) tests — admin role gating on court/rule-corpus management (401/403/OK),
-    the attorney-readable court catalog, rule-document upload (storage + background ingest
+Purpose: §13 court/rule-corpus tests under the PER-USER model (no roles, migration 0009): any
+    authenticated user manages their OWN courts; a court/rules of one account are invisible (404)
+    to another. Plus the owner's court catalog, rule-document upload (storage + background ingest
     monkeypatched), the conservative section-heading extraction, and rule ingest/retrieval with a
     deterministic injected embedder (no network, SQLite).
-Depends on: pytest, app/api/courts.py, app/services/{court_service,court_knowledge_service}.py
-Related: app/security.py (require_admin), scripts/seed_court.py
+Depends on: pytest, app/api/courts.py, app/api/deps.py (get_owned_court),
+    app/services/{court_service,court_knowledge_service}.py
+Related: scripts/seed_court.py
 Security notes: Fixture text is synthetic placeholder prose — deliberately NOT real statutory
     language (§13 no-fabrication constraint applies to test fixtures too).
 """
 
 import uuid
 
-import pytest
-
 from app.models.court import Court
-from app.models.user import User
 from app.services import court_knowledge_service
 
 # Synthetic, clearly-fake chunk prose (heading shapes only — no real rule content).
@@ -24,48 +23,51 @@ RULE_CHUNK = "RULE 3\n\nPlaceholder heading-detection text, not a real rule."
 PLAIN_CHUNK = "Plain paragraph with no heading at all, also placeholder text."
 
 
-@pytest.fixture()
-def admin_headers(client, auth_headers, db_session):
-    """The first registered user IS the admin (§13 first-login bootstrap); set explicitly anyway
-    so this fixture stays correct even if the arrangement around it changes."""
-    me = client.get("/api/auth/me", headers=auth_headers).json()
-    user = db_session.get(User, uuid.UUID(me["id"]))
-    user.role = "admin"
-    db_session.commit()
-    return auth_headers
+def _me_id(client, headers) -> uuid.UUID:
+    return uuid.UUID(client.get("/api/auth/me", headers=headers).json()["id"])
 
 
-@pytest.fixture()
-def attorney_headers(client, auth_headers, db_session):
-    """A NON-admin authenticated user for 403 gating tests. The first login auto-promotes (§13
-    bootstrap), so an ordinary attorney must be arranged by demoting after login."""
-    me = client.get("/api/auth/me", headers=auth_headers).json()
-    user = db_session.get(User, uuid.UUID(me["id"]))
-    user.role = "attorney"
-    db_session.commit()
-    return auth_headers
+def _second_user(client) -> dict[str, str]:
+    """Register an independent second account and return its auth header."""
+    resp = client.post(
+        "/api/auth/register",
+        json={"email": f"other-{uuid.uuid4().hex[:8]}@example.com", "password": "pw-123456789"},
+    )
+    assert resp.status_code == 201
+    return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
 
-def _court(db_session, name="Seeded Court", **kwargs) -> Court:
-    court = Court(name=name, **kwargs)
+def _court(db_session, owner_id=None, name="Seeded Court", **kwargs) -> Court:
+    """Create a court row directly. `owner_id` defaults to the FIRST registered user (the
+    auth_headers account, for API-facing tests, which the API scopes to the owner); pass it
+    explicitly for isolation tests. Service-layer tests run with no user registered → owner None
+    (user_id is nullable and unused by those direct-service paths)."""
+    if owner_id is None:
+        from sqlalchemy import select
+
+        from app.models.user import User
+        first = db_session.scalar(select(User).order_by(User.created_at))
+        owner_id = first.id if first is not None else None
+    court = Court(user_id=owner_id, name=name, **kwargs)
     db_session.add(court)
     db_session.commit()
     return court
 
 
-# --- admin gating -------------------------------------------------------------------------------
+# --- per-user ownership (no roles) ------------------------------------------------------------
 
-def test_create_court_requires_auth_and_admin(client, attorney_headers):
+def test_create_court_requires_auth_only(client, auth_headers):
     body = {"name": "New Court"}
     assert client.post("/api/courts", json=body).status_code == 401  # no token
-    # authenticated attorney, not admin → 403 (authenticated but not authorized)
-    assert client.post("/api/courts", headers=attorney_headers, json=body).status_code == 403
+    # any authenticated user can create their own court — no role gate
+    resp = client.post("/api/courts", headers=auth_headers, json=body)
+    assert resp.status_code == 201
 
 
-def test_admin_can_create_court(client, admin_headers):
+def test_authenticated_user_can_create_court(client, auth_headers):
     resp = client.post(
         "/api/courts",
-        headers=admin_headers,
+        headers=auth_headers,
         json={"name": "Special Commercial Court", "jurisdiction_description": "test forum"},
     )
     assert resp.status_code == 201
@@ -73,24 +75,37 @@ def test_admin_can_create_court(client, admin_headers):
     assert resp.json()["is_active"] is True
 
 
-def test_rule_routes_are_admin_gated(client, attorney_headers, db_session):
-    court = _court(db_session)
-    assert (
-        client.get(f"/api/courts/{court.id}/rules", headers=attorney_headers).status_code == 403
-    )
-    resp = client.post(
+def test_courts_are_isolated_between_accounts(client, auth_headers, db_session):
+    # A court owned by user A is a 404 for user B — reads, rule listing, and management alike.
+    owner = _me_id(client, auth_headers)
+    court = _court(db_session, owner, name="A's Court")
+    other = _second_user(client)
+
+    # B's catalog does not include A's court; A's does.
+    a_names = [c["name"] for c in client.get("/api/courts", headers=auth_headers).json()]
+    b_names = [c["name"] for c in client.get("/api/courts", headers=other).json()]
+    assert "A's Court" in a_names
+    assert "A's Court" not in b_names
+
+    # B cannot read/manage A's court corpus (404, not 403 — the id is not disclosed).
+    assert client.get(f"/api/courts/{court.id}/rules", headers=other).status_code == 404
+    up = client.post(
         f"/api/courts/{court.id}/rules",
-        headers=attorney_headers,
+        headers=other,
         files={"file": ("r.pdf", b"%PDF-fake", "application/pdf")},
     )
-    assert resp.status_code == 403
+    assert up.status_code == 404
+    assert client.post(f"/api/courts/{court.id}/purge", headers=other).status_code == 404
+    # ...but A can list its own rules.
+    assert client.get(f"/api/courts/{court.id}/rules", headers=auth_headers).status_code == 200
 
 
-# --- attorney-readable catalog --------------------------------------------------------------------
+# --- the owner's catalog ----------------------------------------------------------------------
 
 def test_catalog_lists_only_active_courts(client, auth_headers, db_session):
-    _court(db_session, name="Active Court")
-    _court(db_session, name="Retired Court", is_active=False)
+    owner = _me_id(client, auth_headers)
+    _court(db_session, owner, name="Active Court")
+    _court(db_session, owner, name="Retired Court", is_active=False)
     resp = client.get("/api/courts", headers=auth_headers)
     assert resp.status_code == 200
     names = [c["name"] for c in resp.json()]
@@ -104,7 +119,7 @@ def test_catalog_requires_auth(client):
 
 # --- rule upload route (storage + background ingest monkeypatched) --------------------------------
 
-def test_rule_upload_creates_pending_document(client, admin_headers, db_session, monkeypatch):
+def test_rule_upload_creates_pending_document(client, auth_headers, db_session, monkeypatch):
     court = _court(db_session)
     monkeypatch.setattr(
         "app.api.courts.storage_service.put_object", lambda key, data, content_type=None: key
@@ -113,7 +128,7 @@ def test_rule_upload_creates_pending_document(client, admin_headers, db_session,
 
     resp = client.post(
         f"/api/courts/{court.id}/rules",
-        headers=admin_headers,
+        headers=auth_headers,
         files={"file": ("interim_rules.pdf", b"%PDF-fake", "application/pdf")},
         data={
             "title": "Operator-supplied rules",
@@ -127,12 +142,12 @@ def test_rule_upload_creates_pending_document(client, admin_headers, db_session,
     assert body["title"] == "Operator-supplied rules"
     assert body["source_citation"] == "(operator citation)"
 
-    listed = client.get(f"/api/courts/{court.id}/rules", headers=admin_headers).json()
+    listed = client.get(f"/api/courts/{court.id}/rules", headers=auth_headers).json()
     assert [d["id"] for d in listed] == [body["id"]]
 
 
 def test_rule_upload_rejects_oversize_with_actionable_detail(
-    client, admin_headers, db_session, monkeypatch
+    client, auth_headers, db_session, monkeypatch
 ):
     # Over the size cap → 413 with a specific, surfaceable detail (the frontend shows this message,
     # not a generic "Upload failed"). Patch the cap to 0 so any non-empty file trips it.
@@ -142,43 +157,43 @@ def test_rule_upload_rejects_oversize_with_actionable_detail(
     court = _court(db_session)
     resp = client.post(
         f"/api/courts/{court.id}/rules",
-        headers=admin_headers,
+        headers=auth_headers,
         files={"file": ("big.pdf", b"%PDF-1.4 some bytes", "application/pdf")},
     )
     assert resp.status_code == 413
     assert "exceeds" in resp.json()["detail"].lower()
 
 
-def test_rule_upload_rejects_non_pdf(client, admin_headers, db_session):
+def test_rule_upload_rejects_non_pdf(client, auth_headers, db_session):
     court = _court(db_session)
     resp = client.post(
         f"/api/courts/{court.id}/rules",
-        headers=admin_headers,
+        headers=auth_headers,
         files={"file": ("rules.txt", b"text", "text/plain")},
     )
     assert resp.status_code == 415
 
 
 def test_rule_upload_rejects_pdf_labelled_bytes_without_a_pdf_header(
-    client, admin_headers, db_session
+    client, auth_headers, db_session
 ):
     # Magic-byte guard: a non-PDF relabelled as application/pdf (content-type is spoofable) is
     # rejected on the missing %PDF- header, not silently stored.
     court = _court(db_session)
     resp = client.post(
         f"/api/courts/{court.id}/rules",
-        headers=admin_headers,
+        headers=auth_headers,
         files={"file": ("fake.pdf", b"this is definitely not a pdf", "application/pdf")},
     )
     assert resp.status_code == 415
     assert "pdf" in resp.json()["detail"].lower()
 
 
-def test_rule_upload_rejects_empty_file(client, admin_headers, db_session):
+def test_rule_upload_rejects_empty_file(client, auth_headers, db_session):
     court = _court(db_session)
     resp = client.post(
         f"/api/courts/{court.id}/rules",
-        headers=admin_headers,
+        headers=auth_headers,
         files={"file": ("empty.pdf", b"", "application/pdf")},
     )
     assert resp.status_code == 422
@@ -555,40 +570,47 @@ def test_relevance_floor_returns_fewer_and_zero_without_padding(db_session):
     assert len(padded) == 2
 
 
-# --- admin catalog (include_archived) -------------------------------------------------------------
+# --- full catalog (include_archived) — the owner's own courts ----------------------------------
 
-def test_admin_catalog_includes_archived_courts(client, admin_headers, db_session):
+def test_full_catalog_includes_archived_courts(client, auth_headers, db_session):
     from datetime import datetime, timezone
 
     _court(db_session, name="Active Court")
     _court(db_session, name="Archived Court", deleted_at=datetime.now(timezone.utc))
-    resp = client.get("/api/courts?include_archived=true", headers=admin_headers)
+    resp = client.get("/api/courts?include_archived=true", headers=auth_headers)
     assert resp.status_code == 200
     by_name = {c["name"]: c for c in resp.json()}
     assert by_name["Active Court"]["archived"] is False
     assert by_name["Archived Court"]["archived"] is True
     # The regular catalog still hides it (case creation is unaffected).
-    names = [c["name"] for c in client.get("/api/courts", headers=admin_headers).json()]
+    names = [c["name"] for c in client.get("/api/courts", headers=auth_headers).json()]
     assert "Archived Court" not in names
 
 
-def test_admin_catalog_flag_requires_admin(client, attorney_headers):
-    resp = client.get("/api/courts?include_archived=true", headers=attorney_headers)
-    assert resp.status_code == 403
+def test_full_catalog_only_shows_own_courts(client, auth_headers, db_session):
+    # include_archived is no longer role-gated — it's just the owner's own full list. Another
+    # account's archived courts never appear in it.
+    owner = _me_id(client, auth_headers)
+    from datetime import datetime, timezone
+
+    _court(db_session, owner, name="Mine (archived)", deleted_at=datetime.now(timezone.utc))
+    other = _second_user(client)
+    resp = client.get("/api/courts?include_archived=true", headers=other)
+    assert "Mine (archived)" not in [c["name"] for c in resp.json()]
 
 
-def test_archived_court_can_still_be_purged(client, admin_headers, db_session):
+def test_archived_court_can_still_be_purged(client, auth_headers, db_session):
     from datetime import datetime, timezone
 
     court = _court(db_session, name="Retired Forum", deleted_at=datetime.now(timezone.utc))
-    resp = client.post(f"/api/courts/{court.id}/purge", headers=admin_headers)
-    # Previously 404: the purge route fetched via get_court, which filters archived rows —
-    # an archived court was an invisible, undeletable orphan.
+    resp = client.post(f"/api/courts/{court.id}/purge", headers=auth_headers)
+    # The purge route fetches archived-inclusive but owner-scoped, so an archived court stays
+    # purgeable by its owner instead of being an invisible, undeletable orphan.
     assert resp.status_code == 204
-    assert client.get("/api/courts?include_archived=true", headers=admin_headers).json() == []
+    assert client.get("/api/courts?include_archived=true", headers=auth_headers).json() == []
 
 
-def test_form_field_length_caps_reject_overlong_input(client, auth_headers, admin_headers):
+def test_form_field_length_caps_reject_overlong_input(client, auth_headers):
     # Case profile fields flow into LLM prompts — an overlong field is rejected (422), not stored.
     long_line = "x" * 300  # over LINE_MAX (200)
     resp = client.post("/api/cases", headers=auth_headers, json={"title": long_line})
@@ -601,5 +623,5 @@ def test_form_field_length_caps_reject_overlong_input(client, auth_headers, admi
     )
     assert resp.status_code == 422
     # Court name is capped too.
-    resp = client.post("/api/courts", headers=admin_headers, json={"name": long_line})
+    resp = client.post("/api/courts", headers=auth_headers, json={"name": long_line})
     assert resp.status_code == 422

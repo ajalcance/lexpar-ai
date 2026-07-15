@@ -30,7 +30,6 @@ from app.schemas.case import CaseCreate, CaseDocumentOut, CaseOut
 from app.schemas.session import SessionOut
 from app.security import (
     get_current_user,
-    require_admin,
     require_destructive_actions_enabled,
 )
 from app.services import (
@@ -193,16 +192,12 @@ def archive_case(
 
 @router.post("/{case_id}/purge", status_code=status.HTTP_204_NO_CONTENT)
 def purge_case(
-    case_id: uuid.UUID,
-    _admin: User = Depends(require_admin),
+    case: Case = Depends(get_owned_case),
     db: DbSession = Depends(get_db),
     _guard: None = Depends(require_destructive_actions_enabled),
 ) -> None:
-    """HARD tier (ADMIN-only): genuinely delete the case and everything under it (sessions,
-    transcripts, scorecards, provenance, documents, chunks, stored files). For test/mistake
-    cases. NOTE (AUDIT B6): deliberately NOT get_owned_case — the admin purges cases they don't
-    own. The global-admin reach across all users is the Phase 3 tenancy fix (org scoping)."""
-    case = db.get(Case, case_id)
-    if case is None:
-        raise HTTPException(status_code=404, detail="Case not found.")
+    """HARD tier — OWNER self-service (AUDIT B6): genuinely delete YOUR OWN case and everything
+    under it (sessions, transcripts, scorecards, provenance, documents, chunks, stored files).
+    get_owned_case scopes it to the owner, so this can never reach another account's data (the old
+    global-admin cross-user reach is gone with the roles model)."""
     case_service.purge_case(db, case)

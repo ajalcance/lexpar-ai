@@ -1,17 +1,17 @@
 /**
- * File: src/pages/Admin.tsx
- * Purpose: Minimal admin surface (§13) — create a Court and upload its OFFICIAL rule documents
- *   (with source provenance), showing each document's ingestion status. Functional, not polished.
- *   Role-gated here (defense in depth) AND on every backend route (the real control).
- * Depends on: @tanstack/react-query, lib/api.ts, store/auth.ts, components/ui/*
+ * File: src/pages/Courts.tsx
+ * Purpose: The owner's Courts surface (§13) — create a Court and upload its OFFICIAL rule documents
+ *   (with source provenance), showing each document's ingestion status. No roles: every account
+ *   manages its OWN courts (the backend scopes every route to the owner). Functional, not polished.
+ * Depends on: @tanstack/react-query, lib/api.ts, components/ui/*
  * Related: backend/app/api/courts.py, scripts/seed_court.py, docs/ARCHITECTURE.md §13
- * Security notes: Only official, operator-sourced documents belong here — the upload form carries
+ * Security notes: Only official, owner-sourced documents belong here — the upload form carries
  *   provenance fields (citation + source) for the §13 audit trail. Never AI-generated text.
  */
 
 import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Shield } from 'lucide-react';
+import { Landmark, Plus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -28,10 +28,8 @@ import * as api from '@/lib/api';
 import { LINE_MAX, TEXT_MAX } from '@/lib/limits';
 import { DESTRUCTIVE_ACTIONS_ENABLED } from '@/lib/flags';
 import { cn } from '@/lib/utils';
-import { useAuthStore } from '@/store/auth';
 
-export function Admin() {
-  const user = useAuthStore((state) => state.user);
+export function Courts() {
   const queryClient = useQueryClient();
 
   const [courtName, setCourtName] = useState('');
@@ -43,15 +41,12 @@ export function Admin() {
   const [sourceCitation, setSourceCitation] = useState('');
   const [sourceReference, setSourceReference] = useState('');
 
-  const isAdmin = user?.role === 'admin';
-
-  // The ADMIN catalog: every forum including archived ones (they stay visible — and purgeable —
-  // instead of vanishing). Key is namespaced under ['courts'] so create/archive/purge can
-  // invalidate both this and the case-creation (active-only) list with one prefix.
+  // The owner's full catalog: every forum they own including archived ones (they stay visible —
+  // and purgeable — instead of vanishing). Key is namespaced under ['courts'] so create/archive/
+  // purge can invalidate both this and the case-creation (active-only) list with one prefix.
   const { data: courts } = useQuery({
-    queryKey: ['courts', 'admin'],
+    queryKey: ['courts', 'all'],
     queryFn: () => api.getCourts({ includeArchived: true }),
-    enabled: isAdmin,
   });
   const selectedCourt = courts?.find((court) => court.id === selectedCourtId);
   // The list is the landing view; the create form is a toggled affordance — auto-open only when
@@ -60,7 +55,7 @@ export function Admin() {
   const { data: ruleDocs } = useQuery({
     queryKey: ['court-rules', selectedCourtId],
     queryFn: () => api.getCourtRules(selectedCourtId),
-    enabled: isAdmin && !!selectedCourtId && !selectedCourt?.archived,
+    enabled: !!selectedCourtId && !selectedCourt?.archived,
     // poll while any document is still ingesting so statuses resolve without a manual refresh
     refetchInterval: (query) =>
       query.state.data?.some((d) => d.ingestionStatus === 'pending') ? 2000 : false,
@@ -99,26 +94,16 @@ export function Admin() {
     },
   });
 
-  if (!isAdmin) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        Administrator role required. Court and rule-corpus management is not available on this
-        account.
-      </p>
-    );
-  }
-
   return (
-    // The Shield eyebrow marks this as the distinct administrative section (no left rail).
     <div className="flex flex-col gap-6">
       <div>
         <div className="flex items-center gap-1.5 text-xs font-medium tracking-wide text-primary uppercase">
-          <Shield className="size-3.5" />
-          Administration
+          <Landmark className="size-3.5" />
+          Courts
         </div>
-        <h1 className="mt-1 text-2xl font-semibold">Court administration</h1>
+        <h1 className="mt-1 text-2xl font-semibold">Your courts</h1>
         <p className="text-sm text-muted-foreground">
-          Manage the forums and the official procedural rules that ground the AI.
+          Manage the forums and the official procedural rules that ground the AI in your cases.
         </p>
       </div>
 

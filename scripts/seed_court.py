@@ -1,24 +1,24 @@
 """
 File: scripts/seed_court.py
 Purpose: OPTIONAL automation tooling (CI / headless deployments ONLY — this is NOT the operator
-    workflow). The normal path is pure UI and needs no script, ever: the FIRST user to log in is
-    promoted to admin automatically (app/services/auth_service.py ensure_admin_bootstrap), then
-    creates the Court and uploads the official rule PDFs at /admin. This script exists solely so
-    an automated environment can do the same headlessly: it seeds the Court record and runs the
-    real ingestion pipeline (extract → chunk → embed → persist) over PDFs the automation placed
-    in seed_data/court_rules/ (gitignored; nothing ships in the repo). It is a thin wrapper —
-    ingestion itself lives in court_knowledge_service and is the same code the /admin upload
-    route runs. FAILS LOUDLY when the folder is missing or empty — it NEVER falls back to
-    generated or synthesized rule text, by design (§13 hard constraint).
+    workflow). The normal path is pure UI and needs no script, ever: a user signs up, then creates
+    their Court and uploads the official rule PDFs at /courts. This script exists solely so an
+    automated environment can do the same headlessly: it seeds a Court record OWNED BY a given user
+    (courts are per-user — migration 0009) and runs the real ingestion pipeline (extract → chunk →
+    embed → persist) over PDFs the automation placed in seed_data/court_rules/ (gitignored; nothing
+    ships in the repo). It is a thin wrapper — ingestion itself lives in court_knowledge_service and
+    is the same code the /courts upload route runs. FAILS LOUDLY when the folder is missing or empty
+    — it NEVER falls back to generated or synthesized rule text, by design (§13 hard constraint).
 Depends on: backend app (SessionLocal, models, court services); a reachable database
     (alembic upgrade head applied) and FIREWORKS_API_KEY for embeddings.
-Related: backend/app/services/{auth_service,court_knowledge_service}.py,
-    frontend/src/pages/Admin.tsx (the actual operator workflow), docs/ARCHITECTURE.md §13
-Security notes: This script grants no roles — admin access comes only from the first-login
-    bootstrap (or explicit DB action). It only creates court/rule records.
+Related: backend/app/services/court_knowledge_service.py,
+    frontend/src/pages/Courts.tsx (the actual operator workflow), docs/ARCHITECTURE.md §13
+Security notes: There are no roles. The seeded court is owned by the --owner-email account and is
+    visible only to that account, exactly like a court created through the UI.
 
 Usage (automation only):
-    python scripts/seed_court.py [--name "<court name>"] [--jurisdiction "<description>"]
+    python scripts/seed_court.py --owner-email you@example.com
+                                 [--name "<court name>"] [--jurisdiction "<description>"]
                                  [--rules-dir seed_data/court_rules]
 
 Optional per-file provenance: put a manifest.json in the rules dir mapping filename →
@@ -75,6 +75,10 @@ def _load_manifest(rules_dir: Path) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--owner-email", required=True,
+        help="Email of the existing account that will OWN the seeded court (courts are per-user).",
+    )
     parser.add_argument("--name", default=DEFAULT_COURT_NAME)
     parser.add_argument("--jurisdiction", default=DEFAULT_JURISDICTION)
     parser.add_argument("--rules-dir", default=str(REPO_ROOT / "seed_data" / "court_rules"))
@@ -90,15 +94,27 @@ def main() -> None:
 
     from app.db import SessionLocal
     from app.models.court import Court
+    from app.models.user import User
     from app.services import court_knowledge_service, storage_service
 
     manifest = _load_manifest(rules_dir)
     db = SessionLocal()
     try:
-        # Idempotent: reuse the court if a previous seed created it.
-        court = db.scalar(select(Court).where(Court.name == args.name))
+        owner = db.scalar(
+            select(User).where(User.email == args.owner_email.strip().lower())
+        )
+        if owner is None:
+            sys.exit(f"No account with email {args.owner_email!r} — register it first.")
+        # Idempotent: reuse the OWNER's court if a previous seed created it (courts are per-user).
+        court = db.scalar(
+            select(Court).where(Court.name == args.name, Court.user_id == owner.id)
+        )
         if court is None:
-            court = Court(name=args.name, jurisdiction_description=args.jurisdiction)
+            court = Court(
+                user_id=owner.id,
+                name=args.name,
+                jurisdiction_description=args.jurisdiction,
+            )
             db.add(court)
             db.commit()
             db.refresh(court)

@@ -10,7 +10,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppLayout } from '@/components/AppLayout';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
-import { Admin } from '@/pages/Admin';
+import { Courts } from '@/pages/Courts';
 import { CaseDetail } from '@/pages/CaseDetail';
 import { CaseUpload } from '@/pages/CaseUpload';
 import { Dashboard } from '@/pages/Dashboard';
@@ -29,7 +29,7 @@ export default function App() {
           <Route path="/case/new" element={<CaseUpload />} />
           <Route path="/case/:id" element={<CaseDetail />} />
           <Route path="/profile" element={<Profile />} />
-          <Route path="/admin" element={<Admin />} />
+          <Route path="/courts" element={<Courts />} />
           <Route path="/session/:id" element={<SparringRoom />} />
           <Route path="/session/:id/scorecard" element={<Scorecard />} />
         </Route>

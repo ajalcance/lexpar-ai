@@ -66,9 +66,9 @@ def client(db_session: DbSession) -> TestClient:
     app.dependency_overrides.clear()
 
 
-# Shared test account (real bcrypt auth). Being the first registrant on each fresh in-memory DB,
-# this user auto-bootstraps to admin (§13 first-login rule) — the same privilege the old stub user
-# had, now via the real registration path.
+# Shared test account (real bcrypt auth). Each account is a self-owned island (no roles).
+# (No admin/attorney distinction — removed with the roles model, migration 0009.)
+
 TEST_EMAIL = "attorney@example.com"
 TEST_PASSWORD = "test-password-123"
 
@@ -76,7 +76,7 @@ TEST_PASSWORD = "test-password-123"
 @pytest.fixture()
 def auth_headers(client: TestClient) -> dict[str, str]:
     """Register the shared test user (real bcrypt) and return a ready-to-use Authorization header.
-    First registrant on the fresh DB → admin via the §13 bootstrap."""
+    Each account owns only its own data (no roles)."""
     resp = client.post(
         "/api/auth/register",
         json={"email": TEST_EMAIL, "password": TEST_PASSWORD, "full_name": "Test Attorney"},

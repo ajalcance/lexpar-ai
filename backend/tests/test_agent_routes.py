@@ -109,12 +109,14 @@ def test_full_session_end_then_user_reads_scorecard_and_transcript(client, auth_
 
 
 def test_context_route_returns_case_facts_for_agent(client, auth_headers, db_session):
-    # §13: cases now carry the forum whose rules ground them — create one and reference it.
+    # §13: cases now carry the forum whose rules ground them — create one (owned by the caller,
+    # per-user scoping) and reference it.
     import uuid as _uuid
 
     from app.models.court import Court
 
-    court = Court(id=_uuid.uuid4(), name="Test Court")
+    owner = _uuid.UUID(client.get("/api/auth/me", headers=auth_headers).json()["id"])
+    court = Court(id=_uuid.uuid4(), user_id=owner, name="Test Court")
     db_session.add(court)
     db_session.commit()
 
@@ -179,3 +181,35 @@ def test_session_context_carries_the_case_profile(client, auth_headers):
         json={"title": "T", "represented_party": "the good guys"},
     )
     assert bad.status_code == 422
+
+
+def test_scorecard_write_persists_llm_usage(client, auth_headers, db_session):
+    """Phase 2 (AUDIT B7/B8): the worker's llm_metrics snapshot rides the scorecard write into
+    sessions.llm_usage (migration 0008) — and an older worker that omits it leaves NULL."""
+    import uuid as _uuid
+
+    from app.models.session import Session
+
+    usage = {
+        "roles": {"judge": {"calls": 3, "errors": 0, "prompt_tokens": 900}},
+        "canaries": {"no_verified_sentences": 1},
+    }
+    session_id = _new_session(client, auth_headers)
+    _complete(client, session_id)
+    resp = client.post(
+        f"/api/sessions/{session_id}/scorecard",
+        headers=AGENT,
+        json={**SCORECARD_PAYLOAD, "llm_usage": usage},
+    )
+    assert resp.status_code == 201
+    row = db_session.get(Session, _uuid.UUID(session_id))
+    db_session.refresh(row)
+    assert row.llm_usage == usage
+
+    # Older-worker shape (no llm_usage field at all) → NULL, never an error.
+    other_id = _new_session(client, auth_headers)
+    _complete(client, other_id)
+    assert _write_scorecard(client, other_id).status_code == 201
+    other = db_session.get(Session, _uuid.UUID(other_id))
+    db_session.refresh(other)
+    assert other.llm_usage is None

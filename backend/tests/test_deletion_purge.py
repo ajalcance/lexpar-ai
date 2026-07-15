@@ -41,7 +41,14 @@ QUERY_VEC = [1.0, 0.0]
 
 
 def _court(db, name="Deletion Court") -> Court:
-    court = Court(name=name)
+    # Owner defaults to the first registered user (the auth_headers account) so API-facing tests
+    # see it under the per-user scoping (migration 0009); service-only tests register no user →
+    # owner None (user_id is nullable there).
+    from sqlalchemy import select
+
+    from app.models.user import User
+    first = db.scalar(select(User).order_by(User.created_at))
+    court = Court(user_id=first.id if first is not None else None, name=name)
     db.add(court)
     db.commit()
     return court

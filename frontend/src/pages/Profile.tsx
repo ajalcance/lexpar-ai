@@ -13,7 +13,6 @@
 import { useNavigate } from 'react-router-dom';
 import { LogOut } from 'lucide-react';
 import { Breadcrumbs } from '@/components/Breadcrumbs';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -58,23 +57,13 @@ export function Profile() {
         <CardHeader>
           <CardTitle className="text-lg">Account</CardTitle>
           <CardDescription>
-            {user?.role === 'admin'
-              ? 'You can manage courts and procedural rules from Court administration.'
-              : 'Your identity for this workspace.'}
+            You own everything in this account — your cases and your courts.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <Field label="Name" value={user?.fullName ?? null} />
           <Field label="Email" value={user?.email ?? null} />
           <Field label="Firm" value={user?.firmName ?? null} />
-          <div className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">Role</span>
-            <div>
-              <Badge variant={user?.role === 'admin' ? 'default' : 'secondary'}>
-                {user?.role === 'admin' ? 'Administrator' : 'Attorney'}
-              </Badge>
-            </div>
-          </div>
           <div className="pt-2">
             <Button variant="outline" onClick={handleLogout}>
               <LogOut className="size-4" />

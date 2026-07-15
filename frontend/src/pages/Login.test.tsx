@@ -17,7 +17,6 @@ const fakeUser = {
   id: 'u1',
   email: 'attorney@example.com',
   fullName: 'Test Attorney',
-  role: 'admin' as const,
   firmName: 'Solo Practice',
 };
 

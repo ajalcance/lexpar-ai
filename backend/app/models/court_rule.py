@@ -45,7 +45,7 @@ class CourtRuleDocument(Base):
     ingestion_status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    # The admin who uploaded it (role enforcement lives in the route dependency, Phase 2).
+    # The user who uploaded it (the court owner; ownership enforced in the route dependency).
     # Nullable: seed-script ingests may run without a request user.
     uploaded_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id"), nullable=True

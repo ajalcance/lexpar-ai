@@ -43,6 +43,3 @@ class UserOut(BaseModel):
     email: str
     full_name: str | None = None
     firm_name: str | None = None
-    # 'attorney' | 'admin' (§13) — lets the frontend role-gate the admin UI (defense in depth;
-    # the backend admin dependency remains the real enforcement).
-    role: str = "attorney"

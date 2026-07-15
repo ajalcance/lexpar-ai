@@ -1,7 +1,7 @@
 """
 File: tests/test_court_schema.py
 Purpose: Phase 1 (§13) schema tests — the Court / CourtRuleDocument / CourtRuleChunk models and
-    their defaults, the new cases.court_id / sessions.proceeding_type / users.role columns, and
+    their defaults, the new cases.court_id / sessions.proceeding_type columns, and
     the case-creation validation of court_id. Pure SQLite/portable per DEV_GUIDELINES §6.
 Depends on: pytest, app/models/*, TestClient fixtures (tests/conftest.py)
 Related: app/models/{court,court_rule}.py, alembic/versions/0003_court_grounding.py
@@ -12,7 +12,6 @@ import uuid
 from app.models.court import Court
 from app.models.court_rule import CourtRuleChunk, CourtRuleDocument
 from app.models.session import DEFAULT_PROCEEDING_TYPE, PROCEEDING_TYPES
-from app.models.user import DEFAULT_USER_ROLE, USER_ROLES
 
 # --- model rows + defaults ----------------------------------------------------------------------
 
@@ -59,19 +58,15 @@ def test_constants_shape():
         "motion_hearing",
     )
     assert DEFAULT_PROCEEDING_TYPE in PROCEEDING_TYPES
-    assert USER_ROLES == ("attorney", "admin")
-    assert DEFAULT_USER_ROLE == "attorney"
 
 
 # --- new columns through the API ------------------------------------------------------------------
 
-def test_first_login_bootstraps_admin(client, auth_headers):
-    # §13 UI-native bootstrap: the FIRST user to authenticate on an admin-less deployment is
-    # promoted automatically, so Court setup is a pure-UI workflow (no script ever needed).
-    # (The Phase-1 "no user silently becomes admin" rule governs the MIGRATION backfill of
-    # pre-existing rows — runtime first-login bootstrap is the deliberate exception.)
+def test_user_has_no_role(client, auth_headers):
+    # No roles (migration 0009): every account is a self-owned island — the user shape carries no
+    # role/admin field, and there is no first-login promotion.
     me = client.get("/api/auth/me", headers=auth_headers).json()
-    assert me["role"] == "admin"
+    assert "role" not in me
 
 
 def test_session_creation_requires_valid_proceeding_type(client, auth_headers):
@@ -100,7 +95,8 @@ def test_session_creation_requires_valid_proceeding_type(client, auth_headers):
 
 
 def test_case_create_accepts_valid_court(client, auth_headers, db_session):
-    court = Court(name="Test Court")
+    owner = uuid.UUID(client.get("/api/auth/me", headers=auth_headers).json()["id"])
+    court = Court(user_id=owner, name="Test Court")
     db_session.add(court)
     db_session.commit()
     resp = client.post(
@@ -123,7 +119,8 @@ def test_case_create_rejects_unknown_court(client, auth_headers):
 
 
 def test_case_create_rejects_inactive_court(client, auth_headers, db_session):
-    court = Court(name="Retired Court", is_active=False)
+    owner = uuid.UUID(client.get("/api/auth/me", headers=auth_headers).json()["id"])
+    court = Court(user_id=owner, name="Retired Court", is_active=False)
     db_session.add(court)
     db_session.commit()
     resp = client.post(

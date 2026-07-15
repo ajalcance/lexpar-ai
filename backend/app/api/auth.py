@@ -35,8 +35,8 @@ def register(payload: RegisterRequest, db: DbSession = Depends(get_db)) -> Token
         raise HTTPException(
             status_code=403, detail="Registration is disabled on this deployment."
         )
-    # Real self-service signup. Returns a token so the client is logged in immediately; the first
-    # registrant on an admin-less deployment auto-bootstraps to admin (§13).
+    # Real self-service signup. Returns a token so the client is logged in immediately. Each
+    # account is a self-owned island (no roles) — it owns everything it later creates.
     user = auth_service.register_user(
         db, payload.email, payload.password, payload.full_name, payload.firm_name
     )

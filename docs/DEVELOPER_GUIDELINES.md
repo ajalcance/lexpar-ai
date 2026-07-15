@@ -160,13 +160,15 @@ week has to be undone to build one later.
   Log identifiers (`case_id`, `session_id`), not content.
 - Least privilege: API keys and DB roles scoped to what a service actually needs, not broad
   admin credentials reused everywhere.
-- **Admin bootstrap is first-login, UI-native (§13):** on a deployment with no active admin, the
-  FIRST user to authenticate (login or register) is promoted to admin automatically — one atomic
-  conditional UPDATE in `auth_service.ensure_admin_bootstrap`, a no-op forever after the first
-  active admin exists (it can never escalate anyone on a bootstrapped deployment). Consequence:
-  **Court and rule-document setup is a pure UI workflow** — log in → `/admin` → create the Court →
-  upload the official PDFs. No script or CLI is ever part of the normal operator path
-  (`scripts/seed_court.py` remains only as optional CI/headless-automation tooling).
+- **Single-owner accounts, no roles (§13, migration 0009):** every account is a self-owned island —
+  the person who signs up owns everything they create (their cases AND their courts/rule corpus) and
+  can see or touch nothing outside it. There is no admin/attorney distinction and no first-login
+  bootstrap (both removed). Ownership is enforced **structurally**: every `{case_id}`/`{court_id}`
+  route resolves through `deps.get_owned_case` / `deps.get_owned_court` (404 on a foreign resource),
+  so a new route cannot forget the check. **Court and rule-document setup is a pure UI workflow** —
+  sign up → `/courts` → create the Court → upload the official PDFs. No script is part of the normal
+  path (`scripts/seed_court.py` remains only optional CI/headless tooling, and seeds a court owned by
+  a `--owner-email` account). (Multi-user org accounts + RBAC remain a future, opt-in direction.)
 - Design sensitive columns (`cases.case_facts`, `transcripts.content`) as if field-level
   encryption is coming — don't build anything that would make adding it later a schema
   migration nightmare (e.g., don't scatter raw text access across a dozen unrelated queries).

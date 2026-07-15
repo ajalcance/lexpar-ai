@@ -1,7 +1,7 @@
 /**
  * File: src/pages/Profile.test.tsx
- * Purpose: Tests for the read-only profile — it renders the identity from the auth store and the
- *   correct role badge (Attorney vs Administrator), and offers Sign out.
+ * Purpose: Tests for the read-only profile — it renders the identity from the auth store and
+ *   offers Sign out. No roles: every account is a self-owned island (no role badge).
  * Depends on: vitest, @testing-library/*, test/utils, pages/Profile, store/auth
  */
 
@@ -17,7 +17,6 @@ const attorney: User = {
   email: 'a@example.com',
   fullName: 'Demo Attorney',
   firmName: 'Solo Practice',
-  role: 'attorney',
 };
 
 describe('Profile', () => {
@@ -25,21 +24,21 @@ describe('Profile', () => {
     useAuthStore.setState({ token: null, user: null });
   });
 
-  it('shows the attorney identity and role badge', () => {
+  it('shows the account identity and Sign out', () => {
     useAuthStore.setState({ user: attorney, token: 't' });
     renderWithProviders(<Profile />);
 
     expect(screen.getByText('Demo Attorney')).toBeInTheDocument();
     expect(screen.getByText('a@example.com')).toBeInTheDocument();
     expect(screen.getByText('Solo Practice')).toBeInTheDocument();
-    expect(screen.getByText('Attorney')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Sign out/ })).toBeInTheDocument();
   });
 
-  it('shows the Administrator badge for an admin', () => {
-    useAuthStore.setState({ user: { ...attorney, role: 'admin' }, token: 't' });
+  it('renders no role badge (roles were removed)', () => {
+    useAuthStore.setState({ user: attorney, token: 't' });
     renderWithProviders(<Profile />);
 
-    expect(screen.getByText('Administrator')).toBeInTheDocument();
+    expect(screen.queryByText('Administrator')).not.toBeInTheDocument();
+    expect(screen.queryByText('Attorney')).not.toBeInTheDocument();
   });
 });

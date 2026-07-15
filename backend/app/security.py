@@ -72,19 +72,6 @@ def get_current_user(
     return user
 
 
-def require_admin(current_user: User = Depends(get_current_user)) -> User:
-    """403 unless the authenticated user has the admin role — gates the court/rule-corpus
-    management routes (§13). Composes get_current_user, so an invalid token still 401s; a valid
-    non-admin token 403s (authenticated, not authorized). This is USER authorization — distinct
-    from the agent service credential (app/security_agent.py), which is service-to-service."""
-    if current_user.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Administrator role required.",
-        )
-    return current_user
-
-
 def require_destructive_actions_enabled() -> None:
     """Gate archive/purge routes: 403 when DESTRUCTIVE_ACTIONS_ENABLED=false (a
     public/shared-credential deployment, e.g. the hackathon demo) so nobody can delete or hide the

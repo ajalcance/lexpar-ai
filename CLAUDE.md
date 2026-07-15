@@ -25,14 +25,16 @@ recipes in DEVELOPER_GUIDELINES §11 (Design system).
 - [tasks/PLAN.md](tasks/PLAN.md) — working plan/task log, written before non-trivial work and checked off as it proceeds.
 
 **Auth:** real bcrypt password auth (register + login-against-hash). The legacy `admin`/`admin`
-stub (`AUTH_MODE`) was removed at the production cutover — there is no demo bypass. Create the first
-account via `POST /api/auth/register` (or the login page's flow); the first registrant on an
-admin-less deployment auto-bootstraps to admin (see below). LiveKit dev keys are still a
+stub (`AUTH_MODE`) was removed at the production cutover — there is no demo bypass. Create an
+account via `POST /api/auth/register` (or the login page's flow). LiveKit dev keys are still a
 pre-deploy item (ARCHITECTURE.md §11).
 
-**Admin bootstrap:** the first user to authenticate on an admin-less deployment is promoted to
-admin automatically (`auth_service.ensure_admin_bootstrap`) — Court/rule-document setup is a pure
-UI workflow via `/admin`, never a script (see DEVELOPER_GUIDELINES §7).
+**Single-owner accounts, no roles (migration 0009):** every account is a self-owned island — the
+person who signs up owns everything they create (their cases AND their courts/rule corpus) and can
+see nothing outside it. There is no admin/attorney distinction. Ownership is structural: every
+`{case_id}`/`{court_id}` route resolves through `deps.get_owned_case` / `deps.get_owned_court`.
+Court/rule-document setup is a pure UI workflow via `/courts`, never a script (see
+DEVELOPER_GUIDELINES §7). Multi-user org accounts + RBAC remain a future, opt-in direction.
 
 **Status:** both agents (Opposing Counsel and Judge) run through Fireworks AI until the AMD
 Developer Cloud droplet exists.

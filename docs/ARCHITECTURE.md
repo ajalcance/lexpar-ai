@@ -32,8 +32,8 @@ lexpar-ai/
 │   │   │   ├── Dashboard.tsx         Cases list
 │   │   │   ├── CaseUpload.tsx
 │   │   │   ├── CaseDetail.tsx        case hub — facts, start session, rehearsal history
-│   │   │   ├── Profile.tsx           read-only identity + role
-│   │   │   ├── Admin.tsx             Court administration (§13, admin only)
+│   │   │   ├── Profile.tsx           read-only identity
+│   │   │   ├── Courts.tsx            Your courts + rule corpus (§13, per-user)
 │   │   │   ├── SparringRoom.tsx      LiveKit room UI (live session)
 │   │   │   └── Scorecard.tsx
 │   │   ├── hooks/
@@ -47,9 +47,9 @@ lexpar-ai/
 │   ├── app/
 │   │   ├── main.py
 │   │   ├── api/
-│   │   │   ├── auth.py           login/register, token issuance, admin bootstrap
+│   │   │   ├── auth.py           login/register, token issuance
 │   │   │   ├── cases.py          case CRUD + pleading upload/ingest (§12)
-│   │   │   ├── courts.py         court catalog + rule-corpus upload (§13, admin-gated)
+│   │   │   ├── courts.py         per-user court catalog + rule-corpus upload (§13)
 │   │   │   ├── sessions.py       session lifecycle, transcript retrieval
 │   │   │   ├── scorecards.py     scorecard + ruling-provenance read (§13)
 │   │   │   ├── internal.py       agent-token routes (context/knowledge/court-rules/provenance)
@@ -177,11 +177,11 @@ TanStack Query (server state), `@livekit/components-react` + `livekit-client` (r
 | `/session/:id` | Live sparring room (LiveKit connection) | yes |
 | `/session/:id/scorecard` | Post-session results | yes |
 | `/profile` | Profile — read-only identity + role, sign out | yes |
-| `/admin` | Court administration (admin only, §13) | yes (admin) |
+| `/courts` | Your courts + rule corpus (§13) | yes |
 
 **App shell & navigation.** All authenticated routes render inside a single shared layout
 (`components/AppLayout.tsx`): a topbar with the product name, a primary **Cases** nav item, a
-role-gated **Court administration** pill (only when `role === 'admin'`), and a **user menu**
+a **Courts** nav item (every account manages its own courts), and a **user menu**
 (`components/UserMenu.tsx` → Profile + Sign out). Interior pages (deeper than the Cases list) carry
 a consistent **breadcrumb strip** (`components/Breadcrumbs.tsx`, e.g. `Cases › {Case} › Scorecard`)
 instead of ad-hoc back buttons. Starting a session and viewing a case's past scorecards both live on
@@ -202,8 +202,8 @@ An actual login form hitting a real endpoint, backed by real bcrypt password aut
 - Frontend stores the token in memory (Zustand `auth` store) and attaches it as a Bearer token on
   subsequent requests. Not localStorage — keeps it out of persistent browser storage.
 
-The first registrant on an admin-less deployment auto-bootstraps to admin (§13), so Court/rule setup
-stays a pure-UI workflow with no script.
+There are no roles — each account owns everything it creates (its cases AND its courts/rule
+corpus, §13); Court/rule setup is a pure-UI workflow with no script.
 
 ### Wiring status (frontend ↔ backend)
 
@@ -266,28 +266,28 @@ the one thing still absent:
 
 | Method | Path | Description | Auth |
 |---|---|---|---|
-| POST | `/api/auth/register` | Self-service signup — bcrypt hash, first registrant → admin (§12/§13). **Gated by `ALLOW_REGISTRATION`** (default true; set false on public deployments once accounts exist → 403, login unaffected) | no |
+| POST | `/api/auth/register` | Self-service signup — bcrypt hash, self-owned account (§12). **Gated by `ALLOW_REGISTRATION`** (default true; set false on public deployments once accounts exist → 403, login unaffected) | no |
 | POST | `/api/auth/login` | Verifies password against the bcrypt hash, issues JWT | no |
-| GET | `/api/auth/me` | Returns current user from token (incl. `role`) | yes |
+| GET | `/api/auth/me` | Returns current user from token | yes |
 | POST | `/api/cases` | Create a case (optional `court_id`, §13) | yes |
 | GET | `/api/cases` | List attorney's cases | yes |
 | GET | `/api/cases/{id}` | Case detail | yes |
 | POST | `/api/cases/{id}/documents` | Upload a pleading PDF → ingest (§12) | yes |
 | GET | `/api/cases/{id}/documents` | Pleading ingestion status (§12) | yes |
 | GET | `/api/cases/{id}/sessions` | A case's sessions (rehearsal history), newest first | yes |
-| GET | `/api/courts` | Active court catalog (case-creation dropdown; §13) | yes |
-| POST | `/api/courts` | Create a court (§13) | **admin** |
-| POST | `/api/courts/{id}/rules` | Upload an official rule PDF → ingest (§13) | **admin** |
-| GET | `/api/courts/{id}/rules` | Rule documents incl. archived (admin corpus surface, §13) | **admin** |
-| POST | `/api/courts/{id}/rules/{doc}/replace` | Atomic Replace: supersede on successful ingest (§13) | **admin** |
-| DELETE | `/api/courts/{id}/rules/{doc}` | Archive a rule document (soft; out of retrieval) | **admin** |
-| POST | `/api/courts/{id}/rules/{doc}/restore` | Un-archive (409 while superseded by a live replacement) | **admin** |
-| GET | `/api/courts/{id}/rules/{doc}/impact` | Pre-purge warning: rulings citing this document | **admin** |
-| POST | `/api/courts/{id}/rules/{doc}/purge` | PURGE: chunks + row + stored file, gone | **admin** |
-| POST | `/api/courts/{id}/archive` | Retire a forum (cascades soft-archive to its documents) | **admin** |
-| POST | `/api/courts/{id}/purge` | PURGE a forum (409 while any case references it) | **admin** |
+| GET | `/api/courts` | Your active court catalog (case-creation dropdown; §13) | yes |
+| POST | `/api/courts` | Create a court (§13) | yes (owner) |
+| POST | `/api/courts/{id}/rules` | Upload an official rule PDF → ingest (§13) | yes (owner) |
+| GET | `/api/courts/{id}/rules` | Rule documents incl. archived (owner corpus surface, §13) | yes (owner) |
+| POST | `/api/courts/{id}/rules/{doc}/replace` | Atomic Replace: supersede on successful ingest (§13) | yes (owner) |
+| DELETE | `/api/courts/{id}/rules/{doc}` | Archive a rule document (soft; out of retrieval) | yes (owner) |
+| POST | `/api/courts/{id}/rules/{doc}/restore` | Un-archive (409 while superseded by a live replacement) | yes (owner) |
+| GET | `/api/courts/{id}/rules/{doc}/impact` | Pre-purge warning: rulings citing this document | yes (owner) |
+| POST | `/api/courts/{id}/rules/{doc}/purge` | PURGE: chunks + row + stored file, gone | yes (owner) |
+| POST | `/api/courts/{id}/archive` | Retire a forum (cascades soft-archive to its documents) | yes (owner) |
+| POST | `/api/courts/{id}/purge` | PURGE a forum (409 while any case references it) | yes (owner) |
 | DELETE | `/api/cases/{id}` | Archive a case (soft, owner default) | yes |
-| POST | `/api/cases/{id}/purge` | PURGE a case + everything under it | **admin** |
+| POST | `/api/cases/{id}/purge` | PURGE your own case + everything under it | yes (owner) |
 | DELETE | `/api/cases/{id}/documents/{doc}` | Archive a pleading (soft; out of retrieval) | yes |
 | POST | `/api/cases/{id}/documents/{doc}/replace` | Atomic Replace for a corrected pleading | yes |
 | POST | `/api/sessions` | Start a session — **`proceeding_type` required** (§13) | yes |
@@ -313,8 +313,9 @@ privilege (DEV_GUIDELINES §7): the agent token grants only these routes and not
 user JWT does not grant them. The scorecard write **batches the whole transcript in one call** (no
 per-turn round-trips inside the live voice loop). Note `/sessions/{id}/provenance` exists as **both**
 an agent-token POST (the worker writes it) and a user GET (the owning attorney reads it) — same path,
-distinct method + auth mechanism. The **admin** routes (§13) use a third check, `require_admin` (a
-user JWT whose `role == 'admin'`), distinct from both the agent token and an ordinary user JWT.
+distinct method + auth mechanism. There are **no admin routes / no roles** (migration 0009): every
+user route is scoped to the authenticated owner — cases via `deps.get_owned_case`, courts via
+`deps.get_owned_court` (404 on a foreign resource) — so ownership is structural, not role-based.
 
 ---
 
@@ -829,7 +830,7 @@ CREATE TABLE users (
     full_name TEXT,
     password_hash TEXT,             -- bcrypt hash (real auth); a NULL hash can never authenticate
     firm_name TEXT,
-    role TEXT NOT NULL DEFAULT 'attorney',  -- 'attorney' | 'admin' (§13; first-login bootstrap)
+    -- no `role` column: single-owner accounts, no roles (dropped in migration 0009)
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -856,6 +857,8 @@ CREATE TABLE sessions (
     status TEXT DEFAULT 'in_progress',   -- in_progress | completed | abandoned
     proceeding_type TEXT NOT NULL DEFAULT 'oral_argument',  -- §13: gates eligible objection grounds
     llm_backend_used TEXT,               -- 'fireworks' | 'self_hosted'
+    llm_usage JSON,                      -- per-session LLM usage + canary counters (migration 0008;
+                                         --   llm_metrics.snapshot(), counts only — billing groundwork)
     started_at TIMESTAMPTZ DEFAULT now(),
     ended_at TIMESTAMPTZ
 );
@@ -885,8 +888,9 @@ CREATE TABLE scorecards (
 `case_documents` / `case_chunks` (pleading RAG) — see **§12**; `courts` / `court_rule_documents`
 / `court_rule_chunks` (rules corpus) and `ruling_provenance` (citation audit trail) — see **§13**.
 Migrations: `0001_initial`, `0002_case_knowledge_and_auth` (§12), `0003_court_grounding` (§13
-tables + the `role` / `court_id` / `proceeding_type` columns above, with backfills), and
-`0004_ruling_provenance` (§13).
+tables + the `court_id` / `proceeding_type` columns above, with backfills), and
+`0004_ruling_provenance` (§13). Later: `0008_session_llm_usage` (per-session LLM usage), and
+`0009_per_user_no_roles` (drop `users.role`, add `courts.user_id` — single-owner accounts).
 
 ## Object storage layout
 
@@ -909,7 +913,7 @@ S3-compatible (MinIO locally, DigitalOcean Spaces in production).
   tables carry a nullable `deleted_at`. This grew into an explicit two-tier model (§13):
   **Archive** (soft, default, reversible — set `deleted_at`; the entity leaves lists AND retrieval
   via the document-state filter, but rows/chunks/files remain, so `RulingProvenance` stays
-  resolvable) vs **Purge** (hard, admin-only, typed-confirmation — rows, chunks, and the stored
+  resolvable) vs **Purge** (hard, owner self-service, typed-confirmation — rows, chunks, and the stored
   object-storage file are genuinely deleted, with a manually-ordered cascade since no FK cascade
   exists). Document tables also carry `superseded_by_id`: the atomic **Replace** action archives
   the old version only after its replacement ingests to `ready`. A retention policy later is
@@ -956,10 +960,13 @@ S3-compatible (MinIO locally, DigitalOcean Spaces in production).
 | `LLM_TIMEOUT_S` | Ceiling on **every** agents LLM call (`llm_router.chat`/`chat_stream`; stream = read-timeout between chunks). Default **30** — without it the OpenAI SDK waits 600s and one hung provider call degrades every concurrent session (AUDIT B4). The objection classifier additionally passes a tighter explicit 10s |
 | `AGENT_EXECUTOR_WORKERS` | Size of the worker's dedicated bounded pool for blocking LLM/HTTP work (`agents/executor.py`, AUDIT B3) — isolates sessions from head-of-line contention on the shared default pool. Default **16**; `<= 0` rolls back to the default asyncio pool |
 | `VERIFY_MAX_CONCURRENT` | Cap on simultaneous in-flight consistency-verifier calls (`verification.py` — one call per streamed sentence, so concurrent replies can stampede). Default **8**; `<= 0` uncapped (old behavior) |
+| `LLM_RETRIES` / `LLM_RETRY_BACKOFF_S` | Extra attempts after a failed LLM call + pause between them (llm_router, AUDIT B8). Defaults **1** / **0.5**. Hard-latency callers pass `retries=0` explicitly (objection classifier). A stream retries only BEFORE its first yielded delta — spoken text is never re-spoken |
+| `{OPPOSING_COUNSEL,JUDGE,VERIFICATION,OBJECTION}_LLM_FALLBACK_{PROVIDER,ENDPOINT,MODEL}` | Optional per-role fallback routing: where a role's calls go when its primary provider exhausts retries (or its breaker is open). Unset (default) = single-provider, the old behavior. ENDPOINT defaults to Fireworks |
+| `LLM_CB_FAILURES` / `LLM_CB_COOLDOWN_S` | Per-endpoint circuit breaker: after N CONSECUTIVE failures the primary is skipped for the cooldown and calls go straight to the fallback (a dead provider stops costing timeout+retry per call; never dead-ends — with no fallback the primary is always tried). Defaults **3** / **60**; `LLM_CB_FAILURES <= 0` disables |
 | `JWT_SECRET` | Token signing — **required, ≥ 32 chars**; the app refuses to start with a blank/missing/weak key (`openssl rand -hex 32`) |
 | _(auth mode)_ | Removed — auth is always real bcrypt password auth; there is no `AUTH_MODE` setting (a leftover value in `.env` is ignored) |
 | `CORS_ORIGINS` | Comma-separated browser origins allowed to call the API (e.g. the Vite dev server) |
-| `ALLOW_REGISTRATION` | Gate on `POST /api/auth/register` (default `true`). Set `false` after the admin-bootstrap account exists to close public sign-up |
+| `ALLOW_REGISTRATION` | Gate on `POST /api/auth/register` (default `true`). Set `false` on a public deployment once its accounts exist to close public sign-up |
 | `MAX_UPLOAD_MB` | Hard cap on PDF upload size, enforced by a streamed byte counter (`upload_service.py`, §7 uploads). Default **25** |
 | `DESTRUCTIVE_ACTIONS_ENABLED` | Master gate on archive/purge across the API (`security.require_destructive_actions_enabled`, 403 when off). Default `true`; set **`false`** during the competition so no reviewer can delete data. Mirror on the frontend with `VITE_DESTRUCTIVE_ACTIONS_ENABLED` |
 | `AGENT_SERVICE_TOKEN` | Scoped service credential for the agent's internal session-write routes (§5) — NOT user auth. Empty = internal routes locked |
@@ -1171,7 +1178,7 @@ update §7's "Model in use now" for Opposing Counsel, and check the §11 box.
 
 - [x] Replace the `admin`/`admin` stub with real auth before real attorney/case data. **Done** at
       the production cutover: real bcrypt password auth is now the only mode, `AUTH_MODE` was removed,
-      and the first registrant auto-bootstraps to admin. (The agents worker's `AGENT_SERVICE_TOKEN`
+      and accounts are single-owner (no roles; migration 0009). (The agents worker's `AGENT_SERVICE_TOKEN`
       remains a separate, scoped credential — never part of user auth.)
 - [x] Regenerate `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` to real random values before any
       non-local deployment. **Done** on the AMD hackathon droplet (2026-07-11): fresh random keys
@@ -1342,7 +1349,7 @@ CREATE TABLE ruling_provenance (          -- the citation audit trail, one row p
 );
 ```
 
-Plus three columns on existing tables (§8): `users.role`, `cases.court_id`,
+Plus columns on existing tables (§8): `cases.court_id`,
 `sessions.proceeding_type`. **Sensitivity:** rule text is **public official law**, deliberately NOT
 tagged `# SENSITIVE` (that marker is for privileged work product like `transcripts.content`); the
 provenance rows hold **chunk ids and citation labels only** — no ruling text, no work product.
@@ -1410,7 +1417,7 @@ corrected without ever leaving stale and new versions retrievable side by side:
   while its replacement is live (that would re-create the poison pill).
 - **Archive** (soft, default): document / case / court (court cascades to its documents;
   referencing cases keep their `court_id` and run without rules grounding — fail-open). Reversible.
-- **Purge** (hard, admin-only, typed-confirmation): rows + chunks + the stored file, manually
+- **Purge** (hard, owner self-service, typed-confirmation): rows + chunks + the stored file, manually
   cascaded. **Provenance degrades gracefully, by design:** `chunk_ids_used` are strings, not FKs —
   purged ids become tombstones; the scorecard's grounding display (which shows counts) keeps
   working, but the audit trail no longer resolves to source text. The pre-purge dialog states the
@@ -1472,28 +1479,28 @@ here and is **exactly what the deferred Phase-7 golden-set legal-reasoning eval 
 (precision/recall of "did retrieval surface the provision competent counsel would actually rely on").
 Until then, the honest guarantee is **grounded-in-what-was-shown**, not legally-correct.
 
-### Admin bootstrap (UI-native) & operator workflow
+### Per-user courts & operator workflow (no roles)
 
-Managing the corpus is **admin-gated** (`require_admin`: a user JWT with `role == 'admin'`, distinct
-from the agent token and an ordinary user). Admin access requires **no script**: the **first user to
-authenticate** on a deployment with no active admin is promoted automatically
-(`auth_service.ensure_admin_bootstrap`, one atomic conditional UPDATE — see LESSONS for the
-race-safety reasoning). So the entire setup is a **pure browser workflow**: log in → `/admin` →
-create the Court → upload the official rule PDFs → they ingest → new cases select that court.
-`/admin` lands on the **courts catalog** (mirrors the Cases dashboard): every forum listed —
-archived ones included, badged (`GET /api/courts?include_archived=true`, admin-only; the plain
-route stays the active-only case-creation list) — with creation as a toggled "New court"
-affordance (auto-open only on an empty catalog). Selecting a court drives the rule-documents and
-danger-zone sections; an archived forum shows purge-only (and the purge route fetches
-archived-inclusive — previously an archived court 404'd on purge: invisible AND undeletable).
-`scripts/seed_court.py` remains **only** as optional CI/headless automation (it grants no roles and
-fails loudly rather than ever synthesizing rule text) — never part of the normal operator path.
+Courts are **per-user** (migration 0009): there are **no roles** — every account is a self-owned
+island that creates and manages its OWN courts + rule corpus, scoped exactly like its cases. Every
+court/rules route resolves through `deps.get_owned_court` (404 on a foreign court), so ownership is
+structural and a new route cannot forget it. The whole setup is a **pure browser workflow**: sign
+up → `/courts` → create the Court → upload the official rule PDFs → they ingest → your new cases
+select that court. `/courts` lands on the owner's **courts catalog** (mirrors the Cases dashboard):
+every forum they own listed — archived ones included, badged (`GET /api/courts?include_archived=
+true` — no longer role-gated; it's just the owner's full list; the plain route stays the active-only
+case-creation list) — with creation as a toggled "New court" affordance (auto-open only on an empty
+catalog). Selecting a court drives the rule-documents and danger-zone sections; an archived forum
+shows purge-only (the purge route fetches archived-inclusive but owner-scoped, so a retired court
+stays purgeable by its owner instead of being an invisible orphan). `scripts/seed_court.py` remains
+**only** as optional CI/headless automation (it seeds a court **owned by a `--owner-email` account**
+and fails loudly rather than ever synthesizing rule text) — never part of the normal workflow.
 
 ### Implemented vs. pending
 
 - **Implemented + offline-tested:** schema/migrations, ingestion + retrieval (both corpora),
-  proceeding-type gating, the citation check + provenance persistence, admin bootstrap, and the
-  frontend (court selector, grounding indicator, admin UI). Backend + agents + frontend suites green.
+  proceeding-type gating, the citation check + provenance persistence, per-user court ownership, and
+  the frontend (court selector, grounding indicator, Courts UI). Backend + agents + frontend suites green.
 - **Pending a live pass:** end-to-end behavior in a real room — actual retrieval quality, real flag
   rates, and the grounding indicator against a live session — deferred as a deliberate standalone
   step (it also exercises the judge-participant + no-audio work). A golden-set legal-reasoning eval
