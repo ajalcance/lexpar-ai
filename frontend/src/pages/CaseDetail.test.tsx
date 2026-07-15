@@ -39,6 +39,7 @@ const SESSION: Session = {
   llmBackendUsed: 'fireworks',
   startedAt: '2026-07-10T00:00:00Z',
   endedAt: null,
+  overallScore: null,
 };
 
 /** Render CaseDetail at /case/c1 so useParams resolves the id. */

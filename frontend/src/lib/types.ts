@@ -111,6 +111,9 @@ export interface Session {
   llmBackendUsed: LlmBackend | null;
   startedAt: string;
   endedAt: string | null;
+  /** The session's scorecard score (0–100), or null until scored. Present on the case-history
+   *  list so CaseDetail can show per-rehearsal scores + a trend. */
+  overallScore: number | null;
 }
 
 /** One spoken line within a session transcript. Mirrors the `transcripts` table. */

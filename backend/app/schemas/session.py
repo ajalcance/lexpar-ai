@@ -55,6 +55,9 @@ class SessionOut(BaseModel):
     llm_backend_used: str | None = None
     started_at: datetime
     ended_at: datetime | None = None
+    # The session's scorecard score (None until scored). Populated on the case-history list
+    # (list_sessions_for_case) so CaseDetail shows per-rehearsal scores + a trend without an N+1.
+    overall_score: float | None = None
 
 
 class SessionDetailOut(SessionOut):

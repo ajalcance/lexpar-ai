@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session as DbSession
 
 from app.config import get_settings
 from app.models.case import Case
+from app.models.scorecard import Scorecard
 from app.models.session import Session
 from app.models.user import User
 
@@ -51,10 +52,14 @@ def create_session(
 
 
 def list_sessions_for_case(db: DbSession, user: User, case_id: uuid.UUID) -> list[Session]:
-    """All of the attorney's sessions for one case, newest first — the case's rehearsal history.
-    Scoped by user_id AND case_id (least privilege) and excluding soft-deleted rows."""
+    """All of the attorney's sessions for one case, newest first — the case's rehearsal history,
+    each carrying its scorecard's `overall_score` (None until scored) via a LEFT JOIN, so the
+    CaseDetail history + score-trend need no per-session scorecard fetch. Scoped by user_id AND
+    case_id (least privilege), excluding soft-deleted rows. The score rides as a transient attr
+    that SessionOut reads via from_attributes."""
     stmt = (
-        select(Session)
+        select(Session, Scorecard.overall_score)
+        .outerjoin(Scorecard, Scorecard.session_id == Session.id)
         .where(
             Session.case_id == case_id,
             Session.user_id == user.id,
@@ -62,7 +67,11 @@ def list_sessions_for_case(db: DbSession, user: User, case_id: uuid.UUID) -> lis
         )
         .order_by(Session.started_at.desc())
     )
-    return list(db.scalars(stmt))
+    sessions: list[Session] = []
+    for session, score in db.execute(stmt):
+        session.overall_score = float(score) if score is not None else None
+        sessions.append(session)
+    return sessions
 
 
 def get_session(db: DbSession, user: User, session_id: uuid.UUID) -> Session:

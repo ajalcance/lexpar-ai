@@ -169,6 +169,7 @@ interface SessionJson {
   llm_backend_used: Session['llmBackendUsed'];
   started_at: string;
   ended_at: string | null;
+  overall_score: number | null;
 }
 interface ScorecardJson {
   id: string;
@@ -242,6 +243,7 @@ const toSession = (j: SessionJson): Session => ({
   llmBackendUsed: j.llm_backend_used,
   startedAt: j.started_at,
   endedAt: j.ended_at,
+  overallScore: j.overall_score ?? null,
 });
 
 const toScorecard = (j: ScorecardJson): Scorecard => ({

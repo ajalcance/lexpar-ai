@@ -31,7 +31,7 @@ lexpar-ai/
 │   │   │   ├── Login.tsx
 │   │   │   ├── Dashboard.tsx         Cases list
 │   │   │   ├── CaseUpload.tsx
-│   │   │   ├── CaseDetail.tsx        case hub — facts, start session, rehearsal history
+│   │   │   ├── CaseDetail.tsx        case hub — profile, facts, start session, rehearsal history + score trend
 │   │   │   ├── Profile.tsx           read-only identity
 │   │   │   ├── Courts.tsx            Your courts + rule corpus (§13, per-user)
 │   │   │   ├── SparringRoom.tsx      LiveKit room UI (live session)
@@ -173,7 +173,7 @@ TanStack Query (server state), `@livekit/components-react` + `livekit-client` (r
 | `/login` | Login form | no |
 | `/dashboard` | Cases list ("Cases" — the authenticated home) | yes |
 | `/case/new` | Create a case (title, facts, court) + attach pleading | yes |
-| `/case/:id` | Case detail — facts, start a session, rehearsal history | yes |
+| `/case/:id` | Case detail — profile, facts, start a session, rehearsal history (per-session scores + trend) | yes |
 | `/session/:id` | Live sparring room (LiveKit connection) | yes |
 | `/session/:id/scorecard` | Post-session results | yes |
 | `/profile` | Profile — read-only identity + role, sign out | yes |
@@ -184,8 +184,12 @@ TanStack Query (server state), `@livekit/components-react` + `livekit-client` (r
 a **Courts** nav item (every account manages its own courts), and a **user menu**
 (`components/UserMenu.tsx` → Profile + Sign out). Interior pages (deeper than the Cases list) carry
 a consistent **breadcrumb strip** (`components/Breadcrumbs.tsx`, e.g. `Cases › {Case} › Scorecard`)
-instead of ad-hoc back buttons. Starting a session and viewing a case's past scorecards both live on
-the case-detail page, backed by `GET /api/cases/{id}/sessions`.
+instead of ad-hoc back buttons. The case-detail page shows the **case profile** (docket number,
+parties, side represented, relief — only the stated fields), the facts, the start-a-session control,
+and the **rehearsal history**: each past session badged with its color-banded score, plus a
+**score-trend sparkline** (`ScoreTrend`) across scored sessions. Starting a session and viewing past
+scorecards both live here, backed by `GET /api/cases/{id}/sessions` (which now carries each session's
+`overall_score` via a scorecard LEFT JOIN — no per-session fetch).
 
 ### Login form (real password auth)
 
@@ -274,7 +278,7 @@ the one thing still absent:
 | GET | `/api/cases/{id}` | Case detail | yes |
 | POST | `/api/cases/{id}/documents` | Upload a pleading PDF → ingest (§12) | yes |
 | GET | `/api/cases/{id}/documents` | Pleading ingestion status (§12) | yes |
-| GET | `/api/cases/{id}/sessions` | A case's sessions (rehearsal history), newest first | yes |
+| GET | `/api/cases/{id}/sessions` | A case's sessions (rehearsal history), newest first, each with its scorecard `overall_score` (None until scored) | yes |
 | GET | `/api/courts` | Your active court catalog (case-creation dropdown; §13) | yes |
 | POST | `/api/courts` | Create a court (§13) | yes (owner) |
 | POST | `/api/courts/{id}/rules` | Upload an official rule PDF → ingest (§13) | yes (owner) |

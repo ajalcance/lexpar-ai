@@ -24,10 +24,13 @@ import {
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
+import { scoreColor } from '@/components/ScoreDial';
+import { ScoreTrend } from '@/components/ScoreTrend';
 import * as api from '@/lib/api';
 import { DESTRUCTIVE_ACTIONS_ENABLED } from '@/lib/flags';
 import {
   PROCEEDING_TYPE_LABELS,
+  type Case,
   type ProceedingType,
   type Session,
 } from '@/lib/types';
@@ -103,6 +106,8 @@ export function CaseDetail() {
         </p>
       </div>
 
+      <CaseProfile legalCase={legalCase} />
+
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">Case facts</CardTitle>
@@ -152,8 +157,22 @@ export function CaseDetail() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Rehearsal history</CardTitle>
-          <CardDescription>Past sessions for this case and their scorecards.</CardDescription>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <CardTitle className="text-lg">Rehearsal history</CardTitle>
+              <CardDescription>Past sessions for this case and their scorecards.</CardDescription>
+            </div>
+            {/* Score trend across scored rehearsals (oldest → newest) — a glance at whether the
+                attorney is improving. Hidden until there are two scored sessions to connect. */}
+            <ScoreTrend
+              scores={
+                (sessions ?? [])
+                  .filter((s) => s.overallScore !== null)
+                  .map((s) => s.overallScore as number)
+                  .reverse() // sessions are newest-first; the trend runs oldest → newest
+              }
+            />
+          </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {!sessions || sessions.length === 0 ? (
@@ -173,6 +192,14 @@ export function CaseDetail() {
                   <Badge variant={session.status === 'completed' ? 'outline' : 'secondary'}>
                     {STATUS_LABEL[session.status]}
                   </Badge>
+                  {session.overallScore !== null && (
+                    <span
+                      className="rounded px-1.5 py-0.5 text-xs font-semibold text-white"
+                      style={{ backgroundColor: scoreColor(session.overallScore) }}
+                    >
+                      {Math.round(session.overallScore)}
+                    </span>
+                  )}
                   <span className="text-muted-foreground">
                     {new Date(session.startedAt).toLocaleString()}
                   </span>
@@ -280,5 +307,45 @@ export function CaseDetail() {
       </Card>
       )}
     </div>
+  );
+}
+
+/**
+ * The case's stated identity (profile) — docket number, parties, the side the attorney represents,
+ * and the relief sought. Renders only the fields that were actually provided; if none were (a
+ * pre-profile case), the whole card is omitted so it never shows an empty shell.
+ */
+function CaseProfile({ legalCase }: { legalCase: Case }) {
+  const { caseNumber, petitioner, respondent, representedParty, reliefSought } = legalCase;
+  const rows: { label: string; value: string }[] = [];
+  if (caseNumber) rows.push({ label: 'Docket number', value: caseNumber });
+  if (petitioner) rows.push({ label: 'Petitioner', value: petitioner });
+  if (respondent) rows.push({ label: 'Respondent', value: respondent });
+  if (representedParty) {
+    const name = representedParty === 'petitioner' ? petitioner : respondent;
+    const side = representedParty === 'petitioner' ? 'Petitioner' : 'Respondent';
+    rows.push({ label: 'You represent', value: name ? `${side} (${name})` : side });
+  }
+  if (reliefSought) rows.push({ label: 'Relief sought', value: reliefSought });
+
+  if (rows.length === 0) return null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-lg">Case profile</CardTitle>
+        <CardDescription>What the AI treats as on the record from the start.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+          {rows.map((row) => (
+            <div key={row.label} className="flex flex-col gap-0.5">
+              <dt className="text-xs text-muted-foreground">{row.label}</dt>
+              <dd className="whitespace-pre-line">{row.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </CardContent>
+    </Card>
   );
 }

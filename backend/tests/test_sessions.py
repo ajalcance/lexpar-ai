@@ -122,6 +122,26 @@ def test_list_case_sessions_returns_the_cases_sessions(client, auth_headers):
     assert {s["id"] for s in body} == {first, second}
     # Every returned session belongs to this case.
     assert all(s["case_id"] == case_id for s in body)
+    # Unscored sessions report overall_score = None (the trend/score badges hide until scored).
+    assert all(s["overall_score"] is None for s in body)
+
+
+def test_list_case_sessions_carries_the_scorecard_score(client, auth_headers, db_session):
+    """A scored session reports its scorecard overall_score on the history list (drives the
+    CaseDetail per-rehearsal score + trend without a per-session fetch)."""
+    import uuid as _uuid
+
+    from app.models.scorecard import Scorecard
+
+    case_id = _create_case_via_api(client, auth_headers)
+    scored = _start_session_via_api(client, auth_headers, case_id)
+    _start_session_via_api(client, auth_headers, case_id)  # unscored
+    db_session.add(Scorecard(session_id=_uuid.UUID(scored), overall_score=77))
+    db_session.commit()
+
+    listed = client.get(f"/api/cases/{case_id}/sessions", headers=auth_headers).json()
+    by_id = {s["id"]: s for s in listed}
+    assert by_id[scored]["overall_score"] == 77
 
 
 def test_list_case_sessions_empty_when_none_started(client, auth_headers):

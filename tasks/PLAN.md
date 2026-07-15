@@ -217,8 +217,33 @@ corpus." No users, no corpus. So pgvector is **deliberately deferred** (document
 
 **Result:** The N+1 is gone (Dashboard is one query regardless of case count) and the FK indexes are
 in on the paths that grow. pgvector is deferred with a clear rationale rather than breaking the
-portable-schema design for zero current load. Next: Phase 5 (UI/UX product pass — password reset,
-pre-session device check, ingestion progress, empty states/onboarding, score trends, PDF export).
+portable-schema design for zero current load. Committed, pushed.
+
+#### Phase 5 — UX product pass — status: in progress
+**Password reset skipped per user** (needs an email provider — deferred with the rest of the
+email-dependent work). Phase 5 is being done in batches; this is **batch A: CaseDetail enrichment.**
+- [x] **Case profile card** on CaseDetail — docket number, parties, side represented, relief sought
+      (renders only stated fields; whole card omitted for a pre-profile case).
+- [x] **Per-session scores + trend:** `GET /api/cases/{id}/sessions` now carries each session's
+      scorecard `overall_score` (scorecard LEFT JOIN in `list_sessions_for_case`, transient attr →
+      SessionOut — no per-session fetch). CaseDetail shows a color-banded score badge per rehearsal
+      and a `ScoreTrend` sparkline (new pure-SVG component, reuses `scoreColor`) across scored
+      sessions, hidden until there are two to connect.
+- [x] Tests: backend session-list score (scored → number, unscored → None); frontend ScoreTrend
+      (renders for 2+, nothing for <2). CaseDetail/CaseUpload/Dashboard Case fixtures updated.
+- [x] **Live-verified in the browser** (backend + frontend up on local Postgres, seeded 3 scored
+      sessions 48/63/82): the profile card, the red/amber/green score badges, the rising trend
+      sparkline, and the Dashboard "Best 82" badge all render correctly; console clean. Torn down
+      after (backend stopped, demo DB reset).
+- [x] Docs: ARCHITECTURE §4 (CaseDetail) + §5 (sessions route score).
+- [x] Gate: backend ruff clean **112 pass**; agents **277 pass**; frontend tsc clean **84 pass**,
+      lint clean, build ✓.
+
+**Remaining Phase 5 batches (sequence next):** ingestion-progress chip; empty-state/onboarding
+polish; pre-session device check (mic/level/output — **needs a live LiveKit room to verify**, so
+flagged); transcript/scorecard PDF export (**needs a dep decision**: client PDF lib vs print CSS);
+app-wide skeletons + error toasts (**needs a dep decision**: adopt `sonner` or hand-roll). Password
+reset stays deferred until an email provider is chosen.
 
 ### Scaffold frontend (Vite + React + TS + Tailwind + shadcn/ui, mock data) — status: done
 
